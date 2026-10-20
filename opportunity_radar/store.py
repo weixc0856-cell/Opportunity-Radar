@@ -23,14 +23,14 @@ class Store:
         CREATE TABLE IF NOT EXISTS article_versions(article_key TEXT NOT NULL, summary_hash TEXT NOT NULL, content_source TEXT, fetched_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(article_key,summary_hash));
         CREATE TABLE IF NOT EXISTS analyses(article_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS analysis_history(history_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL, UNIQUE(article_key,analyzed_at));
-        CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT);
-        CREATE TABLE IF NOT EXISTS deliveries(delivery_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, sent_at TEXT, status TEXT NOT NULL, message TEXT, idempotency_key TEXT);
+        CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT, stage TEXT, exit_code INTEGER, pid INTEGER);
+        CREATE TABLE IF NOT EXISTS deliveries(delivery_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, sent_at TEXT, status TEXT NOT NULL, message TEXT, idempotency_key TEXT, recipient TEXT);
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
             for name in ('fetched_at','content_source','retrieval_status'):
                 if name not in cols: c.execute(f'ALTER TABLE articles ADD COLUMN {name} TEXT')
-            for table,extra in (('runs',(('report_path','TEXT'),('report_hash','TEXT'))),('deliveries',(('idempotency_key','TEXT'),))):
+            for table,extra in (('runs',(('report_path','TEXT'),('report_hash','TEXT'),('stage','TEXT'),('exit_code','INTEGER'),('pid','INTEGER'))),('deliveries',(('idempotency_key','TEXT'),('recipient','TEXT')))):
                 have={r[1] for r in c.execute(f'PRAGMA table_info({table})')}
                 for name,typ in extra:
                     if name not in have: c.execute(f'ALTER TABLE {table} ADD COLUMN {name} {typ}')
@@ -83,21 +83,53 @@ class Store:
     def analysis_history(self,key,limit=20):
         with self.connect() as c:
             return [dict(r) for r in c.execute('SELECT history_id,result_json,score,risk_flag,status,analyzed_at FROM analysis_history WHERE article_key=? ORDER BY analyzed_at DESC LIMIT ?',(key,limit))]
-    def start_run(self):
-        with self.connect() as c: return c.execute('INSERT INTO runs(started_at,status) VALUES(?,?)',(now(),'running')).lastrowid
-    def finish_run(self,rid,status,ac,an,err,msg='',report_path='',report_hash=''):
-        with self.connect() as c: c.execute('UPDATE runs SET finished_at=?,status=?,article_count=?,analyzed_count=?,error_count=?,message=?,report_path=?,report_hash=? WHERE run_id=?',(now(),status,ac,an,err,msg[:1000],report_path or '',report_hash or '',rid))
-    def delivery(self,rid,status,msg='',key=''):
-        with self.connect() as c: c.execute('INSERT INTO deliveries(run_id,sent_at,status,message,idempotency_key) VALUES(?,?,?,?,?)',(rid,now(),status,msg[:1000],key or ''))
+    def start_run(self,stage='starting'):
+        with self.connect() as c: return c.execute('INSERT INTO runs(started_at,status,stage) VALUES(?,?,?)',(now(),'running',stage)).lastrowid
+    def update_run(self,rid,stage=None,pid=None,status=None):
+        sets=[]; vals=[]
+        if stage is not None: sets.append('stage=?'); vals.append(stage)
+        if pid is not None: sets.append('pid=?'); vals.append(pid)
+        if status is not None: sets.append('status=?'); vals.append(status)
+        if not sets: return
+        vals.append(rid)
+        with self.connect() as c: c.execute(f"UPDATE runs SET {', '.join(sets)} WHERE run_id=?",vals)
+    def finish_run(self,rid,status,ac,an,err,msg='',report_path='',report_hash='',exit_code=None):
+        with self.connect() as c: c.execute('UPDATE runs SET finished_at=?,status=?,article_count=?,analyzed_count=?,error_count=?,message=?,report_path=?,report_hash=?,exit_code=?,stage=? WHERE run_id=?',(now(),status,ac,an,err,msg[:1000],report_path or '',report_hash or '',exit_code,'done',rid))
+    def latest_run(self):
+        with self.connect() as c:
+            r=c.execute('SELECT * FROM runs ORDER BY run_id DESC LIMIT 1').fetchone()
+            return dict(r) if r else None
+    def active_run(self,max_age_minutes=180):
+        """A running row younger than the limit is treated as active across admin restarts."""
+        with self.connect() as c:
+            r=c.execute("SELECT * FROM runs WHERE status='running' ORDER BY run_id DESC LIMIT 1").fetchone()
+        if not r: return None
+        try:
+            started=datetime.fromisoformat(r['started_at'])
+            if (datetime.now(timezone.utc)-started).total_seconds()>max_age_minutes*60: return None
+        except (ValueError,TypeError): pass
+        return dict(r)
+    def delivery(self,rid,status,msg='',key='',recipient=''):
+        with self.connect() as c: c.execute('INSERT INTO deliveries(run_id,sent_at,status,message,idempotency_key,recipient) VALUES(?,?,?,?,?,?)',(rid,now(),status,msg[:1000],key or '',recipient or ''))
     def delivery_sent(self,key):
         if not key: return False
         with self.connect() as c: return c.execute("SELECT 1 FROM deliveries WHERE idempotency_key=? AND status='sent'",(key,)).fetchone() is not None
+    def sent_recipients(self,key):
+        if not key: return set()
+        with self.connect() as c:
+            return {r['recipient'].casefold() for r in c.execute("SELECT recipient FROM deliveries WHERE idempotency_key=? AND status='sent' AND recipient IS NOT NULL AND recipient<>''",(key,))}
+    def run_deliveries(self,rid):
+        with self.connect() as c:
+            return [dict(r) for r in c.execute('SELECT delivery_id,run_id,sent_at,status,message,recipient,idempotency_key FROM deliveries WHERE run_id=? ORDER BY delivery_id',(rid,))]
+    def latest_deliveries(self):
+        r=self.latest_run()
+        return self.run_deliveries(r['run_id']) if r else []
     def consecutive_failures(self):
         with self.connect() as c:
-            rows=[r['status'] for r in c.execute("SELECT status FROM runs WHERE status IN ('success','no_new_content','failed','analysis_failed') ORDER BY run_id DESC LIMIT 30")]
+            rows=[r['status'] for r in c.execute("SELECT status FROM runs WHERE status IN ('success','no_new_content','failed','analysis_failed','partial_failed') ORDER BY run_id DESC LIMIT 30")]
         n=0
         for status in rows:
-            if status in {'failed','analysis_failed'}: n+=1
+            if status in {'failed','analysis_failed','partial_failed'}: n+=1
             else: break
         return n
     def invalidate_review(self,key,note='Source content changed; review is stale'):

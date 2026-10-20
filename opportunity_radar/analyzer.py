@@ -33,11 +33,11 @@ class LocalAnalyzer:
         h={'Content-Type':'application/json'}
         if self.api_key: h['Authorization']='Bearer '+self.api_key
         return h
-    def _call(self,messages):
+    def _call(self,messages,max_tokens=None):
         # Thinking-capable models (Qwen3.5 etc.) otherwise spend the whole token budget on <think>
         # and never emit JSON; triage only needs the structured answer. Servers that do not know
         # this template kwarg ignore it.
-        body={'model':self.model,'temperature':0.2,'max_tokens':self.max_tokens,'messages':messages,'chat_template_kwargs':{'enable_thinking':False}}
+        body={'model':self.model,'temperature':0.2,'max_tokens':max_tokens or self.max_tokens,'messages':messages,'chat_template_kwargs':{'enable_thinking':False}}
         req=urllib.request.Request(self.url,data=json.dumps(body).encode(),headers=self._headers(),method='POST')
         with urllib.request.urlopen(req,timeout=self.timeout) as r: return json.loads(r.read().decode('utf-8','replace'))['choices'][0]['message']['content']
     def analyze(self,title,summary,source_name,url):
@@ -46,5 +46,10 @@ class LocalAnalyzer:
         raw=self._call(msgs)
         try: return parse_model_json(raw)
         except (ValueError,json.JSONDecodeError):
-            raw=self._call([{'role':'system','content':SYSTEM+' Return raw JSON only, no markdown fences. Escape every double quote and backslash inside string values.'},{'role':'user','content':'Reformat the following into the required JSON schema without adding facts:\n'+raw[:6000]}])
+            # Retry with a larger budget and explicit brevity: long articles otherwise get cut off mid-string.
+            compact=(SYSTEM+' Return raw JSON only, no markdown fences. Escape every double quote and backslash inside string values.'
+                     ' Keep summary_zh under 120 characters, at most 3 evidence_quotes and 3 uncertainties, each under 120 characters.'
+                     ' Do not repeat the article text.')
+            raw=self._call([{'role':'system','content':compact},{'role':'user','content':'Reformat the following into the required JSON schema without adding facts:\n'+raw[:6000]}],
+                           max_tokens=min(2400,self.max_tokens+800))
             return parse_model_json(raw)

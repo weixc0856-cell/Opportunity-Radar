@@ -2,7 +2,7 @@ import argparse, hashlib, json, logging, os, sys
 from pathlib import Path
 from .config import Settings, load_scoring
 from .digest import render_digest, empty_reason
-from .email_sender import send_email
+from .email_sender import send_email, send_email_detailed, parse_recipients
 from .freshrss_client import FreshRSSClient
 from .render_html import render_html
 from .scoring import score_article, RULES_VERSION
@@ -10,6 +10,7 @@ from .source_policy import load_sources, is_approved
 from .store import Store
 from .analyzer import PROMPT_VERSION, PROMPT_HASH
 from .source_audit import audit_sources
+from .log_util import rotate_log, RedactFilter
 
 def evaluate(article,analysis,weights=None,thresholds=None,model='',source=None):
     sc=score_article(analysis,weights=weights,article=article,thresholds=thresholds,source=source)
@@ -44,19 +45,40 @@ def _validate_report(subject,body,html):
 def _atomic_write(path,text):
     tmp=Path(str(path)+'.tmp'); tmp.write_text(text,encoding='utf-8'); os.replace(tmp,path)
 
-def _write(report_dir,subject,body,html,name='latest-digest',archive=True):
-    _validate_report(subject,body,html)
+def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=None,stats=None,run_id=None):
+    """Write the latest report plus a dated local archive of the report and structured results.
+
+    The archive stores this application's generated analysis, evidence metadata and report
+    artifacts. It intentionally does not snapshot full third-party article bodies.
+    """
+    from datetime import datetime
     d=Path(report_dir); d.mkdir(parents=True,exist_ok=True)
     text=subject+'\n\n'+body
+    _validate_report(subject,body,html)
+    report_hash=hashlib.sha256(text.encode()).hexdigest()[:16]
     _atomic_write(d/f'{name}.txt',text)
     _atomic_write(d/f'{name}.html',html)
-    report_hash=hashlib.sha256(text.encode()).hexdigest()[:16]
     if not archive: return '',report_hash
-    from datetime import datetime
-    stamp=datetime.now().astimezone().strftime('%Y-%m-%d-%H%M%S'); arch=d/'archive'; arch.mkdir(parents=True,exist_ok=True)
-    txt=arch/f'{stamp}.txt'
-    _atomic_write(txt,text)
-    _atomic_write(arch/f'{stamp}.html',html)
+    local_now=datetime.now().astimezone()
+    stamp=local_now.strftime('%Y-%m-%d-%H%M%S')
+    # Date folders keep daily browsing, backup and retention predictable.
+    arch=d/'archive'/local_now.strftime('%Y')/local_now.strftime('%m')/local_now.strftime('%d')
+    arch.mkdir(parents=True,exist_ok=True)
+    txt=arch/f'{stamp}.txt'; html_path=arch/f'{stamp}.html'
+    items_path=arch/f'{stamp}.items.json'; manifest_path=arch/f'{stamp}.manifest.json'
+    _atomic_write(txt,text); _atomic_write(html_path,html)
+    payload_items=[{k:item.get(k) for k in ('title','url','source_name','analysis','score','status','filter_reason',
+                                             'evidence_level','classification','risk_flag','verification_note',
+                                             'evidence','evidence_integrity','meta','scoring')} for item in (items or [])]
+    _atomic_write(items_path,json.dumps({'schema_version':1,'generated_at':local_now.isoformat(),
+                                         'run_id':run_id,'report_hash':report_hash,'items':payload_items},
+                                        ensure_ascii=False,indent=2,default=str))
+    manifest={'schema_version':1,'generated_at':local_now.isoformat(),'run_id':run_id,'report_hash':report_hash,
+              'subject':subject,'article_count':len(payload_items),
+              'files':{'text':txt.name,'html':html_path.name,'items':items_path.name,'manifest':manifest_path.name},
+              'stats':stats or {},
+              'storage_note':'Generated analysis snapshot and report only; full source article bodies are not archived.'}
+    _atomic_write(manifest_path,json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
     return str(txt),report_hash
 
 def send_decision(analyzed,updated,failed,email_on_empty):
@@ -64,6 +86,10 @@ def send_decision(analyzed,updated,failed,email_on_empty):
     if analyzed==0 and failed>0: return 'analysis_failed'
     if analyzed==0 and updated==0 and not email_on_empty: return 'no_new_content'
     return 'send'
+
+def run_status(errors,failed_recipients=0):
+    """Partial article or recipient failures are not a clean success."""
+    return 'partial_failed' if (errors>0 or failed_recipients>0) else 'success'
 
 def _alert(store,s,reason):
     try: n=store.consecutive_failures()
@@ -98,13 +124,16 @@ def _render_only(store,s,weights,thresholds):
     stats['prompt_version']=next((x['meta'].get('prompt_version') for x in items if x.get('meta',{}).get('prompt_version')),'')
     stats['prompt_hash']=next((x['meta'].get('prompt_hash') for x in items if x.get('meta',{}).get('prompt_hash')),'')
     stats['empty_reason']=empty_reason(stats)
-    subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html)
-    print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only).'); return 0
+    subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html,archive=False)
+    print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
 
 def main(argv=None):
     p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); args=p.parse_args(argv)
     s=Settings.from_env(); Path(s.log_path).parent.mkdir(parents=True,exist_ok=True)
-    logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=[logging.FileHandler(s.log_path,encoding='utf-8'),logging.StreamHandler(sys.stdout)])
+    rotate_log(s.log_path)
+    handlers=[logging.FileHandler(s.log_path,encoding='utf-8'),logging.StreamHandler(sys.stdout)]
+    for h in handlers: h.addFilter(RedactFilter())
+    logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=handlers)
     Path(s.report_dir).mkdir(parents=True,exist_ok=True)
     cfg=load_scoring(); weights=cfg.get('weights'); thresholds=cfg.get('thresholds')
     if args.sample:
@@ -132,11 +161,13 @@ def main(argv=None):
         if not args.dry_run: print(msg,file=sys.stderr); return 3
         items=[]; stats=_stats(items,thresholds=thresholds,weights=weights)
         subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html); print(body); return 0
-    rid=store.start_run(); errors=analyzed=new_count=fetched=updated_count=0; items=[]
+    rid=store.start_run(stage='starting'); store.update_run(rid,pid=os.getpid()); errors=analyzed=new_count=fetched=updated_count=0; items=[]
     try:
         # Fail closed: only articles whose FreshRSS feed ID is explicitly mapped to an approved source are processed.
+        store.update_run(rid,stage='fetching')
         client=FreshRSSClient(s.freshrss_base_url,s.freshrss_username,s.freshrss_api_key,s.request_timeout)
         articles=[a for a in client.fetch_articles(s.max_articles,feed_ids=sorted(approved_feed_ids)) if a.feed_id in approved_feed_ids][:s.max_articles]; fetched=len(articles)
+        store.update_run(rid,stage='analyzing')
         from .analyzer import LocalAnalyzer
         model=LocalAnalyzer(s.llm_base_url,s.llm_model,s.llm_timeout,s.llm_max_tokens,api_key=s.llm_api_key)
         queued=skipped=0
@@ -161,33 +192,51 @@ def main(argv=None):
         stats=_stats(items,fetched,new_count,queued,analyzed,errors,skipped,thresholds,weights,updated=updated_count)
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
         subject,body=render_digest(items,stats); html=render_html(items,stats)
-        archive_path,report_hash=_write(s.report_dir,subject,body,html)
+        store.update_run(rid,stage='rendering')
+        archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid)
         out=Path(s.report_dir)/'latest-digest.txt'
         if args.dry_run:
-            store.finish_run(rid,'dry_run',fetched,analyzed,errors,'No email sent',archive_path,report_hash)
+            store.finish_run(rid,'dry_run',fetched,analyzed,errors,'No email sent',archive_path,report_hash,exit_code=0)
             print(body); print(f'Saved to {out} and latest-digest.html; no email sent.'); return 0
         decision=send_decision(analyzed,updated_count,errors,s.email_on_empty)
         if decision=='analysis_failed':
-            store.finish_run(rid,'analysis_failed',fetched,analyzed,errors,'All attempted analyses failed; email skipped',archive_path,report_hash)
+            store.finish_run(rid,'analysis_failed',fetched,analyzed,errors,'All attempted analyses failed; email skipped',archive_path,report_hash,exit_code=1)
             logging.error('No analysis succeeded; digest not sent.')
             _alert(store,s,f'{errors} analyses failed and none succeeded')
             print(body); print('No analysis succeeded; digest not sent. See the log.',file=sys.stderr); return 1
         if decision=='no_new_content':
             store.delivery(rid,'skipped_no_new_content','No new analyses')
-            store.finish_run(rid,'no_new_content',fetched,analyzed,errors,'No new content; email skipped',archive_path,report_hash)
+            store.finish_run(rid,'no_new_content',fetched,analyzed,errors,'No new content; email skipped',archive_path,report_hash,exit_code=0)
             logging.info('No new content; digest not sent.')
             print(body); print(f'No new content; report saved to {out} but not emailed.'); return 0
         key=hashlib.sha256(f'{subject}|{report_hash}'.encode()).hexdigest()[:32]
-        if store.delivery_sent(key):
-            store.delivery(rid,'skipped_duplicate','Same report already sent',key)
-            store.finish_run(rid,'success',fetched,analyzed,errors,'Duplicate report; email skipped',archive_path,report_hash)
+        recipients=parse_recipients(s.email_to)
+        already=store.sent_recipients(key)
+        pending=[r for r in recipients if r.casefold() not in already]
+        if not pending:
+            store.delivery(rid,'skipped_duplicate','All recipients already sent',key)
+            status=run_status(errors)
+            store.finish_run(rid,status,fetched,analyzed,errors,'Duplicate report; email skipped',archive_path,report_hash,exit_code=0 if status=='success' else 1)
             logging.info('Duplicate report; email skipped.')
-            print(f'Same report already sent; email skipped. Report saved to {out}.'); return 0
-        send_email(s.smtp_host,s.smtp_port,s.smtp_username,s.smtp_password,s.email_from,s.email_to,subject,body,s.smtp_starttls,html=html,security=s.smtp_security)
-        store.delivery(rid,'sent','',key); store.finish_run(rid,'success',fetched,analyzed,errors,'',archive_path,report_hash)
-        logging.info('Digest sent: articles=%d analyzed=%d errors=%d',fetched,analyzed,errors); return 0
+            print(f'Same report already sent to all recipients; email skipped. Report saved to {out}.'); return 0 if status=='success' else 1
+        store.update_run(rid,stage='sending')
+        results=send_email_detailed(s.smtp_host,s.smtp_port,s.smtp_username,s.smtp_password,s.email_from,pending,subject,body,s.smtp_starttls,html=html,security=s.smtp_security)
+        failed=[]
+        for res in results:
+            store.delivery(rid,'sent' if res['ok'] else 'failed',res.get('error',''),key,res['recipient'])
+            if not res['ok']: failed.append(res)
+        if failed:
+            msg=f"{len(results)-len(failed)}/{len(results)} pending recipient(s) sent; failed: "+', '.join(r['recipient'] for r in failed)
+            logging.error(msg)
+            store.finish_run(rid,'partial_failed',fetched,analyzed,errors,msg,archive_path,report_hash,exit_code=1)
+            print(body); print(msg,file=sys.stderr); return 1
+        status=run_status(errors)
+        store.finish_run(rid,status,fetched,analyzed,errors,'Some articles failed' if status!='success' else '',archive_path,report_hash,exit_code=0 if status=='success' else 1)
+        if status!='success': logging.warning('Run completed with article errors: %d',errors)
+        logging.info('Digest sent: articles=%d analyzed=%d errors=%d recipients=%d',fetched,analyzed,errors,len(results))
+        return 0 if status=='success' else 1
     except Exception as e:
-        store.finish_run(rid,'failed',fetched,analyzed,errors+1,str(e)); logging.exception('Run failed')
+        store.finish_run(rid,'failed',fetched,analyzed,errors+1,str(e),exit_code=1); logging.exception('Run failed')
         _alert(store,s,str(e))
         print(f'Run failed: {e}',file=sys.stderr); return 1
 if __name__=='__main__': raise SystemExit(main())

@@ -67,3 +67,21 @@ class Tests(unittest.TestCase):
    for status in ('failed','failed','success','failed'):
     rid=s.start_run(); s.finish_run(rid,status,0,0,1 if status!='success' else 0)
    self.assertEqual(s.consecutive_failures(),1)
+
+ def test_run_stage_and_recipient_delivery(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'run.sqlite3')); rid=s.start_run(stage='starting')
+   s.update_run(rid,stage='analyzing',pid=123)
+   latest=s.latest_run(); self.assertEqual(latest['stage'],'analyzing');self.assertEqual(latest['pid'],123)
+   s.delivery(rid,'sent','',key='k1',recipient='a@example.com')
+   s.delivery(rid,'failed','smtp boom',key='k1',recipient='b@example.com')
+   self.assertEqual(s.sent_recipients('k1'),{'a@example.com'})
+   rows=s.run_deliveries(rid); self.assertEqual([r['recipient'] for r in rows],['a@example.com','b@example.com'])
+   s.finish_run(rid,'partial_failed',1,1,1,'one recipient failed',exit_code=1)
+   latest=s.latest_run(); self.assertEqual(latest['status'],'partial_failed');self.assertEqual(latest['exit_code'],1);self.assertEqual(latest['stage'],'done')
+ def test_active_run_detection(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'active.sqlite3')); rid=s.start_run()
+   self.assertEqual(s.active_run()['run_id'],rid)
+   s.finish_run(rid,'success',0,0,0)
+   self.assertIsNone(s.active_run())

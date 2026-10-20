@@ -23,7 +23,7 @@
 9. 成功收到邮件并检查内容后，再设置任务计划：`.\deploy\windows\install-task.ps1`。
 
 ## 报告与评分
-- 每次运行生成 `reports/latest-digest.txt` 与 `reports/latest-digest.html`，并按时间戳归档到 `reports/archive/YYYY-MM-DD-HHMMSS.*`；数据库 `runs` 表记录报告路径与哈希。
+- 每次运行生成 `reports/latest-digest.txt` 与 `reports/latest-digest.html`，并按日期目录归档到 `reports/archive/YYYY/MM/DD/`：每次运行保存 `HHMMSS.txt`、`.html`、`.items.json`（结构化分析快照）和 `.manifest.json`（运行 ID、报告哈希、统计与文件清单）。`--render-only` 只更新 latest，不新增归档。详见 `docs/LOCAL_DAILY_ARCHIVE.md`。
 - 报告采用决策简报结构：执行摘要（先给结论）→ 关键发现（事实 / 初判 / 商业评估 / 关键未知 / 建议验证）→ 商业评估表 → 战略含义 → 建议行动 → 附录（来源、过滤原因、数据质量、评分规则、免责声明）。
 - 只想调整报告版式时用 `--render-only`，直接基于数据库里已保存的分析重新生成报告，不重新调用模型、不重新评分：
   `.\.venv\Scripts\python.exe -m opportunity_radar.cli --render-only`
@@ -79,6 +79,20 @@ py -3 -m opportunity_radar.source_audit --check-urls
 - 来源编辑作用于 `OR_SOURCES_PATH` 指向的本地注册表（默认 `config/sources.local.csv`）；仓库中的 `config/sources.csv` 只是 18 个候选源模板，默认全部禁用。
 - 收件人保存到 `config/recipients.json`（已被 `.gitignore` 排除），文件存在时优先于 `.env` 的 `OR_EMAIL_TO`。SMTP 账号和授权码始终只从 `.env` 读取，页面不会显示。
 - 后台没有多用户认证，只监听 `127.0.0.1`，不要映射到局域网或公网。
+
+## 端到端验收
+```powershell
+.\.venv\Scripts\python.exe -m opportunity_radar.acceptance
+```
+逐项检查配置、来源审计、FreshRSS、本地模型、SQLite、报告、邮件配置和 Windows 计划任务；`--send-mail` 会额外发一封测试信，`--json` 输出机器可读结果。关键项失败时返回非零。
+
+## 管理 API 契约
+- 成功响应：`{"ok": true, "request_id": "...", ...payload}`；失败响应：`{"ok": false, "error": {"code": "...", "message": "...", "details": []}, "request_id": "..."}`。
+- 错误码：`VALIDATION_ERROR`、`FORBIDDEN`、`SOURCE_VALIDATION_FAILED`、`FRESHRSS_UNAVAILABLE`、`SMTP_FAILED`、`SMTP_AUTH_FAILED`、`RUN_ALREADY_ACTIVE`、`SCHEDULE_FAILED`、`REPORT_MISSING`、`NOT_FOUND`、`INTERNAL_ERROR`。
+- GET 和 POST 都校验 Host/Origin，只接受本机来源；来源与收件人写入有字段级校验和写入锁。
+- 运行状态以 SQLite 的 `runs` 表为准，记录 `run_id`、`stage`、`status`、`exit_code`、报告路径和哈希；状态包括 `success`、`partial_failed`、`failed`、`analysis_failed`、`no_new_content`、`dry_run`。
+- 邮件按收件人逐条记录在 `deliveries` 表；失败的地址可以在后台单独重试，不会重复发给已成功的地址。
+- 前端拆分为 `admin/index.html`、`admin/assets/app.css`、`admin/assets/app.js`，包含 loading / empty / error 状态、键盘焦点管理与表单错误定位。
 
 ## 邮件与运行可靠性
 - 先单独验证邮件配置，不生成报告：`.\.venv\Scripts\python.exe -m opportunity_radar.mail_test`。它只发送一封测试邮件；SMTP 成功只代表发送端完成提交，不代表已送达或被阅读。
