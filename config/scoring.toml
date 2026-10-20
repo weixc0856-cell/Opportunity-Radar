@@ -1,0 +1,9 @@
+[weights]
+demand_clarity = 25
+payment_evidence = 25
+actionability = 20
+feasibility = 20
+novelty = 10
+[thresholds]
+priority = 75
+watch = 55

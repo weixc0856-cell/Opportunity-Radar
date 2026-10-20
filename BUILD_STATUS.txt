@@ -1,0 +1,8 @@
+Build status
+============
+Offline unit tests: 11 tests passed in the generation environment.
+Offline sample digest: generated successfully.
+
+Not end-to-end tested on the user's machine: Docker/FreshRSS startup, exact Fever API behavior for the installed FreshRSS version, local llama-server model response, SMTP credentials/delivery, and Windows Task Scheduler. Verify these before unattended use.
+
+Security note: source feeds must be reviewed and mapped explicitly in config/sources.csv, including freshrss_feed_id. The default source is disabled. FreshRSS should only contain approved subscriptions; the program also filters articles by the approved feed ID mapping.

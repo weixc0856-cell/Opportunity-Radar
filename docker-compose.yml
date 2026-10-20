@@ -1,0 +1,16 @@
+services:
+  freshrss:
+    image: freshrss/freshrss:latest
+    container_name: opportunity-radar-freshrss
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:80"
+    environment:
+      TZ: Asia/Shanghai
+      CRON_MIN: "*/20"
+    volumes:
+      - freshrss_data:/var/www/FreshRSS/data
+      - freshrss_extensions:/var/www/FreshRSS/extensions
+volumes:
+  freshrss_data:
+  freshrss_extensions:

@@ -1,0 +1,9 @@
+[project]
+name = "opportunity-radar"
+version = "0.1.0"
+description = "Local-first opportunity intelligence built from public RSS sources and a local LLM"
+requires-python = ">=3.11"
+dependencies = []
+
+# Runtime uses only the Python standard library (sqlite3, urllib, tomllib, html, json).
+# Add a dependency only with a documented purpose and a reproducible version pin.
