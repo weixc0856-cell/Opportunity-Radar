@@ -10,3 +10,4 @@ reports/*
 *.db
 config/sources.local.csv
 mail.txt
+config/recipients.json

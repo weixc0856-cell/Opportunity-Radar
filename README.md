@@ -73,6 +73,13 @@ py -3 -m opportunity_radar.source_audit --check-urls
 
 `stats` 会给出三个关键指标：机器候选被人工判为噪声的比例（误报率）、人工认定需求被机器排进候选区的比例（命中率），以及机器状态与人工标签的交叉表。
 
+## 本地管理后台
+- 启动：`.\deploy\windows\start-admin.ps1`，或 `.\.venv\Scripts\python.exe -m opportunity_radar.admin_server`；打开 http://127.0.0.1:8090。
+- 功能：状态总览、来源编辑（可从 FreshRSS 读取真实 Feed ID）、收件人管理与测试邮件、立即运行日报、注册每日任务、查看日志和最新 HTML 报告。
+- 来源编辑作用于 `OR_SOURCES_PATH` 指向的本地注册表（默认 `config/sources.local.csv`）；仓库中的 `config/sources.csv` 只是 18 个候选源模板，默认全部禁用。
+- 收件人保存到 `config/recipients.json`（已被 `.gitignore` 排除），文件存在时优先于 `.env` 的 `OR_EMAIL_TO`。SMTP 账号和授权码始终只从 `.env` 读取，页面不会显示。
+- 后台没有多用户认证，只监听 `127.0.0.1`，不要映射到局域网或公网。
+
 ## 邮件与运行可靠性
 - 先单独验证邮件配置，不生成报告：`.\.venv\Scripts\python.exe -m opportunity_radar.mail_test`。它只发送一封测试邮件；SMTP 成功只代表发送端完成提交，不代表已送达或被阅读。
 - 163 邮箱使用 `smtp.163.com:465` + 授权码（不是登录密码），配置 `OR_SMTP_SECURITY=ssl`、`OR_SMTP_STARTTLS=false`。其他服务商按文档选择 `ssl` / `starttls` / `none`；旧的 `OR_SMTP_TLS` 仍作为兼容别名读取。

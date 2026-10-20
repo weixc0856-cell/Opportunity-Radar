@@ -39,11 +39,24 @@ class Settings:
         security=(g('OR_SMTP_SECURITY') or g('OR_SMTP_TLS') or '').lower()
         if security=='auto': security='ssl' if port in {465,994} else 'starttls'
         elif not security and port in {465,994}: security='ssl'
+        # The local admin recipient list takes precedence over OR_EMAIL_TO when present.
+        email_to=g('OR_EMAIL_TO')
+        recipients_path=Path('config/recipients.json')
+        if recipients_path.exists():
+            try:
+                import json
+                saved=json.loads(recipients_path.read_text(encoding='utf-8'))
+                addresses=saved.get('recipients',[]) if isinstance(saved,dict) else []
+                if isinstance(addresses,list):
+                    joined=','.join(str(x).strip() for x in addresses if str(x).strip())
+                    if joined: email_to=joined
+            except (OSError,ValueError,TypeError):
+                pass
         return cls(freshrss_base_url=g('OR_FRESHRSS_BASE_URL','http://127.0.0.1:8088').rstrip('/'),freshrss_username=g('OR_FRESHRSS_USERNAME'),freshrss_api_key=g('OR_FRESHRSS_API_KEY'),
                    llm_base_url=g('OR_LLM_BASE_URL','http://127.0.0.1:8080/v1').rstrip('/'),llm_model=g('OR_LLM_MODEL'),llm_api_key=g('OR_LLM_API_KEY'),
                    llm_timeout=int(g('OR_LLM_TIMEOUT_SECONDS','90')),llm_max_tokens=int(g('OR_LLM_MAX_TOKENS','500')),
                    smtp_host=g('OR_SMTP_HOST'),smtp_port=port,smtp_username=g('OR_SMTP_USERNAME'),smtp_password=g('OR_SMTP_PASSWORD'),
-                   email_from=g('OR_EMAIL_FROM'),email_to=g('OR_EMAIL_TO'),smtp_starttls=bval('OR_SMTP_STARTTLS',True),smtp_security=security,
+                   email_from=g('OR_EMAIL_FROM'),email_to=email_to,smtp_starttls=bval('OR_SMTP_STARTTLS',True),smtp_security=security,
                    max_articles=max(1,int(g('OR_MAX_ARTICLES','10'))),request_timeout=int(g('OR_REQUEST_TIMEOUT_SECONDS','20')),
                    db_path=g('OR_DB_PATH','data/opportunity_radar.sqlite3'),log_path=g('OR_LOG_PATH','reports/opportunity-radar.log'),report_dir=g('OR_REPORT_DIR','reports'),
                    email_on_empty=bval('OR_EMAIL_ON_EMPTY',False),alert_after_failures=max(1,int(g('OR_ALERT_AFTER_FAILURES','3'))))

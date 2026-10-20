@@ -18,4 +18,6 @@ SMTP check before a real run: `py -3 -m opportunity_radar.mail_test`. It sends o
 
 Each run writes a timestamped archive under `reports/archive/` and records the path plus report hash in the `runs` table. Duplicate reports are not sent twice; runs with no new analyses record `skipped_no_new_content`; repeated failures trigger an alert after `OR_ALERT_AFTER_FAILURES` runs.
 
+Local admin UI: `.\deploy\windows\start-admin.ps1` (or `.\.venv\Scripts\python.exe -m opportunity_radar.admin_server`) serves http://127.0.0.1:8090. It binds loopback only and has no authentication. It edits the registry selected by `OR_SOURCES_PATH` and stores recipients in `config/recipients.json`; SMTP secrets stay in `.env`.
+
 Scheduled runs (`run-digest.ps1`) start Docker Compose and the local model first, then write `reports/scheduler-run.log` with step-level status and `reports/cli-run.log` / `cli-run.err.log` with the raw CLI output. Multiple recipients in `OR_EMAIL_TO` (comma or semicolon separated) receive separate copies.

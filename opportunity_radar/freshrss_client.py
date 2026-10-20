@@ -32,6 +32,17 @@ class FreshRSSClient:
                                fetched_at=fetched,content_source='rss_summary' if has_text else 'title_only',
                                retrieval_status='ok' if has_text else 'empty_content'))
         out.sort(key=lambda a:a.published,reverse=True); return out
+    def list_feeds(self):
+        """Return FreshRSS Fever API feed metadata for local source-to-feed mapping."""
+        data = self._request({'feeds': '1'})
+        out = []
+        for item in data.get('feeds', []):
+            feed_id = str(item.get('id', '')).strip()
+            title = str(item.get('title', '')).strip()
+            if feed_id and title:
+                out.append({'id': feed_id, 'title': title, 'url': str(item.get('url', '')).strip(), 'site_url': str(item.get('site_url', '')).strip()})
+        return out
+
     def _fetch_feed(self,feed_id=None):
         # Fever caps items at 50 and sorts since_id ascending, so since_id would pin us to the
         # oldest rows once the database grows. max_id returns the newest rows, descending.
