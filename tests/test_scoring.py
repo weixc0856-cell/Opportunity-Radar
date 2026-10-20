@@ -59,6 +59,17 @@ class Tests(unittest.TestCase):
   e=s['evidence'][0]
   self.assertEqual(e['id'],'e1');self.assertEqual(e['field'],'summary');self.assertGreaterEqual(e['start'],0)
   self.assertEqual(s['evidence_integrity'],'ok')
+ def test_mixed_traceable_and_untraceable_quotes_are_capped(self):
+  a=dict(STRONG); a['evidence_quotes']=['small bakeries say owners paid for a budget tool','invented quote not in source']
+  s=score_article(a,article=art('Weekly roster','small bakeries say owners paid for a budget tool'))
+  self.assertEqual(s['evidence_level'],'untraceable'); self.assertLessEqual(s['score'],74)
+ def test_weights_are_normalized(self):
+  a=dict(STRONG); article=art('Weekly roster','small bakeries say owners paid for a budget tool')
+  base=score_article(a,article=article)['score']
+  scaled=score_article(a,article=article,weights={'demand_clarity':50,'payment_evidence':50,'actionability':40,'feasibility':40,'novelty':20})['score']
+  self.assertEqual(base,scaled)
+ def test_negative_weights_rejected(self):
+  with self.assertRaises(ValueError): score_article(dict(STRONG),weights={'demand_clarity':-1})
  def test_unlocated_evidence_is_flagged(self):
   a=dict(STRONG); a['evidence_quotes']=['not in the input at all']
   s=score_article(a,article=art('Weekly roster','some summary'))

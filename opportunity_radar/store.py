@@ -22,13 +22,21 @@ class Store:
         CREATE TABLE IF NOT EXISTS articles(article_key TEXT PRIMARY KEY, article_id TEXT, title TEXT NOT NULL, url TEXT NOT NULL, published TEXT, source_name TEXT, summary_hash TEXT, created_at TEXT NOT NULL, fetched_at TEXT, content_source TEXT, retrieval_status TEXT);
         CREATE TABLE IF NOT EXISTS article_versions(article_key TEXT NOT NULL, summary_hash TEXT NOT NULL, content_source TEXT, fetched_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(article_key,summary_hash));
         CREATE TABLE IF NOT EXISTS analyses(article_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT);
-        CREATE TABLE IF NOT EXISTS deliveries(delivery_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, sent_at TEXT, status TEXT NOT NULL, message TEXT);
+        CREATE TABLE IF NOT EXISTS analysis_history(history_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL, UNIQUE(article_key,analyzed_at));
+        CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT);
+        CREATE TABLE IF NOT EXISTS deliveries(delivery_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, sent_at TEXT, status TEXT NOT NULL, message TEXT, idempotency_key TEXT);
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
             for name in ('fetched_at','content_source','retrieval_status'):
                 if name not in cols: c.execute(f'ALTER TABLE articles ADD COLUMN {name} TEXT')
+            for table,extra in (('runs',(('report_path','TEXT'),('report_hash','TEXT'))),('deliveries',(('idempotency_key','TEXT'),))):
+                have={r[1] for r in c.execute(f'PRAGMA table_info({table})')}
+                for name,typ in extra:
+                    if name not in have: c.execute(f'ALTER TABLE {table} ADD COLUMN {name} {typ}')
+            # Backfill the current analysis once so pre-upgrade results have a history entry.
+            c.execute('''INSERT OR IGNORE INTO analysis_history(article_key,result_json,score,risk_flag,status,analyzed_at)
+                         SELECT article_key,result_json,score,risk_flag,status,analyzed_at FROM analyses''')
     @staticmethod
     def key(url): return hashlib.sha256(url.strip().encode()).hexdigest()
     def analyzed(self,key):
@@ -42,20 +50,64 @@ class Store:
         with self.connect() as c:
             inserted=c.execute('INSERT OR IGNORE INTO articles(article_key,article_id,title,url,published,source_name,summary_hash,created_at,fetched_at,content_source,retrieval_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(key,a.article_id,a.title,a.url,a.published,a.source_name,h,stamp,fetched,cs,rs)).rowcount
             c.execute('INSERT OR IGNORE INTO article_versions(article_key,summary_hash,content_source,fetched_at,created_at) VALUES(?,?,?,?,?)',(key,h,cs,fetched,stamp))
+            if not inserted:
+                # articles is the current metadata row; article_versions preserves each observed content hash.
+                c.execute('''UPDATE articles SET article_id=?,title=?,url=?,published=?,source_name=?,summary_hash=?,
+                             fetched_at=?,content_source=?,retrieval_status=? WHERE article_key=?''',
+                          (a.article_id,a.title,a.url,a.published,a.source_name,h,fetched,cs,rs,key))
             return inserted
     def versions(self,key):
         with self.connect() as c:
             return [dict(r) for r in c.execute('SELECT summary_hash,content_source,fetched_at,created_at FROM article_versions WHERE article_key=? ORDER BY created_at',(key,))]
+    def latest_version_hash(self,key):
+        with self.connect() as c:
+            row=c.execute('SELECT summary_hash FROM article_versions WHERE article_key=? ORDER BY created_at DESC LIMIT 1',(key,)).fetchone()
+            return row['summary_hash'] if row else None
+    def analysis_input_hash(self,key):
+        with self.connect() as c:
+            row=c.execute('SELECT result_json FROM analyses WHERE article_key=?',(key,)).fetchone()
+            if not row: return None
+            try:
+                payload=json.loads(row['result_json'])
+                return payload.get('meta',{}).get('input_hash')
+            except (ValueError,TypeError):
+                return None
     def save_analysis(self,key,result,score,meta=None):
         payload={'analysis':result,'scoring':score}
         if meta: payload['meta']=meta
-        with self.connect() as c: c.execute('INSERT OR REPLACE INTO analyses VALUES(?,?,?,?,?,?)',(key,json.dumps(payload,ensure_ascii=False),score['score'],score.get('risk_flag',''),'ok',now()))
+        stamp=now(); raw=json.dumps(payload,ensure_ascii=False)
+        with self.connect() as c:
+            row=(key,raw,score['score'],score.get('risk_flag',''),'ok',stamp)
+            c.execute('INSERT OR IGNORE INTO analysis_history(article_key,result_json,score,risk_flag,status,analyzed_at) VALUES(?,?,?,?,?,?)',row)
+            c.execute('INSERT OR REPLACE INTO analyses VALUES(?,?,?,?,?,?)',row)
+    def analysis_history(self,key,limit=20):
+        with self.connect() as c:
+            return [dict(r) for r in c.execute('SELECT history_id,result_json,score,risk_flag,status,analyzed_at FROM analysis_history WHERE article_key=? ORDER BY analyzed_at DESC LIMIT ?',(key,limit))]
     def start_run(self):
         with self.connect() as c: return c.execute('INSERT INTO runs(started_at,status) VALUES(?,?)',(now(),'running')).lastrowid
-    def finish_run(self,rid,status,ac,an,err,msg=''):
-        with self.connect() as c: c.execute('UPDATE runs SET finished_at=?,status=?,article_count=?,analyzed_count=?,error_count=?,message=? WHERE run_id=?',(now(),status,ac,an,err,msg[:1000],rid))
-    def delivery(self,rid,status,msg=''):
-        with self.connect() as c: c.execute('INSERT INTO deliveries(run_id,sent_at,status,message) VALUES(?,?,?,?)',(rid,now(),status,msg[:1000]))
+    def finish_run(self,rid,status,ac,an,err,msg='',report_path='',report_hash=''):
+        with self.connect() as c: c.execute('UPDATE runs SET finished_at=?,status=?,article_count=?,analyzed_count=?,error_count=?,message=?,report_path=?,report_hash=? WHERE run_id=?',(now(),status,ac,an,err,msg[:1000],report_path or '',report_hash or '',rid))
+    def delivery(self,rid,status,msg='',key=''):
+        with self.connect() as c: c.execute('INSERT INTO deliveries(run_id,sent_at,status,message,idempotency_key) VALUES(?,?,?,?,?)',(rid,now(),status,msg[:1000],key or ''))
+    def delivery_sent(self,key):
+        if not key: return False
+        with self.connect() as c: return c.execute("SELECT 1 FROM deliveries WHERE idempotency_key=? AND status='sent'",(key,)).fetchone() is not None
+    def consecutive_failures(self):
+        with self.connect() as c:
+            rows=[r['status'] for r in c.execute("SELECT status FROM runs WHERE status IN ('success','no_new_content','failed','analysis_failed') ORDER BY run_id DESC LIMIT 30")]
+        n=0
+        for status in rows:
+            if status in {'failed','analysis_failed'}: n+=1
+            else: break
+        return n
+    def invalidate_review(self,key,note='Source content changed; review is stale'):
+        prev=self.get_review(key)
+        if not prev: return False
+        with self.connect() as c:
+            c.execute('INSERT INTO review_history(article_key,previous_label,label,note,reviewed_at) VALUES(?,?,?,?,?)',
+                      (key,prev['label'],'stale_after_source_update',note[:2000],now()))
+            c.execute('DELETE FROM reviews WHERE article_key=?',(key,))
+        return True
     def set_review(self,key,label,note=''):
         prev=self.get_review(key)
         with self.connect() as c:

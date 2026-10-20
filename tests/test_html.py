@@ -19,6 +19,14 @@ class Tests(unittest.TestCase):
  def test_escapes_untrusted_text(self):
   html=render_html([item(title='<script>alert(1)</script>')],stats(),'2026-10-20')
   self.assertNotIn('<script>alert(1)</script>',html);self.assertIn('&lt;script&gt;',html)
+ def test_unsafe_source_url_is_not_rendered_as_link(self):
+  html=render_html([item(url='javascript:alert(1)')],stats(),'2026-10-20')
+  self.assertNotIn('href="javascript:alert(1)',html)
+  self.assertIn('原文链接不可用',html)
+ def test_sample_mode_has_prominent_disclaimer(self):
+  html=render_html([item()],stats(sample_mode=True),'2026-10-20')
+  self.assertIn('离线演示数据',html)
+  self.assertIn('不代表真实来源、用户需求或商业机会',html)
  def test_no_priority_shows_empty_reason(self):
   html=render_html([],stats(fetched=10,analyzed=0,skipped=10,counts={'priority':0,'watch':0,'filtered':0},empty_reason='本轮没有新的分析任务'),'2026-10-20')
   self.assertIn('本轮没有新的分析任务',html)

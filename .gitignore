@@ -8,3 +8,5 @@ reports/*
 !reports/.gitkeep
 *.sqlite3
 *.db
+config/sources.local.csv
+mail.txt

@@ -12,6 +12,10 @@ def stats(**kw):
     d.update(kw); return d
 
 class Tests(unittest.TestCase):
+ def test_sample_mode_disclaims_real_business_judgment(self):
+  _,body=render_digest([item('watch',60,'synthetic')],stats(sample_mode=True,fetched=1,analyzed=1),'2026-10-20')
+  self.assertIn('不形成真实商业判断',body)
+  self.assertIn('演示数据没有真实验证任务',body)
  def test_empty_no_data_is_honest(self):
   subject,body=render_digest([],stats(),'2026-10-20')
   self.assertIn('2026-10-20',subject);self.assertIn('本轮没有从 FreshRSS 获取到文章',body)
@@ -29,8 +33,8 @@ class Tests(unittest.TestCase):
   _,body=render_digest([item('filtered',20,'a job',reason='hiring')],stats(fetched=1,analyzed=1),'2026-10-20')
   self.assertIn('招聘/企业动态：1 篇',body)
  def test_stats_line_reports_each_stage(self):
-  _,body=render_digest([],stats(fetched=10,new=2,queued=3,analyzed=3,failed=1,skipped=7),'2026-10-20')
-  self.assertIn('获取 10',body);self.assertIn('新增 2',body);self.assertIn('已有结果跳过 7',body)
+  _,body=render_digest([],stats(fetched=10,new=2,updated=1,queued=3,analyzed=3,failed=1,skipped=7),'2026-10-20')
+  self.assertIn('获取 10',body);self.assertIn('新增 2',body);self.assertIn('内容更新 1',body);self.assertIn('已有结果跳过 7',body)
  def test_conclusion_first(self):
   _,body=render_digest([item('watch',62,'ParaView crinkle')],stats(fetched=10,analyzed=10),'2026-10-20')
   head=body.split('【执行摘要】\n')[1].split('\n')[0]
@@ -67,3 +71,7 @@ class Tests(unittest.TestCase):
   _,body=render_digest([it],stats(fetched=10,new=8,queued=6,analyzed=6,counts={'watch':1,'priority':0,'filtered':5}),'2026-10-20')
   self.assertIn('数据概览',body);self.assertIn('漏斗：本轮获取 10',body)
   self.assertIn('口径：本轮进入分析的 6 条',body)
+ def test_none_commercial_signal_is_not_appended(self):
+  it=item('watch',60); it['analysis']={'summary_zh':'用户报告了下载问题','commercial_signal':'none'}
+  _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
+  self.assertIn('初判：用户报告了下载问题',body);self.assertNotIn('下载问题 none',body)

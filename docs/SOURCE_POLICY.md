@@ -1,6 +1,6 @@
 # Source approval policy
 
-All sources start disabled. Before enabling a source, record official owner, canonical URL, documented RSS/API method and terms, robots.txt result and review date where relevant, allowed access frequency, allowed storage/analysis/internal summary uses, retention limits and attribution requirements.
+All repository sources start disabled, and local FreshRSS feed IDs are blank because they are installation-specific. Before enabling a source, record the official owner, canonical domain, actual feed provider (if different), documented RSS/API method, owner and provider terms, review date, allowed access frequency, allowed storage/analysis/internal summary uses, retention limits and attribution requirements. Use `python -m opportunity_radar.source_audit` to check metadata completeness. Optional URL checks only confirm reachability; they do not confirm authenticity, accuracy or permission.
 
 `robots.txt` is not complete legal authorization. Public visibility does not automatically license bulk collection, storage or redistribution. Do not bypass authentication, paywalls, CAPTCHAs, rate limits or technical access controls. If terms are unclear, keep disabled. Suspend a source if permissions change or access is blocked. Email should contain concise summaries and links, not full article copies.
 

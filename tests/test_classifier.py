@@ -29,6 +29,15 @@ class Tests(unittest.TestCase):
   self.assertGreater(classify(art('Tool pricing page'),ana())['payment_hits'],0)
  def test_model_speculation_is_not_payment_evidence(self):
   self.assertEqual(classify(art('Weekly roster tool'),ana(commercial_signal='customers pay a budget'))['payment_hits'],0)
+ def test_pricing_keyword_is_indirect_not_direct_payment(self):
+  c=classify(art('Tool pricing page'),ana())
+  self.assertEqual(c['payment_evidence'],'indirect')
+ def test_already_use_is_not_a_purchase(self):
+  c=classify(art('We already use this tool'),ana())
+  self.assertNotEqual(c['payment_evidence'],'existing_purchase')
+ def test_paid_purchase_is_direct_evidence(self):
+  c=classify(art('We already paid for this simulation tool'),ana())
+  self.assertEqual(c['payment_evidence'],'existing_purchase')
  def test_content_source_title_only(self):
   self.assertEqual(classify(art('x'),ana())['content_source'],'title_only')
   self.assertEqual(classify(art('x','some summary'),ana())['content_source'],'rss_summary')

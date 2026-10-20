@@ -1,7 +1,7 @@
 from collections import Counter
 
-FUNNEL_STEPS=('fetched','new','queued','analyzed')
-FUNNEL_LABELS={'fetched':'本轮获取','new':'新增','queued':'进入分析','analyzed':'分析成功'}
+FUNNEL_STEPS=('fetched','new','updated','queued','analyzed')
+FUNNEL_LABELS={'fetched':'本轮获取','new':'新增','updated':'内容更新','queued':'进入分析','analyzed':'分析成功'}
 EVIDENCE_ORDER=('full_text','summary','title','untraceable','none')
 
 def funnel(stats):
@@ -10,7 +10,7 @@ def funnel(stats):
     if stats.get('render_only'):
         # A re-render has no run of its own; show the stored set instead of fake zeros.
         return [('已保存分析',stats.get('analyzed',0)),('持续观察',counts.get('watch',0)),('优先验证',counts.get('priority',0))]
-    alias={'fetched':stats.get('fetched',stats.get('article_count',0)),'new':stats.get('new',0),
+    alias={'fetched':stats.get('fetched',stats.get('article_count',0)),'new':stats.get('new',0),'updated':stats.get('updated',0),
            'queued':stats.get('queued',stats.get('analyzed_count',0)),'analyzed':stats.get('analyzed',stats.get('analyzed_count',0))}
     rows=[(FUNNEL_LABELS[k],alias[k]) for k in FUNNEL_STEPS]
     rows.append(('持续观察',counts.get('watch',0))); rows.append(('优先验证',counts.get('priority',0)))

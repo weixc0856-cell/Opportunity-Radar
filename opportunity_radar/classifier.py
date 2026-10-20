@@ -6,8 +6,12 @@ FUNDING=re.compile(r'\b(raises?|raised|funding|series [a-e]\b|valuation|acquired
 PAIN=re.compile(r'\b(struggle|pain|frustrat|problem|annoying|too slow|takes? (hours|days)|manual|tedious|expensive|how do (you|i)|why (does|do)|wish (there|it))\b|痛点|麻烦|耗时|效率|抱怨',re.I)
 TECH=re.compile(r'\b(open[- ]source|github|librar(y|ies)|framework(s)?|compiler(s)?|benchmark(s)?|driver(s)?|kernel(s)?|sdk(s)?|protocol(s)?|algorithm(s)?|filters?)\b|开源|框架|驱动|算法',re.I)
 PRODUCT=re.compile(r'\b(launch(es|ed|ing)?|releas(e|es|ed|ing)|introduc(e|es|ed|ing)|announc(e|es|ed|ing)|now available|unveil(s|ed)?|ship(s|ped)?)\b|发布|推出|上线',re.I)
-PAYMENT=re.compile(r'\b(paid|paying|purchase|buy|budget|pricing|subscription|revenue|profit)\b|付费|采购|预算|收入|营收',re.I)
-WILLING=re.compile(r'\b(willing to pay|would pay|happy to pay|budget|purchase|procure|contract|outsourc|hire (someone|a freelancer))\b|愿意付费|预算|采购|外包',re.I)
+# Broad commercial terms are only indirect signals. Direct payment evidence uses
+# narrower phrases so a generic 'pricing page' or 'already use' is not mislabeled as a sale.
+PAYMENT=re.compile(r'\b(paid|paying|purchase|buy|budget|pricing|subscription|revenue|profit|invoice|procurement)\b|付费|采购|预算|收入|营收|发票',re.I)
+EXPLICIT_BUDGET=re.compile(r'\b(budget available|budget approved|budget allocated|have a budget|has a budget|budget of \$?\d|budget:? \$?\d|allocated budget|approved budget)\b|明确预算|预算已批|预算已落实|有预算|预算为[0-9]',re.I)
+WILLING=re.compile(r'\b(willing to pay|would pay|happy to pay|ready to pay|willing to purchase|will pay for|i would pay|we would pay|pay for this|pay for a tool|pay for a solution)\b|愿意付费|愿意购买|愿意支付',re.I)
+EXISTING_PAID=re.compile(r'\b(already paid|already pay|currently paying|currently pay|paid for|paid \$\d|paying \$\d|purchased|purchase order|paid subscription|customers? pay for|already a paying customer|renewed (the )?subscription)\b|已付费|已经付费|已采购|付费购买|已支付|采购订单',re.I)
 DEPLOY=re.compile(r'\b(error|fail(s|ed|ing)?|install(ation|ing)?|deploy(ment|ing)?|integrat(e|ion|ing)|migrat(e|ion)|compatib(le|ility)|crash(es|ed)?|doesn.t work|not working|performance)\b|报错|部署|集成|兼容|失败|崩溃|性能',re.I)
 GAP=re.compile(r'\b(missing|feature request|support for|wish (there|it)|would be nice|not supported|no support|add support|need a way)\b|不支持|缺失|希望|建议增加',re.I)
 SERVICE=re.compile(r'\b(consult(ing|ant)?|custom development|automation|freelanc|contract work|outsourc)\b|咨询|定制开发|自动化|外包',re.I)
@@ -26,6 +30,7 @@ def _source_quality(article,kind,text,source=None):
     declared=str((source.get('provenance_class','') if isinstance(source,dict) else getattr(source,'provenance_class','')) or '').strip().lower()
     if declared: return declared
     url=(_field(article,'url') or '').lower(); name=(_field(article,'source_name') or '').lower()
+    if '.invalid' in url or name in {'sample only','offline sample','离线示例'}: return 'unknown'
     if any(h in url for h in FORUM_HOSTS) or 'forum' in name or 'community' in name: return 'first_party'
     if 'news.ycombinator.com' in url or 'hnrss.org' in url: return 'first_party'
     if 'github.com' in url and '/releases' in url: return 'project_record'
@@ -59,12 +64,15 @@ def classify(article,analysis,source=None):
     # Payment evidence must come from the article text, never from the model's own commentary.
     payment_hits=len(PAYMENT.findall(t))
     category=str(analysis.get('category','unknown')).lower()
-    if payment_hits: strength='moderate'
+    direct_budget=bool(EXPLICIT_BUDGET.search(t))
+    willingness=bool(WILLING.search(t))
+    existing_paid=bool(EXISTING_PAID.search(t))
+    if direct_budget or willingness or existing_paid: strength='strong'
+    elif payment_hits: strength='moderate'
     elif category in {'customer_pain','small_business','service_opportunity','market_change'}: strength='weak'
     else: strength='none'
-    if payment_hits and str(analysis.get('confidence','')).lower()=='high': strength='strong'
     summary=(_field(article,'summary') or '').strip()
-    signal=('payment_demand' if WILLING.search(t) else
+    signal=('payment_demand' if direct_budget or willingness else
             'user_pain' if kind=='user_pain' else
             'deployment_blocker' if DEPLOY.search(t) else
             'product_gap' if GAP.search(t) else 'tech_trend')
@@ -72,9 +80,9 @@ def classify(article,analysis,source=None):
            'enterprise_it' if ENTERPRISE.search(t) else
            'individual_dev' if DEV.search(t) else
            'smb' if SMB.search(t) else 'unknown')
-    pay=('explicit_budget' if WILLING.search(t) and PAYMENT.search(t) else
-         'stated_willingness' if WILLING.search(t) else
-         'existing_purchase' if re.search(r'\b(already (pay|paid|use|bought)|current vendor)\b|已在用|已经购买',t,re.I) else
+    pay=('explicit_budget' if direct_budget else
+         'stated_willingness' if willingness else
+         'existing_purchase' if existing_paid else
          'indirect' if payment_hits else 'none')
     delivery=('service' if SERVICE.search(t) else
               'product' if signal=='product_gap' or (PRODUCT_HINT.search(t) and kind=='product') else

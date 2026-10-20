@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timezone
 from html import unescape
-from .classifier import classify, PAYMENT, _field
+from .classifier import classify, _field
 
 # Weights must match config/scoring.toml; the CLI passes the TOML values in so a config
 # change actually changes the report instead of only the file.
@@ -31,10 +31,15 @@ def evidence_level(a,article=None):
     if not quotes: return 'none'
     title=_norm(_field(article,'title')); summary=_norm(_field(article,'summary'))
     seen_summary=False; seen_title=False
+    unlocated=False
     for q in quotes:
         ql=_norm(q)
         if ql and ql in title: seen_title=True; continue
-        if ql and summary and ql in summary: seen_summary=True
+        if ql and summary and ql in summary: seen_summary=True; continue
+        unlocated=True
+    # A mixture of traceable and fabricated/unmatched quotations must not be treated
+    # as fully traceable evidence. One valid quote cannot validate the others.
+    if unlocated: return 'untraceable'
     if seen_summary: return 'summary'
     if seen_title: return 'title'
     return 'untraceable'
@@ -48,7 +53,7 @@ def evidence_items(a,article=None):
         if ql and ql in title: field,pos='title',title.find(ql)
         elif ql and summary and ql in summary: field,pos='summary',summary.find(ql)
         else: field,pos='unlocated',-1
-        out.append({'id':f'e{i}','quote':q,'field':field,'start':pos,'length':len(q)})
+        out.append({'id':f'e{i}','quote':q,'field':field,'start':pos,'length':len(ql),'locator_basis':'normalized_text'})
     return out
 
 def _demand(a,cls):
@@ -60,13 +65,12 @@ def _demand(a,cls):
     return min(d,5)
 
 def _payment(a,cls,quotes):
-    claimed=str(a.get('revenue_claim','unknown')).lower()
-    d=2 if claimed in {'revenue','profit'} else 1 if claimed in {'market_size','mixed'} else 0
-    if cls.get('payment_hits',0)>0: d+=1
-    if any(PAYMENT.search(q) for q in quotes): d+=2
-    # A revenue claim with no quote behind it must not buy score.
-    if claimed in {'revenue','profit','market_size','mixed'} and not quotes: d=min(d,1)
-    return min(d,5)
+    # Score only deterministic evidence classifications from the source text.
+    # A model's revenue_claim or a broad keyword such as 'pricing' must not create
+    # direct payment evidence by itself.
+    kind=str(cls.get('payment_evidence','none')).lower()
+    return {'explicit_budget':5,'existing_purchase':5,'stated_willingness':4,
+            'indirect':1,'none':0,'unknown':0}.get(kind,0)
 
 def _action(a):
     step=str(a.get('suggested_next_step','') or '').strip()
@@ -103,8 +107,13 @@ def score_article(a,weights=None,article=None,classification=None,thresholds=Non
     level=evidence_level(a,article)
     parts={'demand_clarity':_demand(a,cls),'payment_evidence':_payment(a,cls,quotes),
            'actionability':_action(a),'feasibility':_feasibility(a,cls),'novelty':_novelty(article,now)}
-    total=sum(w.values()) or 1
-    raw=round(sum(parts[k]*w.get(k,0) for k in parts)/5)
+    total=sum(max(0,float(w.get(k,0))) for k in parts)
+    if total <= 0:
+        raise ValueError('Scoring weights must have a positive total')
+    if any(float(w.get(k,0)) < 0 for k in parts):
+        raise ValueError('Scoring weights cannot be negative')
+    # Normalize weights so valid alternative weight sets still map to 0–100.
+    raw=round(sum(parts[k]*max(0,float(w.get(k,0))) for k in parts)/total*20)
     # Untraceable or title-only evidence cannot reach "priority": cap it inside the watch band.
     capped=level not in {'summary','full_text'}
     if capped: raw=min(raw,th['priority']-1)

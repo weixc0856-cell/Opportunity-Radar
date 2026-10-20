@@ -20,6 +20,7 @@ def _top(items):
     return max(items,key=lambda x:x.get('score',0)) if items else None
 
 def decision_headline(items,stats):
+    if stats.get('sample_mode'): return '本页仅展示报告结构与评分流程，不形成真实商业判断。'
     pri=[x for x in items if x.get('status')=='priority']; watch=[x for x in items if x.get('status')=='watch']
     if pri:
         return f"本期筛选出 {len(pri)} 条达到验证门槛的信号，建议优先核实《{_top(pri)['title']}》。"
@@ -66,13 +67,17 @@ def empty_reason(stats):
 def _counts(items):
     return {s:sum(1 for x in items if x.get('status')==s) for s in STATUS_LABEL}
 
+def _judgment(a):
+    summary=str(a.get('summary_zh','') or '').strip(); cs=str(a.get('commercial_signal','') or '').strip()
+    return f'{summary} {cs}'.strip() if cs.lower() not in {'','none','unknown','n/a','未知','无'} else summary
+
 def _card(i,x):
     a=x.get('analysis',{}); cls=x.get('classification',{})
     ev=x.get('evidence') or []
     quotes='；'.join(f"[{e.get('id')}] {e.get('quote','')}" if e.get('id') else e.get('quote','') for e in ev) or '；'.join(a.get('evidence_quotes',[])) or '无可追溯摘录'
     unknown='；'.join(a.get('uncertainties',[])) or '未填写'
     level=EVIDENCE_LABEL.get(x.get('evidence_level'),x.get('evidence_level',''))
-    judgment=f"{a.get('summary_zh','')} {a.get('commercial_signal','')}".strip()
+    judgment=_judgment(a)
     return ['',f"{i}. [{x.get('score',0)}/100] {x.get('title','')}",
             f"   初筛得分：{x.get('score',0)}/100（规则模型的相对优先级，不代表成功概率或市场规模）",
             f"   证据等级：{level} · 来源质量：{SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality',''))}",
@@ -93,11 +98,13 @@ def render_digest(items,stats,date_label=None):
     counts=stats.get('counts') or _counts(items); strong=sum(1 for x in items if _pay_strong(x))
     priority=[x for x in items if x.get('status')=='priority']; watch=[x for x in items if x.get('status')=='watch']
     shown=priority+watch; filtered=[x for x in items if x.get('status')=='filtered']
-    lines=[f'Opportunity Radar · 商业机会情报简报 · {date_label}','='*56,
-           '【执行摘要】',decision_headline(items,stats),management_note(items),'',
+    lines=[f'Opportunity Radar · 商业机会情报简报 · {date_label}','='*56]
+    if stats.get('sample_mode'):
+        lines += ['【演示数据声明】以下内容为离线样例，仅用于展示版式与评分流程，不代表真实来源或真实商业机会。','']
+    lines += ['【执行摘要】',decision_headline(items,stats),('样例仅用于演示字段和版式，不构成对真实需求的判断。' if stats.get('sample_mode') else management_note(items)),'',
            f"{'已保存分析' if stats.get('render_only') else '新增信号'}：{len(items) if stats.get('render_only') else new} | 持续观察：{counts['watch']} | 优先验证：{counts['priority']} | 明确付费证据：{strong}"]
     lines.append(f'报告来源：基于数据库已保存的 {len(items)} 条分析重新生成（未重新调用模型）。' if stats.get('render_only')
-                 else f"运行统计：获取 {fetched} | 新增 {new} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped}")
+                 else f"运行统计：获取 {fetched} | 新增 {new} | 内容更新 {stats.get('updated',0)} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped}")
     lines.append('')
     lines+=['一、关键发现']
     if shown:
@@ -124,7 +131,8 @@ def render_digest(items,stats,date_label=None):
     else:
         lines.append('   本期没有进入观察区的条目，无法形成商业评估。')
     lines+=['','四、战略含义',strategic_note(items),'','五、建议行动']
-    lines+=[f'{i}. {a}' for i,a in enumerate(action_items(items),1)]
+    actions=['演示数据没有真实验证任务；请将此处替换为基于真实来源和证据的行动建议。'] if stats.get('sample_mode') else action_items(items)
+    lines+=[f'{i}. {a}' for i,a in enumerate(actions,1)]
     lines+=['','六、附录','   来源分布：'+(', '.join(f'{k} {v}' for k,v in Counter(x.get('source_name','Unknown') for x in items).most_common()) or '无')]
     if filtered:
         lines.append('   已过滤与待补充：')
@@ -135,7 +143,7 @@ def render_digest(items,stats,date_label=None):
                 lines+=[f"       - [{x.get('score',0)}/100] {x.get('title','')}" for x in group[:10]]
     quality=Counter(EVIDENCE_LABEL.get(x.get('evidence_level'),x.get('evidence_level','')) for x in items)
     lines.append('   数据质量：证据等级分布 '+', '.join(f'{k} {v}' for k,v in quality.most_common())+'。仅标题或无法定位的摘录不能作为已验证需求。')
-    lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'} · 规则 {stats.get('rules_version','v2')}")
+    lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'}（{stats.get('prompt_hash') or 'hash未记录'}）· 规则 {stats.get('rules_version','v2')}")
     evs=[e for x in items for e in (x.get('evidence') or [])]
     unlocated=sum(1 for e in evs if e.get('field')=='unlocated')
     lines.append(f"   引文定位：{len(evs)-unlocated} 条可定位 · {unlocated} 条无法在原文中定位")

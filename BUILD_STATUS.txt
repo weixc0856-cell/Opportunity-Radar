@@ -1,8 +1,22 @@
 Build status
 ============
-Offline unit tests: 11 tests passed in the generation environment.
-Offline sample digest: generated successfully.
 
-Not end-to-end tested on the user's machine: Docker/FreshRSS startup, exact Fever API behavior for the installed FreshRSS version, local llama-server model response, SMTP credentials/delivery, and Windows Task Scheduler. Verify these before unattended use.
+Offline validation performed in the project workspace:
+- Unit tests: 122 tests passed.
+- Python syntax compilation: passed.
+- Source registry audit: 9 candidate rows, 0 enabled, 0 blocking errors. This is the safe repository default.
+- Offline sample digest: generated successfully; it is explicitly labelled as synthetic demonstration data.
 
-Security note: source feeds must be reviewed and mapped explicitly in config/sources.csv, including freshrss_feed_id. The default source is disabled. FreshRSS should only contain approved subscriptions; the program also filters articles by the approved feed ID mapping.
+Not end-to-end tested on the user's machine:
+- Docker/FreshRSS startup and the installed FreshRSS version's Fever API behavior.
+- Actual feed ownership/terms and legal permissions for any source.
+- Live llama-server response and JSON quality on the user's selected model.
+- SMTP credentials and delivery.
+- Windows Task Scheduler execution.
+- Browser, email-client, mobile and print/PDF visual rendering.
+
+Safety defaults:
+- All source rows are disabled; FreshRSS feed IDs are blank because they are installation-specific.
+- Before enabling a source, review source owner, feed provider (if different), terms, storage/retention, summary/quotation and attribution requirements.
+- `python -m opportunity_radar.source_audit` checks registry metadata. `--check-urls` checks HTTPS reachability only; it does not prove authenticity, accuracy or legal permission.
+- `.env`, databases and operational logs must not be committed to a public repository.

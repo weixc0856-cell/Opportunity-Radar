@@ -2,7 +2,7 @@
 
 Prompts are versioned assets, not code strings.
 
-- `analyst.md` is the single-call prompt used by `LocalAnalyzer`. Its first line is
+- `analyst.md` is the single-call prompt used by `LocalAnalyzer`. The runtime loader also appends `shared/output_contract.md` and `shared/style_guide_zh.md`; they are not documentation-only. Its first line is
   `VERSION: N`; the version is recorded with every stored analysis so results can be
   reproduced and compared after a prompt change.
 - `shared/output_contract.md` holds rules that every future prompt must follow.
