@@ -1,11 +1,14 @@
 param(
-  [string]$ModelPath = "D:\AI\models\Qwen3.5-4B_Q4_k_m.gguf",
-  [string]$ServerExe = "D:\AI\bin\llama-server.exe",
+  [string]$ModelPath = "D:\AI\models\Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+  [string]$ServerExe = "D:\AI\bin-sycl\llama-server.exe",
   [int]$Port = 8080,
-  [string]$Device = "Vulkan0",
-  [int]$ContextSize = 32768,
+  [string]$Device = "SYCL0",
+  [int]$ContextSize = 16384,
+  [int]$BatchSize = 256,
+  [int]$UBatchSize = 128,
+  [int]$CpuMoeLayers = 48,
   [string]$ApiKey = "",
-  [int]$TimeoutSeconds = 120,
+  [int]$TimeoutSeconds = 600,
   [switch]$Foreground
 )
 $ErrorActionPreference = "Stop"
@@ -37,26 +40,27 @@ New-Item -ItemType Directory -Force $logDir | Out-Null
 $outLog = Join-Path $logDir "llama-server.log"
 $errLog = Join-Path $logDir "llama-server.err.log"
 
-# Keep the model's own GGUF chat template. The shared start_server.bat forces
-# "--chat-template chatml" for Qwen; that drops Qwen3.5's thinking switch, so the model
-# spends the whole token budget inside <think> and never returns the JSON this project needs.
+# Mirrors start_server.bat's Qwen3-30B-A3B profile: SYCL, built-in Jinja template,
+# CPU MoE offload for the expert layers, 16K context, 256/128 batch.
 # CORS is limited to the local server itself; the API key is required for every request.
 $serverArgs = @(
   '-m', $ModelPath,
   '--host', '127.0.0.1',
   '--port', "$Port",
-  '--device', $Device,
-  '-ngl', 'all',
+  '-dev', $Device,
+  '-ngl', '99',
   '-c', "$ContextSize",
   '--parallel', '1',
-  '-b', '512',
-  '-ub', '512',
+  '-b', "$BatchSize",
+  '-ub', "$UBatchSize",
   '-fa', 'on',
+  '--metrics',
+  '--jinja',
   '--alias', "$alias,default",
-  '--reasoning', 'off',
   '--api-key', $ApiKey,
   '--cors-origins', "http://127.0.0.1:$Port,http://localhost:$Port"
 )
+if ($CpuMoeLayers -gt 0) { $serverArgs += @('--n-cpu-moe', "$CpuMoeLayers") }
 
 if ($Foreground) {
   # Native stderr becomes a terminating NativeCommandError under -Stop on PowerShell 5.1.
