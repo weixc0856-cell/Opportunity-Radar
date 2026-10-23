@@ -23,7 +23,7 @@ ASSETS = {
     '/assets/app.js': (ROOT / 'admin' / 'assets' / 'app.js', 'application/javascript; charset=utf-8'),
 }
 RECIPIENT_FILE = ROOT / 'config' / 'recipients.json'
-SOURCE_FIELDS = ['source_id','name','homepage','feed_url','access_method','permission_status','reviewed_at','review_notes','max_requests_per_day','enabled','freshrss_feed_id','source_type','provenance_class','canonical_domain','terms_url','last_verified_at','feed_provider','feed_provider_terms_url','topic','quality_tier','expected_signal','editorial_lanes','topic_tags','source_authority','content_access_level','source_cap']
+SOURCE_FIELDS = ['source_id','name','homepage','feed_url','access_method','permission_status','reviewed_at','review_notes','max_requests_per_day','enabled','freshrss_feed_id','source_type','provenance_class','canonical_domain','terms_url','last_verified_at','feed_provider','feed_provider_terms_url','topic','quality_tier','expected_signal','editorial_lanes','topic_tags','source_authority','content_access_level','source_cap','intelligence_lines','full_text_fetch']
 ERROR_CODES = ['VALIDATION_ERROR','FORBIDDEN','SOURCE_VALIDATION_FAILED','FRESHRSS_UNAVAILABLE','MODEL_UNAVAILABLE','SMTP_FAILED',
                'SMTP_AUTH_FAILED','RUN_ALREADY_ACTIVE','SCHEDULE_FAILED','REPORT_MISSING','NOT_FOUND','INTERNAL_ERROR']
 SOURCE_LOCK = threading.Lock()

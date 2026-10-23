@@ -35,3 +35,23 @@ class Tests(unittest.TestCase):
  def test_escaped_quotes_untouched(self):
   d=dict(VALID);d['summary_zh']='他说 "你好" 然后走了'
   self.assertEqual(parse_model_json(json.dumps(d,ensure_ascii=False))['summary_zh'],d['summary_zh'])
+
+class ActionabilityTests(unittest.TestCase):
+ def test_valid_value_is_normalised(self):
+  d=dict(VALID); d['actionability']=' Investigate '
+  r=parse_model_json(json.dumps(d))
+  self.assertEqual((r['actionability'],r['actionability_status']),('investigate','ok'))
+ def test_missing_is_recorded_not_fatal(self):
+  r=parse_model_json(json.dumps(VALID))
+  self.assertEqual((r['actionability'],r['actionability_status']),('missing','missing'))
+ def test_invalid_value_is_recorded_not_fatal(self):
+  d=dict(VALID); d['actionability']='definitely'
+  r=parse_model_json(json.dumps(d))
+  self.assertEqual((r['actionability'],r['actionability_status']),('invalid','invalid'))
+ def test_non_string_value_is_invalid(self):
+  d=dict(VALID); d['actionability']=4
+  r=parse_model_json(json.dumps(d))
+  self.assertEqual(r['actionability_status'],'invalid')
+ def test_other_schema_errors_still_raise(self):
+  d=dict(VALID); d['actionability']='act'; d['category']='magic'
+  with self.assertRaises(ValueError): parse_model_json(json.dumps(d))

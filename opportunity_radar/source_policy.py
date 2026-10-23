@@ -12,6 +12,13 @@ class Source:
     # decisions, not scraping settings.
     editorial_lanes:str=''; topic_tags:str=''; source_authority:str=''
     content_access_level:str='auto'; source_cap:int=0
+    # Which intelligence mainline(s) this source serves. Independent of the A/B/C
+    # editorial lane: the lane decides how an item is judged, the line says why the
+    # source is monitored at all. Reporting only; it never enters scoring.
+    intelligence_lines:str=''
+    # 'none' (default) or 'article_page': may the pipeline fetch the linked page to get
+    # the body? This is an access decision, separate from whether the body is complete.
+    full_text_fetch:str='none'
 
 def _g(r,k):
     return (r.get(k) or '').strip()
@@ -33,7 +40,8 @@ def load_sources(path=None):
                               _g(r,'source_type').lower(),_g(r,'provenance_class').lower(),
                               _g(r,'canonical_domain').lower(),_g(r,'terms_url'),_g(r,'last_verified_at'),_g(r,'reviewed_at'),_g(r,'feed_provider'),_g(r,'feed_provider_terms_url'),
                               _g(r,'editorial_lanes'),_g(r,'topic_tags'),_g(r,'source_authority'),
-                              _g(r,'content_access_level').lower() or 'auto',_cap(_g(r,'source_cap'))))
+                              _g(r,'content_access_level').lower() or 'auto',_cap(_g(r,'source_cap')),
+                              _g(r,'intelligence_lines'),_g(r,'full_text_fetch').lower() or 'none'))
     return out
 def is_approved(s):
     return s.enabled and s.permission_status=='approved' and s.access_method in {'rss','atom','official_api','authorized_email_export'} and s.feed_url.startswith('https://') and bool(s.freshrss_feed_id)

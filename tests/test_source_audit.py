@@ -77,6 +77,9 @@ class EditorialGovernanceTests(unittest.TestCase):
 
 
     def test_repository_registry_declares_governance_for_every_row(self):
+        from opportunity_radar.intelligence_lines import MAINTENANCE
         for s in load_sources():
-            self.assertTrue(s.editorial_lanes, s.source_id)
+            # Every row must have an editorial job: either a lane, or an explicit
+            # declaration that it is maintenance information and never enters the briefing.
+            self.assertTrue(s.editorial_lanes or s.intelligence_lines == MAINTENANCE, s.source_id)
             self.assertIn(s.content_access_level, {'auto', 'full_text', 'excerpt', 'title_only'}, s.source_id)

@@ -4,7 +4,7 @@ from pathlib import Path
 from .config import Settings, load_scoring
 from .digest import render_digest, empty_reason
 from .email_sender import send_email, send_email_detailed, parse_recipients
-from .freshrss_client import FreshRSSClient
+from .freshrss_client import FreshRSSClient, ordered_feed_ids
 from .render_html import render_html
 from .scoring import score_article, RULES_VERSION, DEFAULT_LANE_WEIGHTS, DEFAULT_LANE_THRESHOLDS
 from .lanes import LANES
@@ -12,6 +12,9 @@ from .source_policy import load_sources, is_approved
 from .store import Store
 from .analyzer import PROMPT_VERSION, PROMPT_HASH
 from .source_audit import audit_sources
+from .sampling import parse_window, filter_articles
+from .fulltext import apply_article_bodies
+from .model_service import ensure_model
 from .log_util import rotate_log, RedactFilter
 
 def _norm_name(value):
@@ -168,7 +171,7 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     items_path=arch/f'{stamp}.items.json'; manifest_path=arch/f'{stamp}.manifest.json'
     _atomic_write(txt,text); _atomic_write(html_path,html)
     payload_items=[{k:item.get(k) for k in ('title','url','source_name','analysis','score','status','filter_reason',
-                                             'source_id','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
+                                             'source_id','intelligence_lines','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
                                              'classification','market_validation','risk_flag','verification_note',
                                              'evidence','evidence_integrity','components','meta','scoring')} for item in (items or [])]
     _atomic_write(items_path,json.dumps({'schema_version':2,'generated_at':local_now.isoformat(),
@@ -231,6 +234,7 @@ def _render_only(store,s,cfg):
         items.append({'title':r['title'],'url':r['url'],'source_name':r['source_name'],'analysis':d.get('analysis',{}),
                       'score':r['score'],'status':sc.get('status','filtered'),'filter_reason':sc.get('filter_reason',''),
                       'source_id':meta.get('source_id',''),
+                      'intelligence_lines':getattr(source,'intelligence_lines',''),
                       'lane':lane,'content_basis_estimate':sc.get('content_basis_estimate',''),
                       'evidence_basis':sc.get('evidence_basis',''),
                       'evidence_level':sc.get('evidence_level','none'),
@@ -254,6 +258,14 @@ def _render_only(store,s,cfg):
     print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
 
 def main(argv=None):
+    # A report can contain currency symbols or non-CJK characters. On Windows the
+    # console defaults to a legacy code page, and echoing the report used to raise
+    # UnicodeEncodeError *after* the report was written, marking a good run as failed.
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, ValueError):
+        pass
     p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); args=p.parse_args(argv)
     s=Settings.from_env(); Path(s.log_path).parent.mkdir(parents=True,exist_ok=True)
     rotate_log(s.log_path)
@@ -290,17 +302,36 @@ def main(argv=None):
     sources=[x for x in registry if is_approved(x)]
     approved_feed_ids={x.freshrss_feed_id for x in sources}
     source_by_feed={x.freshrss_feed_id:x for x in sources}
+    try:
+        win_start,win_end=parse_window(s.sample_since,s.sample_until)
+    except ValueError as e:
+        print(f'Invalid sample window: {e}',file=sys.stderr); return 2
     if not sources:
         msg='No approved sources in config/sources.csv. Keep sources disabled until reviewed.'
         if not args.dry_run: print(msg,file=sys.stderr); return 3
         items=[]; stats=_stats(items,lane_weights=lane_weights,lane_thresholds=lane_thresholds,source_issues=source_issues)
         subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html); print(body); return 0
+    ready,detail=ensure_model(s)
+    if not ready:
+        logging.error('Local model unavailable: %s',detail)
+        print(f'Local model unavailable: {detail}. Start deploy/windows/start-model.ps1 or set OR_MODEL_AUTOSTART=1.',file=sys.stderr)
+        return 3
     rid=store.start_run(stage='starting'); store.update_run(rid,pid=os.getpid()); errors=analyzed=new_count=fetched=updated_count=duplicate_events=0; items=[]
     try:
         # Fail closed: only articles whose FreshRSS feed ID is explicitly mapped to an approved source are processed.
         store.update_run(rid,stage='fetching')
         client=FreshRSSClient(s.freshrss_base_url,s.freshrss_username,s.freshrss_api_key,s.request_timeout)
-        articles=[a for a in client.fetch_articles(s.max_articles,feed_ids=sorted(approved_feed_ids)) if a.feed_id in approved_feed_ids][:s.max_articles]; fetched=len(articles)
+        # A windowed run has to look past max_articles to still fill the window; the
+        # ceiling keeps a low-frequency feed from triggering an unbounded fetch.
+        pool_limit=s.max_articles if not (win_start or win_end) else max(s.max_articles,200)
+        raw=[a for a in client.fetch_articles(pool_limit,feed_ids=ordered_feed_ids(approved_feed_ids)) if a.feed_id in approved_feed_ids]
+        in_window=filter_articles(raw,win_start,win_end)
+        articles=in_window[:s.max_articles]; fetched=len(articles)
+        # Opt-in page fetch: the registry decides per source; the evidence rules do not move.
+        pages_fetched=apply_article_bodies(articles,source_by_feed)
+        if win_start or win_end:
+            logging.info('Sample window %s..%s: pool=%d in_window=%d sampled=%d',
+                         s.sample_since or '(open)',s.sample_until or '(open)',len(raw),len(in_window),len(articles))
         store.update_run(rid,stage='analyzing')
         from .analyzer import LocalAnalyzer
         model=LocalAnalyzer(s.llm_base_url,s.llm_model,s.llm_timeout,s.llm_max_tokens,api_key=s.llm_api_key)
@@ -329,6 +360,8 @@ def main(argv=None):
                 item=evaluate(a,result,thresholds=None,model=s.llm_model,source=source_by_feed.get(a.feed_id),
                               lanes_config=lanes_cfg,multi_source=multi_source,event_seen_before=bool(prior_sources),
                               min_full_text_chars=min_chars)
+                # Reporting only: which intelligence mainline(s) this source was registered for.
+                item['intelligence_lines']=getattr(source_by_feed.get(a.feed_id),'intelligence_lines','')
                 store.save_analysis(key,result,item['scoring'],item['meta'])
                 items.append(item); analyzed+=1
             except Exception:
@@ -338,6 +371,10 @@ def main(argv=None):
                      lane_weights=lane_weights,lane_thresholds=lane_thresholds,source_issues=source_issues,
                      deferred=caps['deferred'],unresolved_sources=caps['unresolved'])
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
+        if pages_fetched: stats['full_text_fetched']=pages_fetched
+        if win_start or win_end:
+            stats['sample_window']={'since':s.sample_since,'until':s.sample_until,
+                                    'pool':len(raw),'in_window':len(in_window),'sampled':len(articles)}
         subject,body=render_digest(items,stats); html=render_html(items,stats)
         store.update_run(rid,stage='rendering')
         archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid)

@@ -1,6 +1,7 @@
 from collections import Counter
 from datetime import datetime
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
+from .intelligence_lines import INTELLIGENCE_LINE_LABEL, summarize
 from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES, state_of
 from .lanes import LANES, LANE_LABEL, LANE_PROMISE, item_lane as _lane
 
@@ -210,6 +211,10 @@ def render_digest(items,stats,date_label=None):
     lines += ['',f"{'已保存分析' if stats.get('render_only') else '新增信号'}：{len(items) if stats.get('render_only') else new} | 持续观察：{counts['watch']} | 优先验证：{counts['priority']} | 明确付费证据：{strong} | 未纳入分发：{len(deferred)}"]
     lines.append(f'报告来源：基于数据库已保存的 {len(items)} 条分析重新生成（未重新调用模型）。' if stats.get('render_only')
                  else f"运行统计：获取 {fetched} | 新增 {new} | 内容更新 {stats.get('updated',0)} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped} | 重复事件 {stats.get('duplicate_events',0)}")
+    window=stats.get('sample_window')
+    if window:
+        lines.append(f"样本窗口：{window.get('since') or '(无下界)'} 至 {window.get('until') or '(无上界)'} UTC"
+                     f"（池 {window.get('pool')} → 窗口内 {window.get('in_window')} → 取 {window.get('sampled')}）")
     sections=[('一、商业、科技与经济情报','A'),('二、值得验证的商业机会','B'),('三、技术观察与工程信号','C')]
     for title,lane in sections:
         lines+=['',title,f'   通道定义：{LANE_PROMISE[lane]}']
@@ -224,6 +229,7 @@ def render_digest(items,stats,date_label=None):
     lines.append('   漏斗：'+' → '.join(f'{k} {v}' for k,v in funnel(stats)))
     lanes=lane_breakdown(items)
     lines.append('   通道分布：'+('，'.join(f"{LABEL} 入选 {r['shown']} · 分析 {r['items']}" for r,LABEL in ((r,LANE_LABEL[r['lane']]) for r in lanes)) or '无'))
+    lines.append('   情报主线：'+(('，'.join(f"{INTELLIGENCE_LINE_LABEL.get(k,k)} {v}" for k,v in summarize(items))) or '无')+'。按来源声明统计，未声明来源计为 (undeclared)。')
     src=source_breakdown(items)
     if src:
         lines.append('   来源贡献（分析条目 / 可定位引文）：')
