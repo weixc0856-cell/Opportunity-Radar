@@ -246,7 +246,8 @@ def render_digest(items,stats,date_label=None):
                 lines.append(f'     {REASON_LABEL[reason]}：{len(group)} 篇')
                 lines+=[f"       - [{x.get('score',0)}/100] {x.get('title','')}" for x in group[:10]]
     quality=Counter(_evidence_text(x) for x in items)
-    lines.append('   数据质量：证据等级分布 '+', '.join(f'{k} {v}' for k,v in quality.most_common())+'。仅标题或无法定位的摘录不能作为已验证需求。')
+    q=', '.join(f'{k} {v}' for k,v in quality.most_common()) or '无'
+    lines.append('   数据质量：证据等级分布 '+q+'。仅标题或无法定位的摘录不能作为已验证需求。')
     lines+=_source_audit_note(stats)
     lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'}（{stats.get('prompt_hash') or 'hash未记录'}）· 规则 {stats.get('rules_version','v2')}")
     evs=[e for x in items for e in (x.get('evidence') or [])]

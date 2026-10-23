@@ -1,22 +1,48 @@
 Build status
 ============
 
-Offline validation performed in the project workspace:
-- Unit tests: 122 tests passed.
-- Python syntax compilation: passed.
-- Source registry audit: 9 candidate rows, 0 enabled, 0 blocking errors. This is the safe repository default.
-- Offline sample digest: generated successfully; it is explicitly labelled as synthetic demonstration data.
+Last updated: 2026-10-23 (branch: feat/evidence-lanes-source-governance)
 
-Not end-to-end tested on the user's machine:
-- Docker/FreshRSS startup and the installed FreshRSS version's Fever API behavior.
-- Actual feed ownership/terms and legal permissions for any source.
-- Live llama-server response and JSON quality on the user's selected model.
-- SMTP credentials and delivery.
-- Windows Task Scheduler execution.
-- Browser, email-client, mobile and print/PDF visual rendering.
+Verified in this workspace
+--------------------------
+- Unit tests: 282 passed (`python -m unittest discover -s tests`), Python 3.12.10.
+- Python 3.13: the same suite passes.
+- Syntax compilation: passed for `opportunity_radar` and `tests`.
+- Source registry audit: 31 rows, 0 enabled in the committed template, 0 blocking
+  errors. `no_enabled_sources` is reported at info level and does not fail the audit.
+- GitHub Actions: `.github/workflows/django.yml` runs `unittest` and `source_audit` on
+  Python 3.11 and 3.12; both jobs pass (runs 39890505498, 39891507417, 39892854167).
+- End-to-end run (2026-10-23, separate database `data/acceptance-2026-10-23.sqlite3`):
+  10 articles fetched, 10 analysed, 0 failures; report archived as
+  `reports/archive/2026/10/23/2026-10-23-105921.*`; 3/3 SMTP deliveries recorded as
+  sent. One `priority` item was produced (lane C, evidence `primary_source_located`).
+- Windows Task Scheduler: task `OpportunityRadarDaily` triggered manually on
+  2026-10-23. Docker check, model health check, CLI exit code and the run record all
+  behaved as designed (`no_new_content` because nothing new had arrived).
 
-Safety defaults:
-- All source rows are disabled; FreshRSS feed IDs are blank because they are installation-specific.
-- Before enabling a source, review source owner, feed provider (if different), terms, storage/retention, summary/quotation and attribution requirements.
-- `python -m opportunity_radar.source_audit` checks registry metadata. `--check-urls` checks HTTPS reachability only; it does not prove authenticity, accuracy or legal permission.
+Not yet verified
+----------------
+- Shadow run: no side-by-side comparison of baseline and candidate source
+  configurations has been performed. `docs/SOURCE_REVIEW.md` section 7 has the plan.
+- Source terms: reachability was checked for some sources, but no terms or reuse
+  permissions have been reviewed. `review_status=review_required` sources stay disabled.
+- Business primary sources (earnings, investor relations, macro data) are registered but
+  disabled; the A lane is still fed mainly by AI vendor blogs.
+- Full-text fetching from article pages is not implemented; E2 depends on the feed
+  itself carrying the body, plus a reviewed `content_access_level=full_text` declaration.
+- Browser, email-client, mobile and print/PDF rendering have not been reviewed visually.
+- Event clustering, claim-level fields (`claim_text`/`claim_type`) and a labelled
+  evaluation set do not exist yet.
+
+Safety defaults
+---------------
+- Repository sources are disabled and carry no FreshRSS feed IDs; feed IDs are
+  installation-specific and live in `config/sources.local.csv`.
+- A source may only be enabled after review: owner, feed provider, terms, storage and
+  retention, summary/quotation and attribution requirements.
+- `content_access_level=full_text` is a reviewed declaration about what the feed
+  delivers. It is never inferred from text length, and it does not assert that the
+  source is accurate, independent or licensed for reuse.
+- `python -m opportunity_radar.source_audit` checks registry metadata; `--check-urls`
+  checks HTTPS reachability only. Neither proves authenticity, accuracy or permission.
 - `.env`, databases and operational logs must not be committed to a public repository.

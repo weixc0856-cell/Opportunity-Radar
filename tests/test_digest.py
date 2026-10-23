@@ -211,3 +211,8 @@ class FailureReportingTests(unittest.TestCase):
   reason=empty_reason({'fetched':10,'analyzed':0,'failed':5,'skipped':5})
   self.assertIn('分析结果为空',reason)
   self.assertNotIn('没有新的分析任务',reason)
+
+class EmptyReportTests(unittest.TestCase):
+ def test_empty_briefing_states_the_evidence_distribution_as_none(self):
+  _,body=render_digest([],stats(),'2026-10-20')
+  self.assertIn('证据等级分布 无。',body)
