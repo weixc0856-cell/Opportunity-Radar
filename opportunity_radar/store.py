@@ -1,17 +1,21 @@
-import hashlib, json, sqlite3
+import hashlib, json, re, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 
 def now(): return datetime.now(timezone.utc).isoformat()
 class Store:
-    def __init__(self,path):
-        self.path=Path(path); self.path.parent.mkdir(parents=True,exist_ok=True); self.init()
+    def __init__(self,path,read_only=False):
+        # read_only skips init(): a re-render must not migrate the schema or backfill rows.
+        self.path=Path(path); self.read_only=read_only
+        if not read_only:
+            self.path.parent.mkdir(parents=True,exist_ok=True); self.init()
     @contextmanager
     def connect(self):
         # sqlite3's connection context manager commits but never closes, so open
         # the connection here and close it ourselves or Windows keeps the file locked.
-        c=sqlite3.connect(self.path); c.row_factory=sqlite3.Row
+        c=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True) if self.read_only else sqlite3.connect(self.path)
+        c.row_factory=sqlite3.Row
         try:
             with c: yield c
         finally:
@@ -19,7 +23,7 @@ class Store:
     def init(self):
         with self.connect() as c:
             c.executescript('''
-        CREATE TABLE IF NOT EXISTS articles(article_key TEXT PRIMARY KEY, article_id TEXT, title TEXT NOT NULL, url TEXT NOT NULL, published TEXT, source_name TEXT, summary_hash TEXT, created_at TEXT NOT NULL, fetched_at TEXT, content_source TEXT, retrieval_status TEXT);
+        CREATE TABLE IF NOT EXISTS articles(article_key TEXT PRIMARY KEY, article_id TEXT, title TEXT NOT NULL, url TEXT NOT NULL, published TEXT, source_name TEXT, summary_hash TEXT, created_at TEXT NOT NULL, fetched_at TEXT, content_source TEXT, retrieval_status TEXT, event_key TEXT);
         CREATE TABLE IF NOT EXISTS article_versions(article_key TEXT NOT NULL, summary_hash TEXT NOT NULL, content_source TEXT, fetched_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(article_key,summary_hash));
         CREATE TABLE IF NOT EXISTS analyses(article_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS analysis_history(history_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL, UNIQUE(article_key,analyzed_at));
@@ -28,7 +32,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
-            for name in ('fetched_at','content_source','retrieval_status'):
+            for name in ('fetched_at','content_source','retrieval_status','event_key'):
                 if name not in cols: c.execute(f'ALTER TABLE articles ADD COLUMN {name} TEXT')
             for table,extra in (('runs',(('report_path','TEXT'),('report_hash','TEXT'),('stage','TEXT'),('exit_code','INTEGER'),('pid','INTEGER'))),('deliveries',(('idempotency_key','TEXT'),('recipient','TEXT')))):
                 have={r[1] for r in c.execute(f'PRAGMA table_info({table})')}
@@ -39,6 +43,28 @@ class Store:
                          SELECT article_key,result_json,score,risk_flag,status,analyzed_at FROM analyses''')
     @staticmethod
     def key(url): return hashlib.sha256(url.strip().encode()).hexdigest()
+    @staticmethod
+    def event_key(title):
+        s=re.sub(r'[^0-9a-z一-鿿]+',' ',str(title or '').lower())
+        return hashlib.sha256(re.sub(r'\s+',' ',s).strip().encode()).hexdigest()
+    def event_seen(self,event_key,article_key,summary_hash):
+        """True when another analysed article has the same normalised title and identical content."""
+        with self.connect() as c:
+            row=c.execute('''SELECT 1 FROM articles a JOIN analyses s USING(article_key)
+                             WHERE a.event_key=? AND a.article_key<>? AND a.summary_hash=? LIMIT 1''',(event_key,article_key,summary_hash)).fetchone()
+            return row is not None
+    def event_sources(self,event_key,article_key):
+        """Distinct sources that already hold an analysed article for the same event.
+
+        Two sources reporting one event is corroboration; the same feed reporting it
+        twice is not, so the result is keyed by source name rather than by article.
+        """
+        if not event_key: return set()
+        with self.connect() as c:
+            rows=c.execute("SELECT DISTINCT a.source_name FROM articles a JOIN analyses s USING(article_key) "
+                           "WHERE a.event_key=? AND a.article_key<>? AND a.source_name IS NOT NULL",
+                           (event_key,article_key)).fetchall()
+        return {r['source_name'] for r in rows if (r['source_name'] or '').strip()}
     def analyzed(self,key):
         with self.connect() as c: return c.execute('SELECT 1 FROM analyses WHERE article_key=?',(key,)).fetchone() is not None
     def save_article(self,a,key):
@@ -48,13 +74,14 @@ class Store:
         cs=getattr(a,'content_source','') or ('rss_summary' if has_text else 'title_only')
         rs=getattr(a,'retrieval_status','') or ('ok' if has_text else 'empty_content')
         with self.connect() as c:
-            inserted=c.execute('INSERT OR IGNORE INTO articles(article_key,article_id,title,url,published,source_name,summary_hash,created_at,fetched_at,content_source,retrieval_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(key,a.article_id,a.title,a.url,a.published,a.source_name,h,stamp,fetched,cs,rs)).rowcount
+            ekey=self.event_key(a.title)
+            inserted=c.execute('INSERT OR IGNORE INTO articles(article_key,article_id,title,url,published,source_name,summary_hash,created_at,fetched_at,content_source,retrieval_status,event_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(key,a.article_id,a.title,a.url,a.published,a.source_name,h,stamp,fetched,cs,rs,ekey)).rowcount
             c.execute('INSERT OR IGNORE INTO article_versions(article_key,summary_hash,content_source,fetched_at,created_at) VALUES(?,?,?,?,?)',(key,h,cs,fetched,stamp))
             if not inserted:
                 # articles is the current metadata row; article_versions preserves each observed content hash.
                 c.execute('''UPDATE articles SET article_id=?,title=?,url=?,published=?,source_name=?,summary_hash=?,
-                             fetched_at=?,content_source=?,retrieval_status=? WHERE article_key=?''',
-                          (a.article_id,a.title,a.url,a.published,a.source_name,h,fetched,cs,rs,key))
+                             fetched_at=?,content_source=?,retrieval_status=?,event_key=? WHERE article_key=?''',
+                          (a.article_id,a.title,a.url,a.published,a.source_name,h,fetched,cs,rs,ekey,key))
             return inserted
     def versions(self,key):
         with self.connect() as c:

@@ -1,6 +1,7 @@
 """Audit source-registry completeness. Reachability is not proof of permission or truth."""
 from __future__ import annotations
 import argparse
+import re
 from datetime import date
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -10,6 +11,15 @@ from .source_policy import Source, is_approved, load_sources
 
 MAX_REVIEW_AGE_DAYS = 180
 ALLOWED_PROVENANCE = {"first_party", "project_record", "secondhand_report", "vendor_marketing", "unknown"}
+# A source must be given an editorial job, not just an access method. Legal access does
+# not establish that a feed belongs in the business briefing.
+ALLOWED_LANES = {"A", "B", "C"}
+ALLOWED_ACCESS = {"auto", "full_text", "excerpt", "title_only"}
+MAX_SOURCE_CAP = 50
+
+
+def editorial_lanes(value: str) -> set[str]:
+    return {token for token in re.split(r"[\s,;|/]+", str(value or "").upper()) if token}
 
 
 def _https(url: str) -> bool:
@@ -32,7 +42,21 @@ def audit_sources(sources: list[Source], today: date | None = None) -> list[dict
 
     for s in sources:
         ids[s.source_id] = ids.get(s.source_id, 0) + 1
+        lanes = editorial_lanes(s.editorial_lanes)
+        unknown = lanes - ALLOWED_LANES
+        if unknown:
+            add(s.source_id, "error", "invalid_editorial_lane",
+                f"Unknown editorial lane(s): {', '.join(sorted(unknown))}. Use A, B or C.")
+        if s.content_access_level not in ALLOWED_ACCESS:
+            add(s.source_id, "error", "invalid_content_access_level",
+                "content_access_level must be auto, full_text, excerpt or title_only; evidence cannot be graded without it.")
+        if s.source_cap < 0 or s.source_cap > MAX_SOURCE_CAP:
+            add(s.source_id, "error", "invalid_source_cap",
+                f"source_cap must be a whole number from 0 (uncapped) to {MAX_SOURCE_CAP}.")
         if s.enabled:
+            if not lanes:
+                add(s.source_id, "error", "missing_editorial_lanes",
+                    "Assign the source to at least one editorial lane (A, B or C) before enabling it.")
             if s.freshrss_feed_id:
                 previous = feed_ids.get(s.freshrss_feed_id)
                 if previous:

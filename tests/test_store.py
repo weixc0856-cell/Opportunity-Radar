@@ -85,3 +85,63 @@ class Tests(unittest.TestCase):
    self.assertEqual(s.active_run()['run_id'],rid)
    s.finish_run(rid,'success',0,0,0)
    self.assertIsNone(s.active_run())
+
+ def test_event_key_detects_duplicate_events(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'events.sqlite3'))
+   base=dict(article_id='1',published='',source_name='s')
+   a=SimpleNamespace(title='Same Event',summary='same text',url='https://example.invalid/a',**base)
+   key=Store.key(a.url); s.save_article(a,key); s.save_analysis(key,{'category':'unknown'},{'score':10,'risk_flag':''})
+   b=SimpleNamespace(title='Same  Event!',summary='same text',url='https://example.invalid/b',source_name='s',article_id='2',published='')
+   key2=Store.key(b.url); s.save_article(b,key2)
+   same=hashlib.sha256(b'same text').hexdigest(); changed=hashlib.sha256(b'changed').hexdigest()
+   self.assertTrue(s.event_seen(Store.event_key(b.title),key2,same))
+   self.assertFalse(s.event_seen(Store.event_key(b.title),key2,changed))
+
+class EventSourceTests(unittest.TestCase):
+ def test_prior_source_for_the_same_event_is_reported(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'event.sqlite3'))
+   first=SimpleNamespace(article_id='1',title='Acme raises guidance',url='https://news.example/a',published='',source_name='News',summary='x')
+   key=Store.key(first.url); s.save_article(first,key); s.save_analysis(key,{}, {'score':1,'risk_flag':''})
+   second=SimpleNamespace(article_id='2',title='Acme raises guidance',url='https://other.example/b',published='',source_name='Other',summary='x')
+   key2=Store.key(second.url); s.save_article(second,key2)
+   self.assertEqual(s.event_sources(Store.event_key(second.title),key2),{'News'})
+ def test_unrelated_article_is_not_corroboration(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'event.sqlite3'))
+   a=SimpleNamespace(article_id='1',title='Acme raises guidance',url='https://news.example/a',published='',source_name='News',summary='x')
+   key=Store.key(a.url); s.save_article(a,key); s.save_analysis(key,{}, {'score':1,'risk_flag':''})
+   self.assertEqual(s.event_sources(Store.event_key('Something else entirely'),key),set())
+
+class SchemaMigrationTests(unittest.TestCase):
+ def test_reopening_the_database_is_idempotent(self):
+  with tempfile.TemporaryDirectory() as d:
+   path=str(Path(d)/'upgrade.sqlite3')
+   first=Store(path)
+   a=SimpleNamespace(article_id='1',title='t',url='https://example.invalid/a',published='',source_name='s',summary='x')
+   key=Store.key(a.url); first.save_article(a,key)
+   first.save_analysis(key,{'summary_zh':'x'},{'score':10,'risk_flag':''},{'input_hash':'h'})
+   second=Store(path)   # re-runs CREATE TABLE IF NOT EXISTS and every ALTER guard
+   third=Store(path)
+   self.assertEqual(len(third.analysis_history(key)),1)
+   with third.connect() as c:
+    cols={r[1] for r in c.execute('PRAGMA table_info(runs)')}
+   self.assertTrue({'report_path','stage','exit_code','pid'} <= cols)
+
+class ReadOnlyStoreTests(unittest.TestCase):
+ def test_read_only_store_refuses_writes(self):
+  import sqlite3
+  with tempfile.TemporaryDirectory() as d:
+   path=str(Path(d)/'x.sqlite3'); Store(path)
+   ro=Store(path,read_only=True)
+   with self.assertRaises(sqlite3.OperationalError):
+    with ro.connect() as c: c.execute("INSERT INTO runs(started_at,status) VALUES('x','y')")
+ def test_read_only_store_does_not_create_a_database(self):
+  with tempfile.TemporaryDirectory() as d:
+   path=Path(d)/'missing.sqlite3'
+   ro=Store(path,read_only=True)
+   self.assertFalse(path.exists())
+   with self.assertRaises(Exception):
+    with ro.connect() as c: c.execute('SELECT 1 FROM analyses')
+   self.assertFalse(path.exists())

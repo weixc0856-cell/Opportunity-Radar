@@ -1,9 +1,57 @@
-[weights]
-demand_clarity = 25
-payment_evidence = 25
-actionability = 20
-feasibility = 20
-novelty = 10
-[thresholds]
+# Each editorial lane scores on its own terms. Weights are relative, not percentages:
+# the scorer normalises them, so a lane may define any positive set.
+#
+# promote_rank is the minimum evidence rank an item needs before it can leave the watch
+# band. Lane A reports changes at companies and industries, where a located excerpt from
+# a reliable source is already worth reading. Lanes B and C make claims about buyers and
+# about behaviour, so they need the article body (E2), not a teaser.
+
+[lanes.A]
+promote_rank = "E1"
+
+[lanes.A.weights]
+importance = 25
+source_reliability = 20
+evidence_completeness = 20
+novelty = 15
+relevance = 10
+timeliness = 10
+
+[lanes.A.thresholds]
 priority = 75
 watch = 55
+
+[lanes.B]
+promote_rank = "E2"
+
+[lanes.B.weights]
+pain_severity = 20
+buyer_clarity = 15
+payment_evidence = 25
+corroboration = 15
+feasibility = 10
+solution_gap = 10
+novelty = 5
+
+[lanes.B.thresholds]
+priority = 75
+watch = 55
+
+[lanes.C]
+promote_rank = "E2"
+
+[lanes.C.weights]
+technical_maturity = 25
+reproducibility = 20
+impact_scope = 20
+source_reliability = 20
+novelty = 15
+
+[lanes.C.thresholds]
+priority = 75
+watch = 55
+
+[evidence]
+# Below this length an undeclared ("auto") source is treated as shipping an excerpt.
+# A source reviewed as full_text overrides the heuristic; excerpt pins it down.
+full_text_min_chars = 400

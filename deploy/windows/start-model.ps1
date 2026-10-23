@@ -1,5 +1,5 @@
 param(
-  [string]$ModelPath = "D:\AI\models\Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+  [string]$ModelPath = "D:\AI\models\Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
   [string]$ServerExe = "D:\AI\bin-sycl\llama-server.exe",
   [int]$Port = 8080,
   [string]$Device = "SYCL0",

@@ -1,7 +1,7 @@
 import re
 
 # Deterministic triage rules. The model's own "category" is one input, not the verdict.
-HIRING=re.compile(r'\b(hiring|jobs?|job posting|recruiting|join our team|looking for (a|an|engineers?))\b|招聘|诚聘|求职',re.I)
+HIRING=re.compile(r'\b(hiring|job (?:opening|posting)|recruiting|join our team|looking for (?:an?|engineers?|developers?))\b|招聘|诚聘|求职|岗位',re.I)
 FUNDING=re.compile(r'\b(raises?|raised|funding|series [a-e]\b|valuation|acquired|acquisition|ipo|merger|investors?)\b|融资|收购|估值',re.I)
 PAIN=re.compile(r'\b(struggle|pain|frustrat|problem|annoying|too slow|takes? (hours|days)|manual|tedious|expensive|how do (you|i)|why (does|do)|wish (there|it))\b|痛点|麻烦|耗时|效率|抱怨',re.I)
 TECH=re.compile(r'\b(open[- ]source|github|librar(y|ies)|framework(s)?|compiler(s)?|benchmark(s)?|driver(s)?|kernel(s)?|sdk(s)?|protocol(s)?|algorithm(s)?|filters?)\b|开源|框架|驱动|算法',re.I)
@@ -15,6 +15,14 @@ EXISTING_PAID=re.compile(r'\b(already paid|already pay|currently paying|currentl
 DEPLOY=re.compile(r'\b(error|fail(s|ed|ing)?|install(ation|ing)?|deploy(ment|ing)?|integrat(e|ion|ing)|migrat(e|ion)|compatib(le|ility)|crash(es|ed)?|doesn.t work|not working|performance)\b|报错|部署|集成|兼容|失败|崩溃|性能',re.I)
 GAP=re.compile(r'\b(missing|feature request|support for|wish (there|it)|would be nice|not supported|no support|add support|need a way)\b|不支持|缺失|希望|建议增加',re.I)
 SERVICE=re.compile(r'\b(consult(ing|ant)?|custom development|automation|freelanc|contract work|outsourc)\b|咨询|定制开发|自动化|外包',re.I)
+
+# A seller publishing a price is not a buyer agreeing to pay. These signals are recorded
+# separately so the briefing can keep an early commercial lead without ever presenting
+# vendor marketing as verified demand.
+SELLER_SERVICE=re.compile(r'\b(paid support|commercial support|consulting services|book a demo|contact sales|enterprise (?:plan|tier|edition)|paid (?:plan|tier)|premium (?:plan|tier)|request a quote)\b|商业支持|付费支持|企业版|咨询服务|预约演示|报价',re.I)
+SELLER_PRICING=re.compile(r'\b(pricing (?:page|plan|tier)|subscription (?:plan|price|tier)|list price|licen[cs]e fee|per seat)\b|定价|价格页|订阅套餐',re.I)
+ADOPTION=re.compile(r'\b(in production|production use|running in production|deployed at|deployed to|rolling out|adopted by|case study|customers? (?:use|rely on|deployed))\b|生产环境|已部署|客户案例|正式上线',re.I)
+PAIN_REPEAT=re.compile(r'\b(again|still (?:fails|broken|happening)|recurring|every (?:time|week|month|run)|same (?:issue|problem|error)|others? (?:also|report|have))\b|再次|仍然|反复|每次都|其他人也',re.I)
 PRODUCT_HINT=re.compile(r'\b(tool|app|saas|plugin|extension|platform)\b|工具|插件|平台',re.I)
 ENTERPRISE=re.compile(r'\b(enterprise|company|companies|organization|procurement|on-prem|compliance|IT department)\b|企业|公司|采购|合规',re.I)
 ENGINEER=re.compile(r'\b(engineer(s|ing)?|simulation|CFD|CAE|FEA|mesh(ing)?|solver|OpenFOAM|Ansys|SolidWorks|CAD|post-?process(ing)?|turbulence|geometry)\b|仿真|网格|求解器|工程|后处理|湍流',re.I)
@@ -84,6 +92,14 @@ def classify(article,analysis,source=None):
          'stated_willingness' if willingness else
          'existing_purchase' if existing_paid else
          'indirect' if payment_hits else 'none')
+    # Direct buyer evidence is only what the article attributes to a buyer. 'indirect' is
+    # a keyword hit, so it stays out of the buyer field and out of the business score.
+    buyer_pay=pay if pay in {'explicit_budget','stated_willingness','existing_purchase'} else 'none'
+    seller=('commercial_service' if SELLER_SERVICE.search(t) else
+            'pricing_published' if SELLER_PRICING.search(t) else 'none')
+    adoption='production_use' if ADOPTION.search(t) else 'none'
+    pain=('repeated' if PAIN_REPEAT.search(t) else
+          'single_report' if kind=='user_pain' or DEPLOY.search(t) or GAP.search(t) else 'none')
     delivery=('service' if SERVICE.search(t) else
               'product' if signal=='product_gap' or (PRODUCT_HINT.search(t) and kind=='product') else
               'custom_tool' if kind in {'user_pain','tech'} else 'not_fit')
@@ -93,4 +109,6 @@ def classify(article,analysis,source=None):
             'content_source':content_source(article),'content_length':len(summary),
             'content_status':'ok' if summary else 'empty',
             'signal_type':signal,'buyer_type':buyer,'payment_evidence':pay,
+            'buyer_payment_evidence':buyer_pay,'seller_monetization_signal':seller,
+            'adoption_signal':adoption,'pain_evidence':pain,
             'delivery_fit':delivery,'source_quality':source_quality}

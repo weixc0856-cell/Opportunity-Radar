@@ -17,25 +17,42 @@
 3. 在你当前 FreshRSS 版本中启用并验证 Fever API，创建 API 密钥。若 API 不可用，先查官方文档，不要绕过或猜测认证方式。
 4. `config/sources.csv` 中的来源均为候选项且默认禁用。逐个核实来源所有者、当前 RSS/API 方式、使用条款、内容保存/摘要/归属要求后，再填写 `permission_status=approved`、`reviewed_at`、`last_verified_at`、本机 FreshRSS 的 `freshrss_feed_id`，并设置 `enabled=true`。运行 `py -3 -m opportunity_radar.source_audit` 检查登记完整性；可选 `--check-urls` 检查 HTTPS 可达性。可达性不代表获得法律许可。`robots.txt` 不是完整的法律许可。
 5. 若尚无 `.env`：`Copy-Item .env.example .env`，填写 API、模型和 SMTP 配置。
-6. 启动本地模型：`.\deploy\windows\start-model.ps1`（默认 `D:\AI\models\Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf`，SYCL0，16K 上下文，48 层 CPU MoE，端口 8080）。脚本从 `.env` 读取 `OR_LLM_API_KEY`，后台启动后轮询 `/health` 并报告 PID 或失败原因；日志写入 `reports/llama-server.log` 与 `reports/llama-server.err.log`。它使用 GGUF 自带 Jinja 模板、开启 API Key 并把 CORS 限制在本机来源。加 `-Foreground` 可保留前台运行。若改用 `D:\AI\start_server.bat`，选择模型 6 与档位 3（16K），参数与脚本一致；该 bat 不设置 API Key，项目客户端发送的 Bearer 头会被忽略。再用 `Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/v1/models"` 核对模型 ID 与 `OR_LLM_MODEL`。
+6. 启动本地模型：`.\deploy\windows\start-model.ps1`（默认 `D:\AI\models\Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf`，SYCL0，16K 上下文，48 层 CPU MoE，端口 8080）。脚本从 `.env` 读取 `OR_LLM_API_KEY`，后台启动后轮询 `/health` 并报告 PID 或失败原因；日志写入 `reports/llama-server.log` 与 `reports/llama-server.err.log`。它使用 GGUF 自带 Jinja 模板、开启 API Key 并把 CORS 限制在本机来源。加 `-Foreground` 可保留前台运行。若改用 `D:\AI\start_server.bat`，选择模型 6 与档位 3（16K），参数与脚本一致；该 bat 不设置 API Key，项目客户端发送的 Bearer 头会被忽略。再用 `Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/v1/models"` 核对模型 ID 与 `OR_LLM_MODEL`。
 7. 测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests -v`；然后 `.\deploy\windows\test-digest.ps1`。
 8. 配好 SMTP 后真实运行：`.\deploy\windows\run-digest.ps1`。
 9. 成功收到邮件并检查内容后，再设置任务计划：`.\deploy\windows\install-task.ps1`。
 
 ## 报告与评分
 - 每次运行生成 `reports/latest-digest.txt` 与 `reports/latest-digest.html`，并按日期目录归档到 `reports/archive/YYYY/MM/DD/`：每次运行保存 `HHMMSS.txt`、`.html`、`.items.json`（结构化分析快照）和 `.manifest.json`（运行 ID、报告哈希、统计与文件清单）。`--render-only` 只更新 latest，不新增归档。详见 `docs/LOCAL_DAILY_ARCHIVE.md`。
-- 报告采用决策简报结构：执行摘要（先给结论）→ 关键发现（事实 / 初判 / 商业评估 / 关键未知 / 建议验证）→ 商业评估表 → 战略含义 → 建议行动 → 附录（来源、过滤原因、数据质量、评分规则、免责声明）。
+- 报告按三条编辑通道组织：执行摘要（3 条，写明发生了什么 / 为什么重要 / 可信度）→ 一、商业、科技与经济情报（A）→ 二、值得验证的商业机会（B）→ 三、技术观察与工程信号（C）→ 四、数据概览 → 五、附录（来源、过滤原因、数据质量、来源审计、评分规则、免责声明）。每条卡片给出事实（仅列可在原文定位的引文）、未核实引文（单独标注，不作为事实）、通道内评估、关键未知和下一步观察。
 - 只想调整报告版式时用 `--render-only`，直接基于数据库里已保存的分析重新生成报告，不重新调用模型、不重新评分：
   `.\.venv\Scripts\python.exe -m opportunity_radar.cli --render-only`
-- 分数是确定性规则，不由模型直接决定总分：需求明确度、付费证据、可执行性、个人可行性、新颖性各 0–5 分，权重与阈值统一读自 `config/scoring.toml`。
-- 证据等级分为 `none` / `title` / `untraceable` / `summary` / `full_text`。仅标题级或无法在输入中定位的证据会把分数封顶在 `watch` 阈值以下，不能进入"优先验证"。
+- 分数是确定性规则，不由模型直接决定总分。每条内容先按来源声明的 `editorial_lanes` 与内容类型路由到 A/B/C 之一，再用该通道自己的 0–5 分组件加权：
+  - A（情报）：重要性、来源可靠性、证据完整度、新颖性、相关性、时效性
+  - B（机会）：痛点严重度、买方明确度、买方付费证据、独立佐证、验证可行性、现有方案缺口、新颖性
+  - C（技术）：技术成熟度、可复现性、影响范围、来源可靠性、新颖性
+  权重、阈值与晋升门槛统一读自 `config/scoring.toml`。**不同通道的分数不可直接比较。**
+- 证据状态是显式枚举，不再混用一个字符串：`title_only` / `unlocated_quotes`（E0）、`rss_excerpt_only`（E1）、`full_text_verified` / `primary_source_located` / `multi_source_coverage`（E2）。E0 一律不进入简报（过滤原因 `insufficient_evidence`）。
+  - `primary_source_located` 只表示引文可在一手来源自己的发布中定位，即对方确实这样说过，不代表该说法成立。
+  - `multi_source_coverage` 只表示同一事件有多个来源的已分析条目，**没有**核对这些来源是否独立、是否转载同一稿源。主张级交叉验证尚未实现。
+- 每个通道有独立的 `promote_rank`（进入"优先验证"所需的最低证据等级）：A 为 E1，B 和 C 为 E2。A 通道报告的是公司与行业变化，定位到可靠来源的摘要即可阅读；B 和 C 对买方与行为下结论，需要正文。
+- “我们手里到底有多少原文”由 `content_basis` 决定：`title_only`、`excerpt`、`full_text`。**只有人工复核后声明 `content_access_level=full_text` 的来源才能进入 `full_text`**；`auto` 与 `excerpt` 一律按摘要处理。
+- `content_basis_estimate` 是程序的完整性估计（长度 ≥ 400 且无 “Read more”/省略号等截断标记即估计为全文），它**只作为复核提示出现在报告里，不参与评分**。理由是 400 字可能是完整短文，也可能是长文的前半段：没有截断标记不等于没有截断。
+- **这正是此前“优先验证恒为 0”的根因：旧实现没有任何路径能产出 E2。** 现在 E2 可达，但需要逐个复核来源并显式声明，而不是由长度自动授予。
 - 简报分别统计获取、新增、进入分析、成功、失败、已有结果跳过和过滤原因；没有新分析任务时不会输出"没有商业机会"的结论。
-- 条目状态：`priority`（≥75）、`watch`（55–74）、`filtered`（低于阈值或未通过硬性过滤），过滤原因包括招聘、无商业信号、内容不足和低分。
-- 每条分析附带确定性信号元数据：`signal_type`（付费需求/用户痛点/部署障碍/产品缺口/技术趋势）、`buyer_type`、`payment_evidence`、`delivery_fit`、`source_quality`。付费证据只从文章正文读取，不采信模型自己写的商业信号。
+- 条目状态：`priority`、`watch`、`filtered`，阈值为各通道自己的 `priority` / `watch`。过滤原因包括招聘、证据不足、无商业信号和低分。
+- 判断与分发分开：`status` 是证据与评分的结论；`distribution`（`included` / `deferred`）只表示本期是否进入阅读区。来源单期配额只会让条目 `deferred`，**不会**改写成 `filtered`——被延后的条目保留原等级、分数和证据，列在附录，报告也会说明“不代表价值较低”。
+- 每条分析附带确定性信号元数据：`signal_type`、`buyer_type`、`payment_evidence`、`buyer_payment_evidence`、`seller_monetization_signal`、`adoption_signal`、`pain_evidence`、`market_validation`、`delivery_fit`、`source_quality`。**卖方定价或商业支持永远不算买方付费证据**；只有正文明确写出预算、采购、已付费或付费意愿时，`buyer_payment_evidence` 才会命中。
+- 抓取按来源轮流取最新条目，避免单个高频源占满每日配额。
 - 抓取按来源轮流取最新条目，避免单个高频源占满每日配额。
 
 ## 信息来源
 `config/sources.csv` 只登记已审查并启用 `freshrss_feed_id` 的来源。仓库模板中的来源全部默认禁用，且不携带任何本机 FreshRSS feed ID。Hacker News Ask/Show、SimScale、preCICE、ParaView、SALOME 论坛和 OpenAI 开发者社区只是候选来源；来源所有权、条款、保存/摘要/归属许可及实际 Feed ID 需由使用者在本地逐一核验。来源 URL 可访问不等于获准保存、分析或再发布。
+
+新增的第一批企业与经济来源（NVIDIA、Microsoft、AMD、Google Research、AWS、IMF、OECD、World Bank、SIA、MIT Technology Review、IEEE Spectrum 等）同样默认 `review_required` 且禁用。
+
+逐来源的实测结论、内容形态与建议动作见 `docs/SOURCE_REVIEW.md`。该文件区分"已实测事实 / 基于证据的判断 / 未核实的假设"；`feed_url` 留空表示**没有找到可验证的 Feed 端点**，不是遗漏。
+其中部分行的 `feed_url` 指向新闻页或出版页而非已确认的 RSS 端点，`review_notes` 已注明；启用前必须用 `source_audit --check-urls` 实测替换。
 
 ## 依赖与复现
 - 运行期只使用 Python 标准库（`sqlite3`、`urllib`、`tomllib`、`html`、`json`），没有第三方依赖；`pyproject.toml` 声明了 Python 3.11+ 和空依赖。
@@ -43,7 +60,8 @@
 - 新增依赖前先确认标准库无法满足需求，并记录用途、版本和替代方案；环境用 `.venv` 隔离。
 
 ## 证据与审计
-- 来源登记表 `config/sources.csv` 现在包含 `source_type`、`provenance_class`、`canonical_domain`、`terms_url`、`last_verified_at`、`reviewed_at` 及可选的 Feed 提供方/提供方条款字段。报告里的来源质量优先采用登记表声明，URL 规则只作为回退。
+- 来源登记表 `config/sources.csv` 包含 `source_type`、`provenance_class`、`canonical_domain`、`terms_url`、`last_verified_at`、`reviewed_at`、可选的 Feed 提供方/提供方条款字段，以及编辑治理字段：`editorial_lanes`（A/B/C，可多选）、`topic_tags`、`source_authority`、`content_access_level`（`auto` / `full_text` / `excerpt` / `title_only`）、`source_cap`（单期最大入选数，0 为不限）。报告里的来源质量优先采用登记表声明，URL 规则只作为回退。
+- 审计工具会校验上述字段的取值，并要求启用来源至少声明一条 `editorial_lanes`：**能合法接入不等于该进入简报**。
 - 文章记录区分发布时间与抓取时间，并保存 `content_source`、`retrieval_status` 和内容哈希；同一 URL 内容变化会追加到 `article_versions`、更新当前文章元数据并触发重新分析。旧分析写入 `analysis_history`；内容变化后旧人工标签失效，避免继续套用旧结论。
 - 每条引文在分析时分配稳定 ID（`e1`、`e2`…），并记录定位信息（`title` / `summary` / `unlocated`）与字符位置；报告以 `[e1]` 前缀展示，附录汇总可定位与无法定位的引文数量。定位前会去除 HTML 标签、反转义实体并统一引号与空白。
 - 来源身份与内容证明力分开：论坛用户帖记为一手用户表达，即使内容只是功能请求；GitHub Releases 记为项目记录；官方发布才记为官方宣传。
@@ -76,7 +94,7 @@ py -3 -m opportunity_radar.source_audit --check-urls
 ## 本地管理后台
 - 启动：`.\deploy\windows\start-admin.ps1`，或 `.\.venv\Scripts\python.exe -m opportunity_radar.admin_server`；打开 http://127.0.0.1:8090。
 - 功能：状态总览、来源编辑（可从 FreshRSS 读取真实 Feed ID）、收件人管理与测试邮件、立即运行日报、注册每日任务、查看日志和最新 HTML 报告。
-- 来源编辑作用于 `OR_SOURCES_PATH` 指向的本地注册表（默认 `config/sources.local.csv`）；仓库中的 `config/sources.csv` 只是 18 个候选源模板，默认全部禁用。
+- 来源编辑作用于 `OR_SOURCES_PATH` 指向的本地注册表（默认 `config/sources.local.csv`）；仓库中的 `config/sources.csv` 是 31 个候选源模板（含企业官方、投资者关系、产业协会、宏观经济与专业媒体），默认全部禁用。
 - 收件人保存到 `config/recipients.json`（已被 `.gitignore` 排除），文件存在时优先于 `.env` 的 `OR_EMAIL_TO`。SMTP 账号和授权码始终只从 `.env` 读取，页面不会显示。
 - 后台没有多用户认证，只监听 `127.0.0.1`，不要映射到局域网或公网。
 
