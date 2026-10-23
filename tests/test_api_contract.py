@@ -74,3 +74,20 @@ class ApiContractTests(unittest.TestCase):
     def test_recipient_list_points_at_the_bad_index(self):
         details = validate_recipient_list(['ok@example.com', 'bad'])
         self.assertEqual(details[0]['field'], 'recipients[1]')
+
+
+class SourceRowValidationTests(unittest.TestCase):
+    """A candidate may have no verified endpoint; an enabled source may not."""
+
+    def test_candidate_without_a_verified_feed_is_allowed(self):
+        details = validate_source_rows([{'source_id': 'c', 'name': 'C', 'feed_url': '', 'enabled': 'false'}])
+        self.assertEqual(details, [])
+
+    def test_enabled_source_without_a_feed_is_rejected(self):
+        details = validate_source_rows([{'source_id': 'c', 'name': 'C', 'feed_url': '', 'enabled': 'true',
+                                         'freshrss_feed_id': '1', 'permission_status': 'approved'}])
+        self.assertIn('feed_url', ' '.join(d['field'] for d in details))
+
+    def test_a_publisher_page_is_still_checked_for_https(self):
+        details = validate_source_rows([{'source_id': 'c', 'name': 'C', 'feed_url': 'http://x.example/page', 'enabled': 'false'}])
+        self.assertIn('feed_url', ' '.join(d['field'] for d in details))

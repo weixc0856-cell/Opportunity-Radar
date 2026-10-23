@@ -6,8 +6,16 @@ _BEARER=re.compile(r'(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+')
 _EMAIL=re.compile(r'([A-Za-z0-9._%+-]{2})[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})')
 
 def redact(text):
-    """Mask credentials and email addresses before writing logs or returning them to the UI."""
-    s=str(text or '')
+    """Mask credentials and email addresses before writing logs or returning them to the UI.
+
+    Non-string values pass through untouched. Coercing every log argument to text broke
+    %d formatting, and `str(text or '')` turned every numeric zero into an empty string,
+    so a success line such as "errors=0" could not be formatted and never reached the log
+    file at all.
+    """
+    if text is None: return ''
+    if not isinstance(text,str): return text
+    s=text
     s=_BEARER.sub(r'\1<redacted>',s)
     s=_SECRET.sub(r'\1<redacted>',s)
     s=_EMAIL.sub(r'\1***@\2',s)
@@ -30,7 +38,10 @@ class RedactFilter(logging.Filter):
     def filter(self,record):
         try:
             record.msg=redact(record.msg)
-            if record.args: record.args=tuple(redact(a) for a in record.args)
+            if isinstance(record.args,dict):
+                record.args={k:redact(v) for k,v in record.args.items()}
+            elif record.args:
+                record.args=tuple(redact(a) for a in record.args)
         except Exception:
             pass
         return True

@@ -10,7 +10,8 @@ def source(**overrides):
                   permission_status='approved', enabled=True, freshrss_feed_id='7',
                   source_type='user_forum', provenance_class='first_party',
                   canonical_domain='example.org', terms_url='https://example.org/terms',
-                  last_verified_at='2026-10-20', reviewed_at='2026-10-20')
+                  last_verified_at='2026-10-20', reviewed_at='2026-10-20',
+                  editorial_lanes='A', content_access_level='auto', source_cap=3)
     values.update(overrides)
     return Source(**values)
 
@@ -51,3 +52,31 @@ class SourceAuditTests(unittest.TestCase):
         self.assertEqual(set(targets), {'homepage', 'feed', 'terms'})
         bridged = dict(url_targets(source(feed_provider_terms_url='https://hnrss.org/')))
         self.assertEqual(bridged['feed_provider_terms'], 'https://hnrss.org/')
+
+
+class EditorialGovernanceTests(unittest.TestCase):
+    def test_unknown_lane_rejected(self):
+        issues = audit_sources([source(editorial_lanes='D')], date(2026, 10, 20))
+        self.assertIn('invalid_editorial_lane', {i['code'] for i in issues})
+
+    def test_enabled_source_needs_an_editorial_lane(self):
+        issues = audit_sources([source(editorial_lanes='')], date(2026, 10, 20))
+        self.assertIn('missing_editorial_lanes', {i['code'] for i in issues})
+
+    def test_disabled_source_is_not_blocked_for_a_missing_lane(self):
+        issues = audit_sources([source(enabled=False, permission_status='review_required', editorial_lanes='')], date(2026, 10, 20))
+        self.assertNotIn('missing_editorial_lanes', {i['code'] for i in issues})
+
+    def test_invalid_content_access_level(self):
+        issues = audit_sources([source(content_access_level='guess')], date(2026, 10, 20))
+        self.assertIn('invalid_content_access_level', {i['code'] for i in issues})
+
+    def test_invalid_source_cap(self):
+        issues = audit_sources([source(source_cap=900)], date(2026, 10, 20))
+        self.assertIn('invalid_source_cap', {i['code'] for i in issues})
+
+
+    def test_repository_registry_declares_governance_for_every_row(self):
+        for s in load_sources():
+            self.assertTrue(s.editorial_lanes, s.source_id)
+            self.assertIn(s.content_access_level, {'auto', 'full_text', 'excerpt', 'title_only'}, s.source_id)

@@ -10,10 +10,21 @@ def settings(**kw):
     base.update(kw); return Settings(**base)
 
 class Tests(unittest.TestCase):
- def test_reads_weights_and_thresholds(self):
+ def test_reads_lane_weights_and_thresholds(self):
   c=load_scoring()
-  self.assertEqual(c['thresholds']['priority'],75);self.assertEqual(c['thresholds']['watch'],55)
-  self.assertEqual(sum(c['weights'].values()),100)
+  lanes=c['lanes']
+  self.assertEqual(set(lanes),{'A','B','C'})
+  for lane in ('A','B','C'):
+   self.assertEqual(lanes[lane]['thresholds']['priority'],75)
+   self.assertEqual(lanes[lane]['thresholds']['watch'],55)
+   self.assertEqual(sum(lanes[lane]['weights'].values()),100,lane)
+ def test_lane_promotion_gates_are_declared(self):
+  lanes=load_scoring()['lanes']
+  self.assertEqual(lanes['A']['promote_rank'],'E1')
+  self.assertEqual(lanes['B']['promote_rank'],'E2')
+  self.assertEqual(lanes['C']['promote_rank'],'E2')
+ def test_evidence_threshold_is_configured(self):
+  self.assertGreater(load_scoring()['evidence']['full_text_min_chars'],0)
  def test_missing_file_returns_empty(self):
   self.assertEqual(load_scoring('config/does-not-exist.toml'),{})
  def test_mail_config_accepts_complete_settings(self):

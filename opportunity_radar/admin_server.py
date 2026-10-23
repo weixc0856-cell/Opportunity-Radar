@@ -23,7 +23,7 @@ ASSETS = {
     '/assets/app.js': (ROOT / 'admin' / 'assets' / 'app.js', 'application/javascript; charset=utf-8'),
 }
 RECIPIENT_FILE = ROOT / 'config' / 'recipients.json'
-SOURCE_FIELDS = ['source_id','name','homepage','feed_url','access_method','permission_status','reviewed_at','review_notes','max_requests_per_day','enabled','freshrss_feed_id','source_type','provenance_class','canonical_domain','terms_url','last_verified_at','feed_provider','feed_provider_terms_url','topic','quality_tier','expected_signal']
+SOURCE_FIELDS = ['source_id','name','homepage','feed_url','access_method','permission_status','reviewed_at','review_notes','max_requests_per_day','enabled','freshrss_feed_id','source_type','provenance_class','canonical_domain','terms_url','last_verified_at','feed_provider','feed_provider_terms_url','topic','quality_tier','expected_signal','editorial_lanes','topic_tags','source_authority','content_access_level','source_cap']
 ERROR_CODES = ['VALIDATION_ERROR','FORBIDDEN','SOURCE_VALIDATION_FAILED','FRESHRSS_UNAVAILABLE','MODEL_UNAVAILABLE','SMTP_FAILED',
                'SMTP_AUTH_FAILED','RUN_ALREADY_ACTIVE','SCHEDULE_FAILED','REPORT_MISSING','NOT_FOUND','INTERNAL_ERROR']
 SOURCE_LOCK = threading.Lock()
@@ -89,13 +89,17 @@ def validate_source_rows(rows):
         elif not re.fullmatch(r'[A-Za-z0-9._-]{1,80}', sid): details.append({'field': f'sources[{i}].source_id', 'message': 'source_id must be 1-80 chars of letters, digits, dot, dash or underscore'})
         elif sid in seen: details.append({'field': f'sources[{i}].source_id', 'message': f'duplicate source_id: {sid}'})
         seen.add(sid)
+        # A candidate under review may have no verified endpoint yet; an enabled source
+        # may not. Emptying feed_url is the honest record for "no feed found", and is
+        # preferred over putting a publisher page in a column named feed_url.
         for field, limit in (('name', 200), ('feed_url', 1000), ('homepage', 1000), ('terms_url', 1000), ('review_notes', 2000)):
             value = str(row.get(field, '')).strip()
-            if field in {'name', 'feed_url'} and not value: details.append({'field': f'sources[{i}].{field}', 'message': f'{field} is required'})
+            if field == 'name' and not value: details.append({'field': f'sources[{i}].{field}', 'message': f'{field} is required'})
             if len(value) > limit: details.append({'field': f'sources[{i}].{field}', 'message': f'{field} must be at most {limit} characters'})
         feed = str(row.get('feed_url', '')).strip().lower()
         if feed and not feed.startswith('https://'): details.append({'field': f'sources[{i}].feed_url', 'message': 'feed_url must use HTTPS'})
         enabled = str(row.get('enabled', '')).lower() in {'true', '1', 'yes', 'on'}
+        if enabled and not feed: details.append({'field': f'sources[{i}].feed_url', 'message': 'enabled sources need a verified feed_url'})
         if enabled and str(row.get('permission_status', '')).lower() != 'approved':
             details.append({'field': f'sources[{i}].permission_status', 'message': 'enabled sources require permission_status=approved'})
         feed_id = str(row.get('freshrss_feed_id', '')).strip()

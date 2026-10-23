@@ -13,6 +13,8 @@ class Tests(unittest.TestCase):
  def test_hiring_not_opportunity(self):
   c=classify(art('Evidence (YC S21) Is Hiring Software Engineers'),ana())
   self.assertEqual(c['article_type'],'hiring');self.assertFalse(c['business_relevant'])
+ def test_simulation_jobs_are_not_hiring(self):
+  self.assertNotEqual(classify(art('Unable to Start CFD or Meshing Jobs'),ana())['article_type'],'hiring')
  def test_funding(self):
   self.assertEqual(classify(art('Acme raises $4M Series A'),ana())['article_type'],'funding')
  def test_user_pain_from_model_category(self):

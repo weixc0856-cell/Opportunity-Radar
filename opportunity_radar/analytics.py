@@ -1,8 +1,12 @@
 from collections import Counter
+from .evidence import state_of
+from .lanes import LANES, item_lane
 
 FUNNEL_STEPS=('fetched','new','updated','queued','analyzed')
 FUNNEL_LABELS={'fetched':'本轮获取','new':'新增','updated':'内容更新','queued':'进入分析','analyzed':'分析成功'}
-EVIDENCE_ORDER=('full_text','summary','title','untraceable','none')
+# Strongest first, so a glance at the bar chart reads as an evidence ladder.
+EVIDENCE_ORDER=('primary_source_located','multi_source_coverage','full_text_verified',
+                'rss_excerpt_only','title_only','unlocated_quotes','none')
 
 def funnel(stats):
     """Processing funnel. Every step comes from the same run, so the numbers are comparable."""
@@ -14,6 +18,16 @@ def funnel(stats):
            'queued':stats.get('queued',stats.get('analyzed_count',0)),'analyzed':stats.get('analyzed',stats.get('analyzed_count',0))}
     rows=[(FUNNEL_LABELS[k],alias[k]) for k in FUNNEL_STEPS]
     rows.append(('持续观察',counts.get('watch',0))); rows.append(('优先验证',counts.get('priority',0)))
+    return rows
+
+def lane_breakdown(items):
+    """Per-lane totals, computed from the same records the report renders."""
+    rows=[]
+    for lane in LANES:
+        group=[x for x in items if item_lane(x)==lane]
+        rows.append({'lane':lane,'items':len(group),
+                     'shown':sum(1 for x in group if x.get('status') in {'priority','watch'}),
+                     'priority':sum(1 for x in group if x.get('status')=='priority')})
     return rows
 
 def source_breakdown(items):
@@ -29,8 +43,8 @@ def source_breakdown(items):
     return sorted(rows.values(),key=lambda r:(-r['items'],r['source']))
 
 def evidence_breakdown(items):
-    c=Counter(x.get('evidence_level','none') for x in items)
-    return [{'level':k,'count':c[k]} for k in EVIDENCE_ORDER if c[k]]
+    c=Counter(state_of(x) for x in items)
+    return [{'state':k,'count':c[k]} for k in EVIDENCE_ORDER if c[k]]
 
 def denominator_note(stats):
     n=stats.get('analyzed',stats.get('analyzed_count',0))
