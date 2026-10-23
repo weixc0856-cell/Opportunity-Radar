@@ -1,30 +1,62 @@
-name: Django CI
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-
+  test:
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
-      max-parallel: 4
+      fail-fast: false
       matrix:
-        python-version: [3.7, 3.8, 3.9]
-
+        python-version: ['3.11', '3.12']
+    env:
+      # CI audits the committed template. config/sources.local.csv is machine-specific
+      # and gitignored, so it must never be the input here.
+      OR_SOURCES_PATH: config/sources.csv
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    - name: Run Tests
-      run: |
-        python manage.py test
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Verify the interpreter and that nothing needs installing
+        run: |
+          python - <<'PY'
+          import pathlib, sys, tomllib
+
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          requires = project["requires-python"]
+          minimum = tuple(int(part) for part in requires.lstrip(">= ").split(".")[:2])
+          print(f"interpreter {sys.version.split()[0]}; project requires {requires}")
+          if sys.version_info[:2] < minimum:
+              sys.exit("interpreter is older than requires-python")
+
+          dependencies = project.get("dependencies") or []
+          if dependencies:
+              print("pyproject declares runtime dependencies:", dependencies)
+              sys.exit("add an install step to this workflow before relying on it")
+          print("no runtime dependencies; nothing to install")
+          PY
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Audit the source registry
+        run: python -m opportunity_radar.source_audit
