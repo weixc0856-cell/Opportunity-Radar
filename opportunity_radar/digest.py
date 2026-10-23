@@ -110,8 +110,8 @@ def empty_reason(stats):
     fetched=stats.get('fetched',stats.get('article_count',0)); analyzed=stats.get('analyzed',stats.get('analyzed_count',0))
     failed=stats.get('failed',stats.get('error_count',0)); skipped=stats.get('skipped',0)
     if not fetched: return '本轮没有从 FreshRSS 获取到文章。请检查来源状态与运行日志；这不代表没有商业机会。'
-    if analyzed==0 and skipped>0: return f'本轮没有新的分析任务：{skipped} 篇文章均已有分析结果，无需重新分析。这只说明本轮没有新内容，不代表没有机会。'
     if analyzed==0 and failed>0: return f'本轮分析结果为空：{failed} 篇尝试分析均未通过，请查看运行日志排查原因。'
+    if analyzed==0 and skipped>0: return f'本轮没有新的分析任务：{skipped} 篇文章均已有分析结果，无需重新分析。这只说明本轮没有新内容，不代表没有机会。'
     return f'本轮没有满足条件的机会：{analyzed} 篇进入分析，均未达到观察门槛或未通过硬性过滤。'
 
 def _counts(items):

@@ -204,3 +204,10 @@ class DistributionTests(unittest.TestCase):
   html=render_html([self._deferred()],stats(fetched=1,analyzed=1),'2026-10-20')
   self.assertIn('本期未纳入分发',html)
   self.assertIn('优先验证 · 94/100',html)
+
+class FailureReportingTests(unittest.TestCase):
+ def test_a_failed_run_is_not_reported_as_no_new_tasks(self):
+  from opportunity_radar.digest import empty_reason
+  reason=empty_reason({'fetched':10,'analyzed':0,'failed':5,'skipped':5})
+  self.assertIn('分析结果为空',reason)
+  self.assertNotIn('没有新的分析任务',reason)

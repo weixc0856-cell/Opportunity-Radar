@@ -182,3 +182,18 @@ class RenderOnlyUpgradeTests(unittest.TestCase):
    self.assertIn('legacy-model',out)
    self.assertTrue(Path(d,'latest-digest.txt').exists())
    self.assertTrue(Path(d,'latest-digest.html').exists())
+
+class CallSiteTests(unittest.TestCase):
+ """A mistyped keyword only fails when the pipeline actually runs."""
+ def test_every_keyword_passed_to_evaluate_exists(self):
+  import ast, inspect
+  from opportunity_radar import cli
+  params=set(inspect.signature(cli.evaluate).parameters)
+  tree=ast.parse(inspect.getsource(cli)); checked=0
+  for node in ast.walk(tree):
+   if isinstance(node,ast.Call) and getattr(node.func,'id',None)=='evaluate':
+    for kw in node.keywords:
+     if kw.arg is None: continue
+     checked+=1
+     self.assertIn(kw.arg,params,f'unknown kwarg {kw.arg!r} at line {node.lineno}')
+  self.assertGreater(checked,0,'no evaluate() call sites found')

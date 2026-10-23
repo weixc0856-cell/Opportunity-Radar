@@ -327,7 +327,7 @@ def main(argv=None):
                 multi_source=len(prior_sources|{a.source_name})>=2
                 result=model.analyze(a.title,a.summary,a.source_name,a.url)
                 item=evaluate(a,result,thresholds=None,model=s.llm_model,source=source_by_feed.get(a.feed_id),
-                              lanes_cfg=lanes_cfg,multi_source=multi_source,event_seen_before=bool(prior_sources),
+                              lanes_config=lanes_cfg,multi_source=multi_source,event_seen_before=bool(prior_sources),
                               min_full_text_chars=min_chars)
                 store.save_analysis(key,result,item['scoring'],item['meta'])
                 items.append(item); analyzed+=1
