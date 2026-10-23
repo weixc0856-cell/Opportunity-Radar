@@ -1,14 +1,52 @@
-import hashlib, json, urllib.parse, urllib.request
+import hashlib, json, urllib.error, urllib.parse, urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 @dataclass
 class Article:
     article_id:str; title:str; url:str; summary:str; published:str; source_name:str='FreshRSS'; feed_id:str=''
-    fetched_at:str=''; content_source:str=''; retrieval_status:str=''
+    fetched_at:str=''; content_source:str=''; retrieval_status:str=''; feed_summary:str=''
+def ordered_feed_ids(feed_ids):
+    """Sort feed IDs numerically where possible.
+
+    Plain string sorting put '17' before '3', so with a small OR_MAX_ARTICLES the
+    high-numbered sources were always sampled first and later feeds never got a turn.
+    Non-numeric IDs (if any) sort after numeric ones, deterministically.
+    """
+    return sorted(feed_ids, key=lambda value: (0, int(value)) if str(value).strip().isdigit() else (1, str(value)))
+
+
 class FreshRSSClient:
     """Fever API client; confirm API availability in the installed FreshRSS version."""
     def __init__(self,base_url,username,api_key,timeout=20):
         self.endpoint=base_url.rstrip('/')+'/api/fever.php'; self.username=username; self.api_key=api_key; self.timeout=timeout
+        self._https_cache={}
+    def _https_ok(self,url):
+        """True only when the https variant of this URL answers on the same host.
+
+        Government feeds sometimes publish http links (BEA does). The pipeline accepts
+        only https article links, so without this check the whole source disappears
+        without an error. One request per distinct URL, cached for the run.
+        """
+        host=(urlparse(url).hostname or '').lower()
+        for method in ('HEAD','GET'):
+            try:
+                req=urllib.request.Request(url,method=method,headers={'User-Agent':'OpportunityRadar/0.1','Range':'bytes=0-0'})
+                with urllib.request.urlopen(req,timeout=min(self.timeout,8)) as r:
+                    return 200<=r.status<400 and r.geturl().startswith('https://') and \
+                        (urlparse(r.geturl()).hostname or '').lower()==host
+            except urllib.error.HTTPError as e:
+                if method=='HEAD' and e.code in (405,501): continue
+                return False
+            except (urllib.error.URLError,TimeoutError,OSError):
+                return False
+        return False
+    def _upgrade_https(self,url):
+        if url in self._https_cache: return self._https_cache[url]
+        candidate=urlparse(url)._replace(scheme='https').geturl()
+        ok=self._https_ok(candidate)
+        self._https_cache[url]=candidate if ok else None
+        return self._https_cache[url]
     def _request(self,params):
         p=dict(params); p['api']=''; p['api_key']=hashlib.md5(f'{self.username}:{self.api_key}'.encode()).hexdigest()
         # FreshRSS reads api_key from $_POST only; a GET request always answers auth:0.
@@ -23,7 +61,12 @@ class FreshRSSClient:
         fetched=datetime.now(timezone.utc).isoformat()
         for x in data.get('items',[]):
             title=str(x.get('title','')).strip(); url=str(x.get('url','')).strip()
-            if not title or not url.startswith('https://'): continue
+            if not title: continue
+            if url.startswith('http://'):
+                # Verified same-host upgrade; a plain rewrite would turn a dropped link
+                # into a broken one, and silently accepting http would weaken the policy.
+                url=self._upgrade_https(url) or ''
+            if not url.startswith('https://'): continue
             try: published=datetime.fromtimestamp(int(x.get('created_on_time',0)),tz=timezone.utc).isoformat()
             except (TypeError,ValueError,OSError): published=''
             summary=str(x.get('html') or x.get('description') or x.get('content') or '')

@@ -2,6 +2,9 @@ import json,re
 CATEGORIES={'customer_pain','small_business','market_change','service_opportunity','distribution','other','unknown'}
 CLAIMS={'none','revenue','profit','market_size','mixed','unknown'}
 CONFIDENCE={'low','medium','high'}
+# Actionability is an observational field: it is recorded and evaluated offline, but it
+# does not enter scoring, lanes, status or quotas. Old prompts that omit it stay valid.
+ACTIONABILITY_LEVELS=('none','monitor','investigate','decide','act')
 def _unwrap(raw):
     s=raw.strip()
     # Thinking models may prefix a <think>...</think> block even when asked for JSON only.
@@ -57,4 +60,13 @@ def parse_model_json(raw):
         # deviation, not bad content, so wrap it instead of discarding the whole article.
         if isinstance(d[k],str): d[k]=[d[k]] if d[k].strip() else []
         if not isinstance(d[k],list) or len(d[k])>10 or any(not isinstance(x,str) or len(x)>500 for x in d[k]): raise ValueError(f'Invalid {k}')
+    # A non-scoring field must never fail an otherwise valid analysis. Missing or invalid
+    # values are recorded as sentinels so the offline experiment can count them.
+    action=d.get('actionability')
+    if action is None:
+        d['actionability']='missing'; d['actionability_status']='missing'
+    elif isinstance(action,str) and action.strip().lower() in ACTIONABILITY_LEVELS:
+        d['actionability']=action.strip().lower(); d['actionability_status']='ok'
+    else:
+        d['actionability']='invalid'; d['actionability_status']='invalid'
     return d

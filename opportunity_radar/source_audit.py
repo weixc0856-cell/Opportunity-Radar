@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from .config import load_dotenv
+from .intelligence_lines import INTELLIGENCE_LINES
 from .source_policy import Source, is_approved, load_sources
 
 MAX_REVIEW_AGE_DAYS = 180
@@ -15,11 +16,17 @@ ALLOWED_PROVENANCE = {"first_party", "project_record", "secondhand_report", "ven
 # not establish that a feed belongs in the business briefing.
 ALLOWED_LANES = {"A", "B", "C"}
 ALLOWED_ACCESS = {"auto", "full_text", "excerpt", "title_only"}
+ALLOWED_INTELLIGENCE_LINES = set(INTELLIGENCE_LINES)
+ALLOWED_FULL_TEXT_FETCH = {"none", "article_page"}
 MAX_SOURCE_CAP = 50
 
 
 def editorial_lanes(value: str) -> set[str]:
     return {token for token in re.split(r"[\s,;|/]+", str(value or "").upper()) if token}
+
+
+def intelligence_lines(value: str) -> set[str]:
+    return {token for token in re.split(r"[\s,;|/]+", str(value or "").lower()) if token}
 
 
 def _https(url: str) -> bool:
@@ -50,6 +57,19 @@ def audit_sources(sources: list[Source], today: date | None = None) -> list[dict
         if s.content_access_level not in ALLOWED_ACCESS:
             add(s.source_id, "error", "invalid_content_access_level",
                 "content_access_level must be auto, full_text, excerpt or title_only; evidence cannot be graded without it.")
+        lines = intelligence_lines(s.intelligence_lines)
+        unknown_lines = lines - ALLOWED_INTELLIGENCE_LINES
+        if unknown_lines:
+            add(s.source_id, "error", "invalid_intelligence_line",
+                f"Unknown intelligence line(s): {', '.join(sorted(unknown_lines))}. Use one of: {', '.join(INTELLIGENCE_LINES)}.")
+        elif not lines:
+            # Old registries have no such column. Parse them as undeclared and say so,
+            # instead of inferring a mainline from the source name or feed URL.
+            add(s.source_id, "warning", "missing_intelligence_lines",
+                "No intelligence line declared. Report the source under '(undeclared)' until a reviewer assigns one.")
+        if s.full_text_fetch not in ALLOWED_FULL_TEXT_FETCH:
+            add(s.source_id, "error", "invalid_full_text_fetch",
+                "full_text_fetch must be none or article_page; page fetching is an access decision, not a scoring hint.")
         if s.source_cap < 0 or s.source_cap > MAX_SOURCE_CAP:
             add(s.source_id, "error", "invalid_source_cap",
                 f"source_cap must be a whole number from 0 (uncapped) to {MAX_SOURCE_CAP}.")

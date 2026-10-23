@@ -172,3 +172,20 @@ OECD / World Bank / SIA / MIT Technology Review / IEEE Spectrum），全部 `rev
 
 在完成第 1 项之前，"优先验证"只会出现在来源已声明 `full_text` 的 B/C 条目上，以及 A 通道
 的 E1 条目上。这是当前证据标准下的诚实结果，不应通过放宽门槛来制造。
+
+## Mainlines are not lanes
+
+The A/B/C sections of the report are **editorial lanes**: they decide the scale an item
+is judged on. `intelligence_lines` is a separate, orthogonal dimension that says which
+mainline a source serves (policy, macro, corporate, industry, news, technology,
+opportunity, engineering, maintenance).
+
+- A source may feed several mainlines; an item inherits its source's declaration.
+- The lane an item lands in still comes from its content, not from its mainline.
+- Mainlines never enter weights, thresholds, evidence ranks or `promote_rank`.
+- The data-overview section prints analysed items per mainline. Undeclared sources are
+  counted as `(undeclared)` — never inferred from the source name or URL.
+
+This is why the six-line restructuring can proceed without touching the scoring model:
+the report gains a supply-structure view, while the evidence and lane rules stay as they
+were reviewed.

@@ -6,6 +6,7 @@ from .digest import (REASON_LABEL,SOURCE_LABEL,MARKET_LABEL,WEIGHT_LABEL,
                      decision_headline,management_note,strategic_note,empty_reason,_pay_strong,_judgment,
                      _why,_evidence_text,_market,_commercial_line,_by_lane,_lane,_state,_shown,_deferred,STATUS_LABEL)
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
+from .intelligence_lines import INTELLIGENCE_LINE_LABEL,summarize
 from .evidence import STATE_LABEL,STATE_MEANING,EVIDENCE_STATES
 from .lanes import LANES,LANE_LABEL,LANE_PROMISE
 
@@ -175,11 +176,18 @@ def render_html(items,stats,date_label=None):
     parts.append(_section(f'{n:02d}','数据概览')); n+=1
     parts.append(_chart_block('处理漏斗（条目数）',funnel(stats)))
     parts.append(_chart_block('通道分布（分析条目）',[(LANE_LABEL[r['lane']][:8],r['items'],f"入选 {r['shown']}") for r in lane_breakdown(items)]))
+    line_rows=[(INTELLIGENCE_LINE_LABEL.get(str(k),str(k))[:10],v,'来源声明') for k,v in summarize(items)]
+    if line_rows: parts.append(_chart_block('情报主线（分析条目）',line_rows))
     src_rows=[(r['source'],r['items'],f"引文 {r['located']}/{r['evidence']}" if r['evidence'] else '无引文') for r in source_breakdown(items)]
     parts.append(_chart_block('来源贡献（分析条目）',src_rows))
     ev_rows=[(STATE_LABEL.get(e['state'],e['state']),e['count']) for e in evidence_breakdown(items)]
     parts.append(_chart_block('证据强度（条目数）',ev_rows))
     parts.append(f'<div style="font-size:11px;color:{MUTED};margin-top:10px;line-height:1.6;">{_e(denominator_note(stats))}</div>')
+    window=stats.get('sample_window')
+    if window:
+        parts.append(f'<div style="font-size:11px;color:{MUTED};margin-top:6px;line-height:1.6;">'
+                     f"样本窗口：{_e(window.get('since') or '(无下界)')} 至 {_e(window.get('until') or '(无上界)')} UTC"
+                     f"（池 {_e(window.get('pool'))} → 窗口内 {_e(window.get('in_window'))} → 取 {_e(window.get('sampled'))}）</div>")
     parts.append(_section(f'{n:02d}','战略含义与附录'))
     parts.append(f'<div style="font-size:13.5px;line-height:1.85;color:{INK};">{_e(strategic_note(items))}</div>')
     sources=', '.join(f'{k} {v}' for k,v in Counter(x.get('source_name','Unknown') for x in items).most_common()) or '无'

@@ -252,3 +252,11 @@ class DeclarationVersusLengthTests(unittest.TestCase):
   s=score_article(a,article=article,source=src(content_access_level='auto'),lane='B')
   self.assertEqual(s['evidence_rank'],'E1')
   self.assertEqual(s['content_basis_estimate'],'full_text')   # estimate says complete; it still does not count
+
+
+class ActionabilityIsolationTests(unittest.TestCase):
+ def test_actionability_does_not_change_score_lane_or_band(self):
+  base=dict(NEWS); with_act=dict(NEWS,actionability='act',actionability_status='ok')
+  a=score_article(base,article=art('Acme record demand',LONG),source=src())
+  b=score_article(with_act,article=art('Acme record demand',LONG),source=src())
+  self.assertEqual((a['score'],a['lane'],a['status']),(b['score'],b['lane'],b['status']))

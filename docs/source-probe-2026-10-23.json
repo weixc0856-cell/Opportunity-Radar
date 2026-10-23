@@ -1,0 +1,530 @@
+{
+ "probed_at": "2026-10-23T03:14:25.441259+00:00",
+ "results": [
+  {
+   "source_id": "cn-gov",
+   "name": "中国政府网",
+   "entry": "https://www.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.gov.cn/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "cn-stats",
+   "name": "国家统计局",
+   "entry": "https://www.stats.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.stats.gov.cn/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "cn-pbc",
+   "name": "中国人民银行",
+   "entry": "http://www.pbc.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.pbc.gov.cn/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [
+    "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html"
+   ],
+   "feeds": [
+    {
+     "url": "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html",
+     "http": 200,
+     "final_url": "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html",
+     "ctype": "text/html",
+     "feed_status": "verified_feed",
+     "items": 6,
+     "latest": "20 Oct 2026 16:00:00 GMT",
+     "median": 1519,
+     "empty": 0,
+     "root": "rss"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html",
+    "http": 200,
+    "items": 6,
+    "median": 1519,
+    "latest": "20 Oct 2026 16:00:00 GMT",
+    "empty": 0
+   }
+  },
+  {
+   "source_id": "cn-mof",
+   "name": "财政部",
+   "entry": "https://www.mof.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.mof.gov.cn/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "cn-ndrc",
+   "name": "国家发展改革委",
+   "entry": "https://www.ndrc.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.ndrc.gov.cn/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "cn-miit",
+   "name": "工业和信息化部",
+   "entry": "https://www.miit.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.miit.gov.cn/",
+   "entry_ctype": "text/html; charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "cn-mofcom",
+   "name": "商务部",
+   "entry": "https://www.mofcom.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.mofcom.gov.cn/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "cn-customs",
+   "name": "海关总署",
+   "entry": "http://www.customs.gov.cn/",
+   "entry_http": 412,
+   "entry_final": "http://www.customs.gov.cn/",
+   "entry_ctype": "text/html; charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_unreachable"
+  },
+  {
+   "source_id": "cn-nea",
+   "name": "国家能源局",
+   "entry": "https://www.nea.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.nea.gov.cn/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "cn-samr",
+   "name": "国家市场监督管理总局",
+   "entry": "https://www.samr.gov.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.samr.gov.cn/",
+   "entry_ctype": "text/html; charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "us-bea",
+   "name": "BEA",
+   "entry": "https://www.bea.gov/",
+   "entry_http": 200,
+   "entry_final": "https://www.bea.gov/",
+   "entry_ctype": "text/html; charset=UTF-8",
+   "entry_error": "",
+   "discovered": [
+    "https://apps.bea.gov/rss/rss.xml"
+   ],
+   "feeds": [
+    {
+     "url": "https://www.bea.gov/news/rss",
+     "http": 200,
+     "final_url": "https://www.bea.gov/news/rss",
+     "ctype": "application/rss+xml; charset=utf-8",
+     "feed_status": "verified_feed",
+     "items": 10,
+     "latest": "Wed, 30 Sep 2026 08:30:00 -0400",
+     "median": 472,
+     "empty": 0,
+     "root": "rss"
+    },
+    {
+     "url": "https://apps.bea.gov/rss/rss.xml",
+     "http": 200,
+     "final_url": "https://apps.bea.gov/rss/rss.xml",
+     "ctype": "text/xml",
+     "feed_status": "verified_feed",
+     "items": 48,
+     "latest": "Wed, 18 Dec 2013 10:30:00 EST",
+     "median": 427,
+     "empty": 0,
+     "root": "rss"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://www.bea.gov/news/rss",
+    "http": 200,
+    "items": 10,
+    "median": 472,
+    "latest": "Wed, 30 Sep 2026 08:30:00 -0400",
+    "empty": 0
+   }
+  },
+  {
+   "source_id": "us-bls",
+   "name": "BLS",
+   "entry": "https://www.bls.gov/",
+   "entry_http": 200,
+   "entry_final": "https://www.bls.gov/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [
+    "https://www.bls.gov/feed/bls_latest.rss",
+    "https://www.bls.gov/feed/wkyeng.rss"
+   ],
+   "feeds": [
+    {
+     "url": "https://www.bls.gov/feed/bls_latest.rss",
+     "http": 200,
+     "final_url": "https://www.bls.gov/feed/bls_latest.rss",
+     "ctype": "application/rss+xml",
+     "feed_status": "verified_feed",
+     "items": 1,
+     "latest": "Tue, 20 Oct 2026 10:02:35 -0400",
+     "median": 685,
+     "empty": 0,
+     "root": "rss"
+    },
+    {
+     "url": "https://www.bls.gov/feed/wkyeng.rss",
+     "http": 200,
+     "final_url": "https://www.bls.gov/feed/wkyeng.rss",
+     "ctype": "application/rss+xml",
+     "feed_status": "verified_feed",
+     "items": 12,
+     "latest": "2026-10-21T09:20:36.089-04:00",
+     "median": 253,
+     "empty": 0,
+     "root": "{http://www.w3.org/2005/atom}feed"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://www.bls.gov/feed/bls_latest.rss",
+    "http": 200,
+    "items": 1,
+    "median": 685,
+    "latest": "Tue, 20 Oct 2026 10:02:35 -0400",
+    "empty": 0
+   }
+  },
+  {
+   "source_id": "us-census",
+   "name": "Census Bureau",
+   "entry": "https://www.census.gov/",
+   "entry_http": 200,
+   "entry_final": "https://www.census.gov/",
+   "entry_ctype": "text/html; charset=UTF-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [
+    {
+     "url": "https://www.census.gov/newsroom/press-releases.xml",
+     "http": 200,
+     "final_url": "https://www.census.gov/newsroom/press-releases.xml",
+     "ctype": "text/xml",
+     "feed_status": "verified_feed",
+     "items": 10,
+     "latest": "Wed, 30 Sep 2026 16:06:55 -0400",
+     "median": 106,
+     "empty": 0,
+     "root": "rss"
+    },
+    {
+     "url": "https://www.census.gov/newsroom/rss/newsroom.xml",
+     "http": 404,
+     "final_url": "https://www.census.gov/newsroom/rss/newsroom.xml",
+     "ctype": "text/html",
+     "feed_status": "http_404"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://www.census.gov/newsroom/press-releases.xml",
+    "http": 200,
+    "items": 10,
+    "median": 106,
+    "latest": "Wed, 30 Sep 2026 16:06:55 -0400",
+    "empty": 0
+   }
+  },
+  {
+   "source_id": "us-fed",
+   "name": "Federal Reserve",
+   "entry": "https://www.federalreserve.gov/",
+   "entry_http": 200,
+   "entry_final": "https://www.federalreserve.gov/",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [
+    {
+     "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+     "http": 200,
+     "final_url": "https://www.federalreserve.gov/feeds/press_all.xml",
+     "ctype": "text/xml",
+     "feed_status": "verified_feed",
+     "items": 20,
+     "latest": "Wed, 7 Oct 2026 18:00:00 GMT",
+     "median": 100,
+     "empty": 1,
+     "root": "rss"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+    "http": 200,
+    "items": 20,
+    "median": 100,
+    "latest": "Wed, 7 Oct 2026 18:00:00 GMT",
+    "empty": 1
+   }
+  },
+  {
+   "source_id": "fred",
+   "name": "FRED",
+   "entry": "https://fred.stlouisfed.org/",
+   "entry_http": 200,
+   "entry_final": "https://fred.stlouisfed.org/",
+   "entry_ctype": "text/html; charset=UTF-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "eurostat",
+   "name": "Eurostat",
+   "entry": "https://ec.europa.eu/eurostat/",
+   "entry_http": 200,
+   "entry_final": "https://ec.europa.eu/eurostat/",
+   "entry_ctype": "text/html;charset=UTF-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "uk-ons",
+   "name": "UK ONS",
+   "entry": "https://www.ons.gov.uk/",
+   "entry_http": 200,
+   "entry_final": "https://www.ons.gov.uk/",
+   "entry_ctype": "text/html; charset=UTF-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [
+    {
+     "url": "https://www.ons.gov.uk/releasecalendar?rss",
+     "http": 200,
+     "final_url": "https://www.ons.gov.uk/releasecalendar?rss",
+     "ctype": "application/rss+xml",
+     "feed_status": "verified_feed",
+     "items": 10,
+     "latest": "Wed, 21 Oct 2026 08:30:00 +0000",
+     "median": 168,
+     "empty": 0,
+     "root": "rss"
+    },
+    {
+     "url": "https://www.ons.gov.uk/rss",
+     "http": 404,
+     "final_url": "https://www.ons.gov.uk/rss",
+     "ctype": "text/html; charset=utf-8",
+     "feed_status": "http_404"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://www.ons.gov.uk/releasecalendar?rss",
+    "http": 200,
+    "items": 10,
+    "median": 168,
+    "latest": "Wed, 21 Oct 2026 08:30:00 +0000",
+    "empty": 0
+   }
+  },
+  {
+   "source_id": "imf",
+   "name": "IMF",
+   "entry": "https://www.imf.org/en/Publications",
+   "entry_http": 403,
+   "entry_final": "https://www.imf.org/en/Publications",
+   "entry_ctype": "text/html",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_unreachable"
+  },
+  {
+   "source_id": "worldbank",
+   "name": "World Bank",
+   "entry": "https://www.worldbank.org/en/research",
+   "entry_http": 200,
+   "entry_final": "https://www.worldbank.org/ext/en/research-publications",
+   "entry_ctype": "text/html; charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "oecd",
+   "name": "OECD",
+   "entry": "https://www.oecd.org/en/publications.html",
+   "entry_http": 403,
+   "entry_final": "https://www.oecd.org/en/publications.html",
+   "entry_ctype": "text/html; charset=UTF-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_unreachable"
+  },
+  {
+   "source_id": "reuters",
+   "name": "Reuters",
+   "entry": "https://www.reuters.com/",
+   "entry_http": 401,
+   "entry_final": "https://www.reuters.com/",
+   "entry_ctype": "text/html;charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_unreachable"
+  },
+  {
+   "source_id": "ap",
+   "name": "AP",
+   "entry": "https://apnews.com/",
+   "entry_http": 403,
+   "entry_final": "https://apnews.com/",
+   "entry_ctype": "text/html; charset=UTF-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_unreachable"
+  },
+  {
+   "source_id": "afp",
+   "name": "AFP",
+   "entry": "https://www.afp.com/",
+   "entry_http": 200,
+   "entry_final": "https://www.afp.com/fr",
+   "entry_ctype": "text/html; charset=UTF-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "bbc",
+   "name": "BBC News",
+   "entry": "https://www.bbc.com/news",
+   "entry_http": 200,
+   "entry_final": "https://www.bbc.com/news",
+   "entry_ctype": "text/html; charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [
+    {
+     "url": "https://feeds.bbci.co.uk/news/rss.xml",
+     "http": 200,
+     "final_url": "https://feeds.bbci.co.uk/news/rss.xml",
+     "ctype": "text/xml; charset=utf-8",
+     "feed_status": "verified_feed",
+     "items": 32,
+     "latest": "Wed, 30 Apr 2025 14:04:28 GMT",
+     "median": 113,
+     "empty": 0,
+     "root": "rss"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://feeds.bbci.co.uk/news/rss.xml",
+    "http": 200,
+    "items": 32,
+    "median": 113,
+    "latest": "Wed, 30 Apr 2025 14:04:28 GMT",
+    "empty": 0
+   }
+  },
+  {
+   "source_id": "xinhua",
+   "name": "新华网",
+   "entry": "https://www.news.cn/",
+   "entry_http": 200,
+   "entry_final": "https://www.news.cn/",
+   "entry_ctype": "text/html; charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [],
+   "verdict": "entry_only"
+  },
+  {
+   "source_id": "nyt",
+   "name": "NYT",
+   "entry": "https://www.nytimes.com/",
+   "entry_http": 403,
+   "entry_final": "https://www.nytimes.com/",
+   "entry_ctype": "text/html;charset=utf-8",
+   "entry_error": "",
+   "discovered": [],
+   "feeds": [
+    {
+     "url": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+     "http": 200,
+     "final_url": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+     "ctype": "application/xml",
+     "feed_status": "verified_feed",
+     "items": 19,
+     "latest": "Tue, 20 Oct 2026 18:08:02 +0000",
+     "median": 244,
+     "empty": 0,
+     "root": "rss"
+    }
+   ],
+   "verdict": "verified_feed",
+   "best_feed": {
+    "url": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+    "http": 200,
+    "items": 19,
+    "median": 244,
+    "latest": "Tue, 20 Oct 2026 18:08:02 +0000",
+    "empty": 0
+   }
+  }
+ ]
+}

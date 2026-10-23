@@ -30,6 +30,8 @@ class Settings:
     email_from:str; email_to:str; smtp_starttls:bool
     max_articles:int; request_timeout:int; db_path:str; log_path:str; report_dir:str
     smtp_security:str=''; email_on_empty:bool=False; alert_after_failures:int=3
+    sample_since:str=''; sample_until:str=''
+    model_autostart:bool=False; model_start_timeout:int=600
     @classmethod
     def from_env(cls):
         load_dotenv()
@@ -59,7 +61,9 @@ class Settings:
                    email_from=g('OR_EMAIL_FROM'),email_to=email_to,smtp_starttls=bval('OR_SMTP_STARTTLS',True),smtp_security=security,
                    max_articles=max(1,int(g('OR_MAX_ARTICLES','10'))),request_timeout=int(g('OR_REQUEST_TIMEOUT_SECONDS','20')),
                    db_path=g('OR_DB_PATH','data/opportunity_radar.sqlite3'),log_path=g('OR_LOG_PATH','reports/opportunity-radar.log'),report_dir=g('OR_REPORT_DIR','reports'),
-                   email_on_empty=bval('OR_EMAIL_ON_EMPTY',False),alert_after_failures=max(1,int(g('OR_ALERT_AFTER_FAILURES','3'))))
+                   email_on_empty=bval('OR_EMAIL_ON_EMPTY',False),alert_after_failures=max(1,int(g('OR_ALERT_AFTER_FAILURES','3'))),
+                   sample_since=g('OR_SAMPLE_SINCE'),sample_until=g('OR_SAMPLE_UNTIL'),
+                   model_autostart=bval('OR_MODEL_AUTOSTART',False),model_start_timeout=max(30,int(g('OR_MODEL_START_TIMEOUT','600'))))
     def validate(self, mail=True):
         required={'OR_FRESHRSS_USERNAME':self.freshrss_username,'OR_FRESHRSS_API_KEY':self.freshrss_api_key,'OR_LLM_MODEL':self.llm_model}
         if mail: required.update({'OR_SMTP_HOST':self.smtp_host,'OR_EMAIL_FROM':self.email_from,'OR_EMAIL_TO':self.email_to})

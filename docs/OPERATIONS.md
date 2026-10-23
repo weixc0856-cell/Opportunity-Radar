@@ -10,7 +10,7 @@ Test: `py -3 -m unittest discover -s tests -v`; offline sample: `py -3 -m opport
 
 Real run: `deploy\windows\run-digest.ps1`.
 
-Task Scheduler uses `powershell.exe` with `-NoProfile -ExecutionPolicy Bypass -File "D:\opportunity-radar\deploy\windows\run-digest.ps1"`. Run interactively first.
+Task Scheduler runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<project>\deploy\windows\run-digest.ps1"`, where `<project>` is the checkout path registered by `install-task.ps1`. Run interactively first.
 
 Source registry audit (metadata only): `py -3 -m opportunity_radar.source_audit`. Optional HTTPS reachability checks: `py -3 -m opportunity_radar.source_audit --check-urls`. Reachability is not legal approval.
 
@@ -21,3 +21,9 @@ Each run writes a timestamped archive under `reports/archive/` and records the p
 Local admin UI: `.\deploy\windows\start-admin.ps1` (or `.\.venv\Scripts\python.exe -m opportunity_radar.admin_server`) serves http://127.0.0.1:8090. It binds loopback only and has no authentication. It edits the registry selected by `OR_SOURCES_PATH` and stores recipients in `config/recipients.json`; SMTP secrets stay in `.env`.
 
 Scheduled runs (`run-digest.ps1`) start Docker Compose and the local model first, then write `reports/scheduler-run.log` with step-level status and `reports/cli-run.log` / `cli-run.err.log` with the raw CLI output. Multiple recipients in `OR_EMAIL_TO` (comma or semicolon separated) receive separate copies.
+
+## 本地模型按需启动
+
+`OR_MODEL_AUTOSTART=1`（Windows）时，`cli` 在分析前检查 `OR_LLM_BASE_URL/health`；若模型未运行，
+会调用 `deploy/windows/start-model.ps1` 并在 `OR_MODEL_START_TIMEOUT`（默认 600 秒）内轮询，成功才继续。
+默认关闭；关闭时模型不可用会让这次运行以退出码 3 结束，而不是产生 30 条连接失败。

@@ -29,3 +29,56 @@ When reviewing a feed, sample several articles of different lengths and compare 
 body with the article page. Declare `full_text` only when the feed reliably ships the
 whole piece; declare `excerpt` when it only ships teasers, so the source can never be
 promoted on a body it does not have.
+
+## Intelligence mainlines
+
+`intelligence_lines` answers a different question from `editorial_lanes`: the lane decides
+how an item is judged, the mainline says why the source is monitored at all.
+
+| code | meaning |
+|---|---|
+| `policy_regulation` | policy, regulation, formal documents |
+| `macro_economy` | official statistics, central banks, macro data |
+| `corporate_capital` | earnings, investor relations, regulated disclosure |
+| `industry_supply_chain` | industry structure, energy, supply chains |
+| `international_news` | wires and mainstream media as a discovery layer |
+| `technology_research` | research, open source, product releases |
+| `market_opportunity` | user pain, procurement, hiring, unmet demand |
+| `engineering_specialist` | CAE/CFD and other professional engineering signals |
+| `system_maintenance` | tooling updates; never enters the briefing |
+
+Rules:
+
+- A source may declare several lines, separated like `editorial_lanes`
+  (`macro_economy,technology_research`). Order is normalised on read.
+- **One line is not inferred.** A registry without the column parses as undeclared and
+  the audit emits `missing_intelligence_lines` (warning). `tools/migrate_intelligence_lines.py`
+  adds the column with explicit per-source values and reports what it could not fill.
+- An unknown token is an error (`invalid_intelligence_line`), not silently ignored.
+- `system_maintenance` is the only line that may exist without `editorial_lanes`; such a
+  row is maintenance information and must stay disabled.
+- The mainline is **reporting metadata only**. It does not enter `scoring.py`,
+  `evidence.py` or `lanes.py`. The daily report prints a per-line count in the data
+  overview; items from undeclared sources are counted as `(undeclared)` rather than
+  guessed into a line.
+
+The boundary between source-level and item-level classification: the registry declares
+what a source is *for*; the item's lane still comes from its content (`lanes.derive_lane`).
+No item is assigned a mainline beyond the one its source declared.
+
+## Full-text fetching
+
+`full_text_fetch` is `none` (default) or `article_page`. It answers a narrow question:
+may the pipeline request the linked page to obtain the body? It says nothing about
+whether the body is complete, and enabling it does **not** raise the evidence rank.
+
+- Only sources that declare `article_page` are fetched. All other sources keep the feed text.
+- The fetcher reads robots.txt first, refuses 401/403/429, refuses cross-host redirects,
+  refuses paywall markers and short bodies, and caps a run at 20 pages.
+- A fetched body replaces `article.summary` and the original feed text is kept in
+  `article.feed_summary`; `content_source` becomes `article_page`.
+- `content_access_level=full_text` remains a separate review decision: only that
+  declaration lets `content_basis()` return `full_text` and reach E2. Review the fetched
+  body first, then change the declaration. See `docs/FULL_TEXT_FETCH.md`.
+- An invalid value is an audit error (`invalid_full_text_fetch`); a registry without the
+  column defaults to `none`.
