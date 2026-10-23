@@ -5,44 +5,100 @@ Last updated: 2026-10-23 (branch: feat/evidence-lanes-source-governance)
 
 Verified in this workspace
 --------------------------
-- Unit tests: 282 passed (`python -m unittest discover -s tests`), Python 3.12.10.
-- Python 3.13: the same suite passes.
-- Syntax compilation: passed for `opportunity_radar` and `tests`.
-- Source registry audit: 31 rows, 0 enabled in the committed template, 0 blocking
-  errors. `no_enabled_sources` is reported at info level and does not fail the audit.
-- GitHub Actions: `.github/workflows/django.yml` runs `unittest` and `source_audit` on
-  Python 3.11 and 3.12; both jobs pass (runs 39890505498, 39891507417, 39892854167).
+- Unit tests: 371 passed (`python -m unittest discover -s tests`), Python 3.12.10.
+- Syntax compilation: passed for `opportunity_radar`, `tests` and `tools`.
+- Source registry: 47 rows; committed template 0 enabled; local registry 15 enabled;
+  0 errors, 0 warnings. `intelligence_lines` is present on every row.
+- Dataset registry: 2 rows, 1 approved (Eurostat HICP), 0 errors. `--check` returned
+  HTTP 200, latest period 2025-12 = 2.0, dataset metadata updated 2026-02-06.
+- Page watch: 2 rows, 1 approved. First check of the NBS release list extracted 15 links
+  and stored them; the second check returned `skipped_interval`; the gov.cn policy page is
+  `blocked` because the list is rendered by JavaScript.
+- FreshRSS: 23 feeds, 0 uncategorised (9 business categories plus the default one),
+  3,917 entries. The SQLite file was backed up to `db.sqlite.bak-2026-10-23`
+  before the category migration.
+- News sources are subscribed per column (2026-10-23): BBC/NYT Business and Technology
+  replace the two front-page feeds; the retired rows stay disabled. 47 registry rows,
+  15 enabled locally. See `docs/SOURCE_REVIEW.md` §15.
+- Source integrity fixes (2026-10-23, after the frozen E2E round):
+  BEA's http article links are upgraded only after a same-host https check
+  (10/10 items returned); Census is disabled because its feed carries no
+  item-level links (13 entries collapse to 1 URL). Tests: 5 client + 10 sampling.
+- Optional per-source page fetch: `full_text_fetch=none|article_page` (all 43 rows are
+  `none`; nothing is fetched in normal runs). Robots, 401/403/429, cross-host redirects,
+  paywall markers and short bodies are refused; a run is capped at 20 pages. Fetching a
+  body does not change `content_access_level`, so E2 still requires a reviewer decision.
+  Trial: Fed press release 904 chars (content-div), BBC article 7,684 chars (article),
+  NYT refused by the site. See `docs/FULL_TEXT_FETCH.md`.
+- Full-text completeness audit (2026-10-23): NVIDIA, ONS and Fed each passed the
+  technical criteria (3/3 fetched, correct containers, summary windows located,
+  bodies several times longer than the feed text). Licence is still unread, so all
+  three keep `full_text_fetch=none` and E2 stays unreachable. See
+  `docs/FULL_TEXT_AUDIT_2026-10-23.md`.
+- Development checkpoint: `docs/DEV_CHECKPOINT_2026-10-23.md` and
+  `data/checkpoint-2026-10-23-dev/CHECKPOINT_MANIFEST.json`.
+- Runtime fixes found by the column-feed smoke test (2026-10-23):
+  feed IDs are now ordered numerically (string sorting put 17 before 3, starving
+  low-ID feeds when OR_MAX_ARTICLES was small); stdout/stderr are reconfigured to
+  UTF-8 so a report containing e.g. '£' no longer fails after it was written.
+  Smoke: 4 articles from BBC Business/Technology and NYT Business, 4/4 analysed.
+- Model autostart: `OR_MODEL_AUTOSTART=1` (local `.env`; repo default is 0) makes the
+  CLI check `/health` and launch `deploy/windows/start-model.ps1` when the server is
+  down, waiting up to `OR_MODEL_START_TIMEOUT`. If it cannot start, the run exits 3
+  instead of producing connection errors per article.
+- Deterministic sampling window: `OR_SAMPLE_SINCE` / `OR_SAMPLE_UNTIL` (UTC,
+  since inclusive, until exclusive). Smoke run: pool 200 → in-window 122 → sampled 1.
+  Round-2 pre-registered design: `docs/SHADOW_ROUND2_DESIGN.md`.
+- E2E round 2 (same window 2026-10-16..24, 30 vs 30, blind review):
+  baseline 29/30 analysed (E2 13 / E1 8 / E0 8, priority 2, actionable 10/29);
+  candidate 28/30 analysed (E2 0 / E1 24 / E0 4, priority 13, deferred 17,
+  actionable 5/28). Pre-registered rules: mainline coverage NOT supported
+  (3 vs 3), actionable share NOT higher (17.9% vs 34.5%), E2 gap unresolved.
+  See `docs/E2E_ROUND2_RESULTS_2026-10-23.md`.
+- E2E source-quality shadow (2026-10-23, separate artifacts under `data/e2e-2026-10-23/`):
+  community 30/30 analysed (priority 3, E2 15 / E1 11 / E0 4);
+  official/news 28/30 analysed (priority 11, E2 0 / E1 22 / E0 6, 14 deferred by quotas).
+  Two sources proved unusable in practice: BEA publishes http links (all dropped),
+  Census ships empty item links (13 entries collapse to 1). See
+  `docs/E2E_SOURCE_QUALITY_2026-10-23.md`.
+- Shadow runs (isolated DBs, `--dry-run`, 6 articles each, same FreshRSS and model):
+  baseline analysed 6/6 from 6 community sources (lane A: 0, priority 1);
+  candidate analysed 6/6 from 6 official/news sources (lane A: 6, priority 2).
+  Evidence: baseline E2 2 / E1 2 / E0 2; candidate E2 0 / E1 5 / E0 1.
+  See `docs/SHADOW_RUN_2026-10-23.md`.
 - End-to-end run (2026-10-23, separate database `data/acceptance-2026-10-23.sqlite3`):
-  10 articles fetched, 10 analysed, 0 failures; report archived as
-  `reports/archive/2026/10/23/2026-10-23-105921.*`; 3/3 SMTP deliveries recorded as
-  sent. One `priority` item was produced (lane C, evidence `primary_source_located`).
-- Windows Task Scheduler: task `OpportunityRadarDaily` triggered manually on
-  2026-10-23. Docker check, model health check, CLI exit code and the run record all
-  behaved as designed (`no_new_content` because nothing new had arrived).
+  10 articles fetched, 10 analysed, 0 failures; report archived; 3/3 SMTP deliveries
+  recorded as sent. This predates the source-batch change and is kept as the mail-path check.
+- GitHub Actions: `.github/workflows/django.yml` runs `unittest` and `source_audit` on
+  Python 3.11 and 3.12. The workflow was not re-run after this change; local runs are not
+  a claim about CI.
 
 Not yet verified
 ----------------
-- Shadow run: no side-by-side comparison of baseline and candidate source
-  configurations has been performed. `docs/SOURCE_REVIEW.md` section 7 has the plan.
-- Source terms: reachability was checked for some sources, but no terms or reuse
-  permissions have been reviewed. `review_status=review_required` sources stay disabled.
-- Business primary sources (earnings, investor relations, macro data) are registered but
-  disabled; the A lane is still fed mainly by AI vendor blogs.
-- Full-text fetching from article pages is not implemented; E2 depends on the feed
-  itself carrying the body, plus a reviewed `content_access_level=full_text` declaration.
-- Browser, email-client, mobile and print/PDF rendering have not been reviewed visually.
-- Event clustering, claim-level fields (`claim_text`/`claim_type`) and a labelled
-  evaluation set do not exist yet.
+- Shadow sample size: 6 items per side, and the candidate sample came entirely from the
+  newly added feeds because they publish more recently. Do not treat the lane shift as a
+  stable steady-state ratio.
+- Source terms: no terms text has been read. `permission_status=approved` means "allowed
+  for a private local test", nothing more. Reuse, storage and redistribution stay `unknown`.
+- Long-term stability: each source was refreshed once. BBC returned a stale edge-cache
+  response (latest 2025-04-30) in one sample and a current one minutes later.
+- E2 supply: all seven new sources ship headlines plus short summaries, so lane A can
+  reach E1 but not E2 until full-text retrieval exists.
+- Chinese policy: no ministry with a usable feed; the gov.cn policy list needs browser
+  rendering; the PBOC feed works but has no discoverable terms page, so it stays disabled.
+- Seven-day per-source success rate, empty-body rate, duplicate/republish rate and human
+  usefulness are not measured. No thresholds are asserted without data.
+- Browser, email-client, mobile and print/PDF rendering have not been visually reviewed.
 
 Safety defaults
 ---------------
 - Repository sources are disabled and carry no FreshRSS feed IDs; feed IDs are
-  installation-specific and live in `config/sources.local.csv`.
+  installation-specific and live in `config/sources.local.csv` (gitignored).
 - A source may only be enabled after review: owner, feed provider, terms, storage and
   retention, summary/quotation and attribution requirements.
 - `content_access_level=full_text` is a reviewed declaration about what the feed
-  delivers. It is never inferred from text length, and it does not assert that the
-  source is accurate, independent or licensed for reuse.
-- `python -m opportunity_radar.source_audit` checks registry metadata; `--check-urls`
-  checks HTTPS reachability only. Neither proves authenticity, accuracy or permission.
+  delivers. It is never inferred from text length.
+- Datasets are not articles: `config/datasets.csv` never feeds the briefing.
+- Page watch stores link metadata only, obeys robots.txt and a minimum interval, never
+  bypasses 401/403/429 and never renders JavaScript.
 - `.env`, databases and operational logs must not be committed to a public repository.

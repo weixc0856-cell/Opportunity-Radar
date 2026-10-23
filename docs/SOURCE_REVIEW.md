@@ -1,6 +1,8 @@
 # 来源体系审查（2026-10-23）
 
 > 这是审查记录，不是批准。表中 `review_status=review_required` 的来源一律保持禁用。
+> **第 1–12 节记录的是实施前的状态；第 13 节记录当天已执行的来源接入与 FreshRSS 分类迁移。**
+> 当前启用数、订阅数与分类数以第 13 节和 `BUILD_STATUS.txt` 为准。
 
 ## 审查方法与边界
 
@@ -305,3 +307,131 @@
 2. **openai-community 的条款页 403**，无法从本机读取。
 3. 其余来源虽可访问，但**没有一条经过人工阅读**；`review_status` 继续为 `review_required`，`approved` 仅表示本地私测允许。
 4. 公开可访问、可订阅、可自动获取、可再利用是四种不同权限，本表不区分它们——这正是需要人工判断的部分。
+
+## 13. 第一批官方与新闻来源实施（2026-10-23）
+
+本节记录**已执行**的变更，与前文审查记录分开。所有端点数据来自 2026-10-23 的本机实测；条款仍未阅读，`permission_status=approved` 只表示"允许本机私测"。
+
+### 13.1 FreshRSS 变更（已执行）
+
+- 变更前备份：`/var/www/FreshRSS/data/users/Wayne/db.sqlite.bak-2026-10-23`。
+- 通过 `cli/import-for-user.php` 导入 7 个新订阅；通过 `cli/actualize-user.php` 刷新（132 条新条目）。
+- FreshRSS 没有提供分类管理的 CLI，分类建立与既有订阅归类使用一次性 PHP 脚本直接更新 `category` / `feed.category`，脚本未入库。分类只影响人工阅读，不影响 Opportunity Radar 的通道路由。
+- 订阅数 16 → **23**；业务分类 1 → **9**（另保留 `Uncategorized`，当前 0 个订阅）；条目总数 3,783 → **3,917**。
+
+| 分类 | 订阅 |
+|---|---|
+| 01 政策与监管 | （无可用 Feed） |
+| 02 宏观与数据 | BEA、Census、Federal Reserve、UK ONS |
+| 03 企业与资本 | NVIDIA Newsroom |
+| 04 国际新闻 | BBC News、NYT Home Page |
+| 05 产业与能源 | （无可用 Feed） |
+| 06 AI 与软件 | OpenAI News、DeepMind、Hugging Face、GitHub Blog、TechCrunch AI、Simon Willison、OpenAI Developer Community、Hacker News |
+| 07 市场需求与机会 | HN Ask、HN Show |
+| 08 工程与专业技术 | SimScale 论坛、preCICE、ParaView、SALOME、SimScale Blog |
+| 09 系统维护 | FreshRSS releases |
+
+`Hacker News`（feed id=2）曾在登记表中存在但未绑定；本轮核对为同一订阅并写入本地登记的 `freshrss_feed_id`，**保持禁用**：该 Feed 正文中位 8 字符，只能产出 E0。
+
+### 13.2 新接入来源实测（刷新后从 FreshRSS 条目统计）
+
+| source_id | feed id | 条目 | 正文中位 | 最新 | 证据上限 | 本地启用 |
+|---|---|---|---|---|---|---|
+| us-bea | 17 | 10 | 472 | 2026-10-06 | E1 | 是 |
+| us-census | 18 | 10 | 106 | 2026-10-16 | E1 | 是 |
+| us-fed | 19 | 20 | 100 | 2026-10-16 | E1 | 是 |
+| uk-ons | 20 | 10 | 168 | 2026-10-22 | E1 | 是 |
+| nvidia-newsroom | 21 | 20 | 370 | 2026-10-23 | E1 | 是 |
+| bbc-news | 22 | 32 | 118 | 2026-10-23 | E1 | 是 |
+| nyt-home | 23 | 19 | 150 | 2026-10-23 | E1 | 是 |
+
+结论与方案预期一致：**官方来源提供权威性，不提供证据等级**。七个来源的正文都短于 `full_text` 阈值，登记为 `content_access_level=excerpt`，在 A 通道的可读门槛（E1）之内，但不会产出 E2。
+
+### 13.3 未启用（保留候选并写明原因）
+
+| source_id | 原因 |
+|---|---|
+| us-bls | `wkyeng.rss` 实测 12 条、正文中位 253 字符；但 BLS 的 HTML 页面（含版权/条款页）对非浏览器客户端一律 403，无法核对复用许可 |
+| cn-pbc | 端点可用（6 条、正文中位 1519 字符、最新 2026-10-20），但 `Content-Type: text/html`、GBK 编码；未找到网站条款入口 |
+| reuters / ap-news / afp-news | 401 / 403 / 无 Feed；未尝试绕过，`feed_url` 留空 |
+| imf-publications / oecd-publications | 403，原有登记已留空端点 |
+
+### 13.4 仍未验证
+
+- 所有新来源的**服务条款**：只确认条款页可访问（或不可访问），未阅读文本，未做法律判断。
+- **长期稳定性**：每个来源只做过一次刷新；BBC 已证明单次采样会给出错误的最新日期。
+- **正文完整性**：`excerpt` 是按 Feed 正文长度与形态判断的，没有逐篇对照原文页。
+
+## 14. E2E 发现的两处来源缺陷与修复（2026-10-23，独立于已冻结的实验）
+
+第 13 节记录来源接入；本节记录端到端验证（`docs/E2E_SOURCE_QUALITY_2026-10-23.md`）发现的两个缺陷及本轮处理。**没有修改该实验的任何数据或报告。**
+
+### 14.1 BEA：http 条目链接导致整源 0 产出（已修复）
+
+- **现象**：BEA 的 RSS 条目 `<link>` 全部是 `http://www.bea.gov/...`；`FreshRSSClient._articles()` 只保留 `https://`，10 条全部被静默丢弃，运行中 BEA 贡献 0 条。
+- **修复**：`freshrss_client._upgrade_https()` 对同域 `https` 变体做一次校验（HEAD，405/501 时回退到带 Range 的 GET），只在最终响应仍是 https 且主机不变时升级；结果按 URL 缓存，单次运行内不重复请求。不满足条件仍然丢弃，**没有放宽 https 约束**。
+- **验证**：单测 5 条（升级/拒绝/https 不复查/缓存/非 http 协议丢弃）；实测 `_fetch_feed('17')` 返回 **10/10** 条，全部为 `https://www.bea.gov/...`，10 次校验全部通过。
+- **成本**：每个 http 条目一次 HEAD，BEA 刷新约 10 次、1–2 秒；结果缓存。
+
+### 14.2 Census：Feed 没有条目级链接（已禁用）
+
+- **现象**：每个 `<item>` 的 `<link/>` 与 `<guid/>` 为空，FreshRSS 回退为列表页 `https://www.census.gov/newsroom/press-releases.html`。13 条共享同一 URL，按 URL 去重后只剩 1 条；报告里的原文链接指向列表页。
+- **处理**：本机 `config/sources.local.csv` 置 `enabled=false`、`permission_status=review_required`，保留 Feed ID 与原因；模板行保持禁用并补记原因。
+- **未做**：没有为它实现"无链接也能用"的特殊路径——那会破坏"每条都能追溯到原文"的前提。
+
+### 14.3 对来源价值评估的影响
+
+七个官方/新闻来源全部只提供标题+短摘要（正文中位 100–472 字符），**没有一条能在现有形态下产出 E2**。因此下一轮选源的第一标准不是"机构知名度"，而是：
+
+1. 是否为每个条目提供**条目级原文链接**；
+2. 是否能提供**正文或结构化数据**，而不只是发布通知；
+3. 栏目是否与决策相关（例如 ONS 的 earnings，而不是全量发布日历）。
+
+### 14.4 正文获取可行性抽样（每源 1 篇，2026-10-23）
+
+对候选组最近一篇条目做了只读抽样：先按 `page_monitor.robots_check()` 判断 robots，再取一次页面并统计去标签文本长度。**这不是正文完整性核验**，只回答"页面是否可访问、是否值得做正文抓取"。
+
+| 来源 | robots | 页面 | 去标签字符 | 判断 |
+|---|---|---|---|---|
+| BBC | allow（57 条适用规则） | HTTP 200 | 158,930（含导航/推荐） | 可抓，但需正文提取 |
+| NVIDIA Newsroom | allow（43 条） | HTTP 200 | 5,635 | 可抓 |
+| UK ONS | robots.txt 404，无规则 | HTTP 200 | 3,010 | 可抓 |
+| Federal Reserve | robots.txt 404，无规则 | HTTP 200 | 9,360 | 可抓 |
+| NYT | allow（109 条） | **HTTPError** | 0 | 非浏览器客户端被拒，**不绕过**；只能保留 RSS 摘要 |
+| Census | allow（1 条） | HTTP 200 | 62,834 | 来源已因无条目链接禁用 |
+
+**结论**：4 个来源在技术上可做正文抓取（BBC、NVIDIA、ONS、Fed），NYT 不行。
+但在实现前必须先解决三件事，否则 E2 仍然拿不到：
+
+1. 正文提取与去噪（导航、推荐位、付费墙提示）；
+2. 来源复核：确认抓到的正文完整，才能声明 `content_access_level=full_text`；
+3. 条款与频率：抓取页面与抓取 Feed 是两种使用方式，许可未核对前不能默认允许。
+
+**本轮不实现正文抓取**，也不因此调整证据规则。
+
+## 15. 新闻源改为栏目级订阅（2026-10-23，第二轮对照后）
+
+第二轮盲评发现：候选组 4 条噪声全部来自 BBC 整站首页流（体育、娱乐、警案）。
+处理方式是按栏目订阅，而不是继续使用整站 Feed。
+
+| 新来源 | feed id | 条目 | 正文中位 | 最新 | `source_cap` | 主线 |
+|---|---|---|---|---|---|---|
+| `bbc-business` | 24 | 57（API 返回 50） | 99 | 2026-10-23 | 2 | international_news |
+| `nyt-business` | 25 | 49 | 147 | 2026-10-22 | 2 | international_news |
+| `bbc-technology` | 26 | 21 | 93 | 2026-10-22 | 1 | international_news,technology_research |
+| `nyt-technology` | 27 | 23 | 152 | 2026-10-22 | 1 | international_news,technology_research |
+
+- 已通过 FreshRSS OPML 导入到 `04 国际新闻`（business）与 `06 AI 与软件`（technology），并完成一次刷新。
+- 旧的 `bbc-news`（22）与 `nyt-home`（23）在本机登记中改为 `enabled=false / review_required`，保留 Feed 与历史；
+  它们的 `review_notes` 注明"已由栏目级 Feed 取代"。
+- 本机启用数 13 → **15**；登记表 43 → **47** 行；模板全部禁用。
+- 已用客户端逐个取数验证：24/25/26/27 分别返回 50/49/21/23 条，来源名与栏目一致。
+- 未做：条款阅读（仍为 unknown）；正文抓取（仍是摘要级，E2 不会因此出现）。
+- 已知重复风险：同一稿件可能同时出现在 business 与 technology 栏目（如 NYT 的 PHP 报道）。
+  管道按 URL 与规范化标题去重，但不能保证跨栏目完全去重；这属于事件聚类问题，尚未实现。
+
+### 14.5 正文完整性抽样（NVIDIA / ONS / Fed，2026-10-23）
+
+每源 3 篇、按摘要长度分位取样，比较 Feed 摘要与原文页：三个来源均满足技术标准（抓取成功、容器正确、摘要窗口命中、正文显著更长、标题存在）。
+但**许可仍未阅读**，因此三者继续保持 `full_text_fetch=none`，E2 不会出现。
+方法、逐篇数据、一处检查方法修正与限制见 `docs/FULL_TEXT_AUDIT_2026-10-23.md`。
