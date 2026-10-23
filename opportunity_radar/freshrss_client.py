@@ -95,7 +95,17 @@ class FreshRSSClient:
     def fetch_articles(self,limit=10,feed_ids=None):
         if not feed_ids: return self._fetch_feed()[:limit]
         # One high-volume feed would otherwise fill the whole window; interleave per feed.
+        # First pass: every feed with a unique item contributes once before any feed gets a
+        # second. Without this, one duplicate URL (the same story syndicated into two feeds)
+        # could consume a slot in the first cycle and leave the last feeds unsampled for the
+        # whole run.
         queues=[self._fetch_feed(fid) for fid in feed_ids]; out=[]; seen=set()
+        for q in queues:
+            while q:
+                a=q.pop(0)
+                if a.url in seen: continue
+                seen.add(a.url); out.append(a); break
+            if len(out)>=limit: return out
         while len(out)<limit and any(queues):
             for q in queues:
                 if not q: continue

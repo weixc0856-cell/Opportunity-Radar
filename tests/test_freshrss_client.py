@@ -62,3 +62,24 @@ class FeedOrderTests(unittest.TestCase):
     def test_non_numeric_ids_sort_after_numeric_ones(self):
         from opportunity_radar.freshrss_client import ordered_feed_ids
         self.assertEqual(ordered_feed_ids({'b', '2', 'a'}), ['2', 'a', 'b'])
+
+
+class SamplingFairnessTests(unittest.TestCase):
+    def test_duplicate_url_does_not_starve_a_later_feed(self):
+        first = art(1, 1)
+        duplicate = Article('9', 'dup', first.url, 's', '', '', '2')
+        other = art(3, 2)
+        client = Fake({1: [first], 2: [duplicate, other]})
+        picked = client.fetch_articles(2, feed_ids=[1, 2])
+        self.assertEqual([a.feed_id for a in picked], ['1', '2'])
+        self.assertEqual(len({a.url for a in picked}), 2)
+
+    def test_first_pass_covers_every_feed_before_seconds(self):
+        client = Fake({1: [art(1, 1), art(2, 1)], 2: [art(3, 2), art(4, 2)], 3: [art(5, 3)]})
+        picked = client.fetch_articles(3, feed_ids=[1, 2, 3])
+        self.assertEqual([a.feed_id for a in picked], ['1', '2', '3'])
+
+    def test_limit_below_feed_count_is_respected(self):
+        client = Fake({1: [art(1, 1)], 2: [art(2, 2)]})
+        picked = client.fetch_articles(1, feed_ids=[1, 2])
+        self.assertEqual([a.feed_id for a in picked], ['1'])
