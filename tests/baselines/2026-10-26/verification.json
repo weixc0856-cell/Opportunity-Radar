@@ -1,0 +1,180 @@
+{
+  "workdir": "D:\\Project\\Opportunity Radar\\data\\e2e-verify-20261026-132644",
+  "limit": 3,
+  "runs": {
+    "happy": {
+      "returncode": 0,
+      "run": {
+        "run_id": 1,
+        "started_at": "2026-10-26T05:27:02.169860+00:00",
+        "finished_at": "2026-10-26T05:28:50.879887+00:00",
+        "status": "dry_run",
+        "article_count": 3,
+        "analyzed_count": 3,
+        "error_count": 0,
+        "message": "No email sent (dry run)",
+        "report_path": "D:\\Project\\Opportunity Radar\\data\\e2e-verify-20261026-132644\\happy\\reports\\archive\\2026\\10\\26\\2026-10-26-132850.txt",
+        "report_hash": "7d0a9a896340d2c4",
+        "stage": "done",
+        "exit_code": 0,
+        "pid": 51712
+      },
+      "failures": [],
+      "checks": [
+        {
+          "code": "run_recorded",
+          "ok": true,
+          "detail": "run_id=1"
+        },
+        {
+          "code": "artifacts",
+          "ok": true,
+          "detail": "text=yes, html=yes, archive=yes"
+        },
+        {
+          "code": "report_hash",
+          "ok": true,
+          "detail": "manifest=7d0a9a896340d2c4 file=7d0a9a896340d2c4"
+        },
+        {
+          "code": "item_count",
+          "ok": true,
+          "detail": "items=3 manifest=3"
+        },
+        {
+          "code": "status_counts",
+          "ok": true,
+          "detail": "manifest={'priority': 0, 'watch': 0, 'filtered': 3} items={'priority': 0, 'watch': 0, 'filtered': 3}"
+        },
+        {
+          "code": "scoring_matches_items",
+          "ok": true,
+          "detail": "ok"
+        }
+      ]
+    },
+    "fault": {
+      "returncode": 1,
+      "run": {
+        "run_id": 2,
+        "started_at": "2026-10-26T05:28:51.142931+00:00",
+        "finished_at": "2026-10-26T05:29:07.073395+00:00",
+        "status": "analysis_failed",
+        "article_count": 5,
+        "analyzed_count": 0,
+        "error_count": 2,
+        "message": "Dry run with 2 failed article(s); no email sent",
+        "report_path": "D:\\Project\\Opportunity Radar\\data\\e2e-verify-20261026-132644\\fault\\reports\\archive\\2026\\10\\26\\2026-10-26-132907.txt",
+        "report_hash": "266b78e426a32210",
+        "stage": "done",
+        "exit_code": 1,
+        "pid": 34232
+      },
+      "failures": [
+        {
+          "failure_id": 1,
+          "run_id": 2,
+          "article_key": "0424dcc128b18594a7a61790c267f4cf85f3586ebb7ccc6904fc08a3b8f1735a",
+          "url": "https://precice.discourse.group/t/su2-restarting-a-simulation-from-a-deformed-mesh/3010",
+          "stage": "analyze",
+          "error": "ValueError: Invalid category"
+        },
+        {
+          "failure_id": 2,
+          "run_id": 2,
+          "article_key": "f7d9ad8784b5837b96758214d7899beb224251081b61cba8fadc092c32566161",
+          "url": "https://discourse.paraview.org/t/interactive-renders-when-local-rendering-in-client-server-mode-feels-slow/17775",
+          "stage": "analyze",
+          "error": "ValueError: Invalid category"
+        }
+      ],
+      "checks": [
+        {
+          "code": "run_recorded",
+          "ok": true,
+          "detail": "run_id=2"
+        },
+        {
+          "code": "artifacts",
+          "ok": true,
+          "detail": "text=yes, html=yes, archive=yes"
+        },
+        {
+          "code": "failure_status",
+          "ok": true,
+          "detail": "status=analysis_failed exit=1 errors=2"
+        },
+        {
+          "code": "analysis_failed_not_success",
+          "ok": true,
+          "detail": "status=analysis_failed exit=1 analyzed=0 errors=2"
+        },
+        {
+          "code": "failures_recorded",
+          "ok": true,
+          "detail": "2 failure row(s), expected 2"
+        },
+        {
+          "code": "report_names_the_failure",
+          "ok": true,
+          "detail": "failure explanation present"
+        },
+        {
+          "code": "report_hash",
+          "ok": true,
+          "detail": "manifest=266b78e426a32210 file=266b78e426a32210"
+        },
+        {
+          "code": "item_count",
+          "ok": true,
+          "detail": "items=0 manifest=0"
+        },
+        {
+          "code": "status_counts",
+          "ok": true,
+          "detail": "manifest={'priority': 0, 'watch': 0, 'filtered': 0} items={'priority': 0, 'watch': 0, 'filtered': 0}"
+        },
+        {
+          "code": "scoring_matches_items",
+          "ok": true,
+          "detail": "ok"
+        }
+      ]
+    }
+  },
+  "checks": [
+    {
+      "stage": "preflight",
+      "code": "config",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "stage": "preflight",
+      "code": "sources",
+      "ok": true,
+      "detail": "15 approved; 0 audit error(s)"
+    },
+    {
+      "stage": "preflight",
+      "code": "freshrss_feeds",
+      "ok": true,
+      "detail": "27 feed(s); unmapped: none"
+    },
+    {
+      "stage": "preflight",
+      "code": "freshrss_pool",
+      "ok": true,
+      "detail": "8 article(s) in pool, need 3"
+    },
+    {
+      "stage": "preflight",
+      "code": "model_health",
+      "ok": true,
+      "detail": "ok"
+    }
+  ],
+  "result": "pass",
+  "git_commit": "03b0cb4f564c23e3762fdd9577aea394e50768b1",
+  "git_dirty": true
+}

@@ -8,6 +8,17 @@ class Tests(unittest.TestCase):
    s=Store(str(Path(d)/'test.sqlite3'));rid=s.start_run();s.finish_run(rid,'success',2,1,1)
    with s.connect() as c:r=c.execute('SELECT status,article_count FROM runs WHERE run_id=?',(rid,)).fetchone()
    self.assertEqual(r['status'],'success');self.assertEqual(r['article_count'],2)
+ def test_analysis_failures_are_recorded_per_run(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'test.sqlite3'));rid=s.start_run()
+   s.record_analysis_failure(rid,'k1','https://example.invalid/a','analyze','ValueError: Invalid category')
+   s.record_analysis_failure(rid,'k2','https://example.invalid/b','analyze','TimeoutError')
+   other=s.start_run();s.record_analysis_failure(other,'k3','https://example.invalid/c','analyze','X')
+   rows=s.analysis_failures(rid)
+   self.assertEqual([r['url'] for r in rows],['https://example.invalid/a','https://example.invalid/b'])
+   self.assertTrue(all(r['run_id']==rid for r in rows))
+   self.assertEqual(len(s.analysis_failures()),3)
+   with s.connect() as c: self.assertEqual(c.execute('SELECT COUNT(*) FROM analyses').fetchone()[0],0)
  def test_save_article_reports_whether_new(self):
   with tempfile.TemporaryDirectory() as d:
    s=Store(str(Path(d)/'test.sqlite3'))

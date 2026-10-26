@@ -32,6 +32,10 @@ class Tests(unittest.TestCase):
  def test_all_skipped_is_not_no_opportunity(self):
   _,body=render_digest([],stats(fetched=10,skipped=10),'2026-10-20')
   self.assertIn('本轮没有新的分析任务',body);self.assertIn('不代表没有机会',body)
+ def test_skipped_and_failed_are_not_no_new_content(self):
+  _,body=render_digest([],stats(fetched=10,skipped=5,failed=5),'2026-10-20')
+  self.assertIn('本轮分析未完成',body)
+  self.assertNotIn('本轮没有新增分析任务',body)
  def test_failed_run_is_reported_as_empty(self):
   _,body=render_digest([],stats(fetched=10,failed=3),'2026-10-20')
   self.assertIn('分析结果为空',body)

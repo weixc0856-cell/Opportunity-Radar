@@ -195,6 +195,11 @@ def run_status(errors,failed_recipients=0):
     """Partial article or recipient failures are not a clean success."""
     return 'partial_failed' if (errors>0 or failed_recipients>0) else 'success'
 
+def dry_run_status(analyzed,errors):
+    """A dry run only skips the email; it must still report failures as failures."""
+    if analyzed==0 and errors>0: return 'analysis_failed'
+    return 'partial_failed' if errors>0 else 'dry_run'
+
 def _alert(store,s,reason):
     try: n=store.consecutive_failures()
     except Exception: n=0
@@ -364,8 +369,11 @@ def main(argv=None):
                 item['intelligence_lines']=getattr(source_by_feed.get(a.feed_id),'intelligence_lines','')
                 store.save_analysis(key,result,item['scoring'],item['meta'])
                 items.append(item); analyzed+=1
-            except Exception:
-                errors+=1; logging.exception('Article analysis failed: %s',a.url)
+            except Exception as exc:
+                errors+=1
+                try: store.record_analysis_failure(rid,key,a.url,'analyze',f'{type(exc).__name__}: {exc}')
+                except Exception: logging.exception('Could not record analysis failure: %s',a.url)
+                logging.exception('Article analysis failed: %s',a.url)
         caps=apply_source_caps(items,sources)
         stats=_stats(items,fetched,new_count,queued,analyzed,errors,skipped,updated=updated_count,duplicate_events=duplicate_events,
                      lane_weights=lane_weights,lane_thresholds=lane_thresholds,source_issues=source_issues,
@@ -380,8 +388,15 @@ def main(argv=None):
         archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid)
         out=Path(s.report_dir)/'latest-digest.txt'
         if args.dry_run:
-            store.finish_run(rid,'dry_run',fetched,analyzed,errors,'No email sent',archive_path,report_hash,exit_code=0)
-            print(body); print(f'Saved to {out} and latest-digest.html; no email sent.'); return 0
+            status=dry_run_status(analyzed,errors)
+            exit_code=0 if status=='dry_run' else 1
+            message='No email sent (dry run)' if status=='dry_run' else f'Dry run with {errors} failed article(s); no email sent'
+            store.finish_run(rid,status,fetched,analyzed,errors,message,archive_path,report_hash,exit_code=exit_code)
+            print(body)
+            if status=='analysis_failed': print('No analysis succeeded; see the log. Report saved to '+str(out)+'.',file=sys.stderr)
+            elif status=='partial_failed': print(f'Dry run completed with {errors} failed article(s). Report saved to {out}.',file=sys.stderr)
+            else: print(f'Saved to {out} and latest-digest.html; no email sent.')
+            return exit_code
         decision=send_decision(analyzed,updated_count,errors,s.email_on_empty)
         if decision=='analysis_failed':
             store.finish_run(rid,'analysis_failed',fetched,analyzed,errors,'All attempted analyses failed; email skipped',archive_path,report_hash,exit_code=1)

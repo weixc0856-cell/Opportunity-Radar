@@ -1,6 +1,6 @@
 import tempfile,unittest
 from pathlib import Path
-from opportunity_radar.cli import _validate_report, _atomic_write, _write, send_decision, run_status
+from opportunity_radar.cli import _validate_report, _atomic_write, _write, send_decision, run_status, dry_run_status
 
 class Tests(unittest.TestCase):
  def test_validate_accepts_complete_report(self):
@@ -24,6 +24,10 @@ class Tests(unittest.TestCase):
    self.assertRegex(Path(path).name,r'^\d{4}-\d{2}-\d{2}-\d{6}\.txt$')
    self.assertTrue(Path(str(path).replace('.txt','.html')).exists())
    self.assertEqual(len(h),16)
+ def test_dry_run_status_never_hides_failures(self):
+  self.assertEqual(dry_run_status(0,2),'analysis_failed')
+  self.assertEqual(dry_run_status(3,1),'partial_failed')
+  self.assertEqual(dry_run_status(3,0),'dry_run')
  def test_send_decision_separates_failure_from_no_content(self):
   self.assertEqual(send_decision(0,0,2,False),'analysis_failed')
   self.assertEqual(send_decision(0,0,0,False),'no_new_content')

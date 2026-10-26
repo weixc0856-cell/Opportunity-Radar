@@ -71,8 +71,10 @@ def decision_headline(items,stats):
         return f"本期筛选出 {len(pri)} 条优先、{len(watch)} 条观察信号，另有 {len(deferred)} 条受来源单期配额限制未进入阅读区，详见附录。"
     if deferred: return f"本期有 {len(deferred)} 条达到观察或验证门槛，但受来源单期配额限制未进入阅读区，详见附录。"
     if not stats.get('fetched',stats.get('article_count',0)): return '本轮未获取到新内容，无法形成商业判断。'
-    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('skipped',0)>0: return '本轮没有新增分析任务，结论沿用已有结果；不代表没有机会。'
+    # A failed analysis is not "nothing new". Check it first, or a run in which every new
+    # article failed prints "no new analysis tasks" while the stats line says "failed 5".
     if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('failed',stats.get('error_count',0))>0: return '本轮分析未完成，暂不形成商业判断。'
+    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('skipped',0)>0: return '本轮没有新增分析任务，结论沿用已有结果；不代表没有机会。'
     return '本期没有信号通过筛选门槛，建议维持观察。'
 
 def management_note(items):

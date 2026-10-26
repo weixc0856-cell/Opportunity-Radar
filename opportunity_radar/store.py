@@ -29,6 +29,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS analysis_history(history_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL, UNIQUE(article_key,analyzed_at));
         CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT, stage TEXT, exit_code INTEGER, pid INTEGER);
         CREATE TABLE IF NOT EXISTS deliveries(delivery_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, sent_at TEXT, status TEXT NOT NULL, message TEXT, idempotency_key TEXT, recipient TEXT);
+        CREATE TABLE IF NOT EXISTS analysis_failures(failure_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, article_key TEXT, url TEXT, stage TEXT, error TEXT, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
@@ -107,6 +108,19 @@ class Store:
             row=(key,raw,score['score'],score.get('risk_flag',''),'ok',stamp)
             c.execute('INSERT OR IGNORE INTO analysis_history(article_key,result_json,score,risk_flag,status,analyzed_at) VALUES(?,?,?,?,?,?)',row)
             c.execute('INSERT OR REPLACE INTO analyses VALUES(?,?,?,?,?,?)',row)
+    def record_analysis_failure(self,run_id,article_key,url,stage,error):
+        """Persist one failed article so a bad run stays diagnosable after the log rotates."""
+        with self.connect() as c:
+            c.execute('INSERT INTO analysis_failures(run_id,article_key,url,stage,error,created_at) VALUES(?,?,?,?,?,?)',
+                      (run_id,article_key,url,stage,str(error)[:1000],now()))
+    def analysis_failures(self,run_id=None,limit=100):
+        """Failure rows for one run, or the most recent rows when no run is given."""
+        with self.connect() as c:
+            if run_id is None:
+                rows=c.execute('SELECT failure_id,run_id,article_key,url,stage,error,created_at FROM analysis_failures ORDER BY failure_id DESC LIMIT ?',(limit,))
+            else:
+                rows=c.execute('SELECT failure_id,run_id,article_key,url,stage,error,created_at FROM analysis_failures WHERE run_id=? ORDER BY failure_id',(run_id,))
+            return [dict(r) for r in rows]
     def analysis_history(self,key,limit=20):
         with self.connect() as c:
             return [dict(r) for r in c.execute('SELECT history_id,result_json,score,risk_flag,status,analyzed_at FROM analysis_history WHERE article_key=? ORDER BY analyzed_at DESC LIMIT ?',(key,limit))]
