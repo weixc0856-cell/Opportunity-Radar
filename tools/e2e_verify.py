@@ -312,8 +312,10 @@ def write_baseline(baseline_dir, workdir, payload):
     commit, dirty = git_state()
     payload["git_commit"] = commit
     payload["git_dirty"] = dirty
+    # Explicit LF: git normalises text files on commit, and a CRLF hash would stop
+    # matching the manifest as soon as the baseline is checked out on another machine.
     (baseline_dir / "verification.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     files = []
     for path in sorted(baseline_dir.rglob("*")):
         if path.is_file() and path.name != "MANIFEST.json":
@@ -329,7 +331,7 @@ def write_baseline(baseline_dir, workdir, payload):
                 "full articles; the database and reports are gitignored by tests/baselines/.gitignore.",
     }
     (baseline_dir / "MANIFEST.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     return manifest
 
 

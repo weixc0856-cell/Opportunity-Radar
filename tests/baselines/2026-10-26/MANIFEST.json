@@ -55,8 +55,8 @@
     },
     {
       "path": "verification.json",
-      "bytes": 5349,
-      "sha256": "e3dfe61cebd3df3e96a4e4e35b7671e7f822e06060b550216feec645122c5e25"
+      "bytes": 5170,
+      "sha256": "112a865a361747c65396c1750f4171e27bf727e9d9060c235dc2028c674bbb4e"
     }
   ],
   "note": "Local verification baseline. Article text is feed-supplied excerpts, not full articles; the database and reports are gitignored by tests/baselines/.gitignore."
