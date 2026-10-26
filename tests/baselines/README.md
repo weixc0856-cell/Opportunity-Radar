@@ -37,7 +37,6 @@
 不是具体分数。若要让 `git_dirty=false`，先提交代码再跑。
 
 生产基线：用 `deploy\windows\run-digest.ps1` 跑真实入口，然后把生产库、日志与报告复制到
-un-digest.ps1` 跑真实入口，然后把生产库、日志与报告复制到
 `tests/baselines/<YYYY-MM-DD>-production/`，写 `verification.json` 与 `MANIFEST.json`。
 生产运行会按配置发送邮件；不记录收件人地址，只记录投递数量。
 
