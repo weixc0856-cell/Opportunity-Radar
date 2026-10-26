@@ -82,7 +82,7 @@ def analysis_v5():
              'status': 'open'},
         ],
         'actions': [
-            {'ordinal': 1, 'step': '调取 ONS 原始数据表，核对分品类贡献', 'kind': 'verify',
+            {'ordinal': 1, 'step': '调取 ONS 原始数据表，核对分品类贡献', 'kind': 'verify_fact',
              'done_when': '确认至少三个品类的变化', 'status': 'open'},
         ],
         'evidence_quotes': [QUOTE_OK],

@@ -47,7 +47,7 @@ def payload(**overrides):
              'how_to_close': '查 ONS 配套数据表'},
         ],
         'actions': [
-            {'step': '调取 ONS 原始数据表，核对分品类贡献', 'kind': 'verify',
+            {'step': '调取 ONS 原始数据表，核对分品类贡献', 'kind': 'verify_fact',
              'done_when': '确认至少三个品类的变化'},
         ],
         'pain_point': 'unknown',

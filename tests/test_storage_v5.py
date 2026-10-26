@@ -62,7 +62,7 @@ def analysis_v5():
              'why_it_matters': '决定回暖是否普遍', 'how_to_close': '查 ONS 配套数据表', 'status': 'open'},
         ],
         'actions': [
-            {'ordinal': 1, 'step': '调取 ONS 原始数据表，核对分品类贡献', 'kind': 'verify',
+            {'ordinal': 1, 'step': '调取 ONS 原始数据表，核对分品类贡献', 'kind': 'verify_fact',
              'done_when': '确认至少三个品类的变化', 'status': 'open'},
         ],
         'evidence_quotes': [Q1],
@@ -134,7 +134,7 @@ class ProjectionWriteTests(unittest.TestCase):
         self.assertEqual(inferences[0]['meta']['basis'], [1])
         self.assertEqual(inferences[0]['meta']['confidence'], 'low')
         self.assertEqual(gaps[0]['meta']['why_it_matters'], '决定回暖是否普遍')
-        self.assertEqual(actions[0]['meta']['kind'], 'verify')
+        self.assertEqual(actions[0]['meta']['kind'], 'verify_fact')
         self.assertEqual(actions[0]['meta']['done_when'], '确认至少三个品类的变化')
 
     def test_result_json_remains_the_full_replayable_record(self):

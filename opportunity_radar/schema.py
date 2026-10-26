@@ -10,7 +10,7 @@ ACTIONABILITY_LEVELS=('none','monitor','investigate','decide','act')
 # implied precision the model could not support, and it encouraged tuning the scale
 # instead of the judgment. Old v4 records keep relevance_score and are read as before.
 RELEVANCE_LEVELS=('core','adjacent','peripheral','none')
-ACTION_KINDS={'verify','contact','test','monitor','decide'}
+ACTION_KINDS={'verify_fact','contact_sales','test_product','monitor_trend','make_decision'}
 V5_SECTIONS=('facts','inferences','gaps','actions')
 V4_REQUIRED={'category','summary_zh','pain_point','target_customer','commercial_signal','revenue_claim',
              'evidence_quotes','uncertainties','suggested_next_step','relevance_score','confidence'}
@@ -234,7 +234,10 @@ def _parse_v5(d,article):
             deviations.append({'section':'actions','ordinal':index,'reason':'invalid_step'}); continue
         kind=str(entry.get('kind') or '').strip().lower()
         if kind not in ACTION_KINDS:
-            kind='monitor'
+            # The old v4 vocabulary (verify/monitor/...) and the actionability levels
+            # (investigate/decide) are no longer action kinds; a bad value falls back to
+            # monitoring and is recorded rather than failing the article.
+            kind='monitor_trend'
             deviations.append({'section':'actions','ordinal':index,'reason':'invalid_kind'})
         actions.append({'ordinal':index,'step':step[:500],'kind':kind,
                         'done_when':str(entry.get('done_when') or '').strip()[:500],'status':'open'})
