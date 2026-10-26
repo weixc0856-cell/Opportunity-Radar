@@ -4,7 +4,7 @@ from opportunity_radar.analyzer import load_prompt, PROMPT_VERSION, SYSTEM
 class Tests(unittest.TestCase):
  def test_prompt_file_is_versioned_and_loaded(self):
   version,text=load_prompt()
-  self.assertEqual(version,'4');self.assertIn('untrusted data',text);self.assertIn('evidence_quotes',text);self.assertIn('actionability',text)
+  self.assertEqual(version,'5');self.assertIn('untrusted data',text);self.assertIn('facts',text);self.assertIn('actionability',text)
  def test_shared_contracts_are_in_runtime_prompt(self):
   version,text=load_prompt()
   self.assertIn('Chinese Business Briefing Style Guide',text)

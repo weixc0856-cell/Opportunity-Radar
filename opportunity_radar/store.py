@@ -30,6 +30,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT, stage TEXT, exit_code INTEGER, pid INTEGER);
         CREATE TABLE IF NOT EXISTS deliveries(delivery_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, sent_at TEXT, status TEXT NOT NULL, message TEXT, idempotency_key TEXT, recipient TEXT);
         CREATE TABLE IF NOT EXISTS analysis_failures(failure_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, article_key TEXT, url TEXT, stage TEXT, error TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS analysis_sections(section_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, analyzed_at TEXT NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, evidence_id TEXT, meta_json TEXT, UNIQUE(article_key,analyzed_at,kind,ordinal));
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
@@ -104,10 +105,50 @@ class Store:
         payload={'analysis':result,'scoring':score}
         if meta: payload['meta']=meta
         stamp=now(); raw=json.dumps(payload,ensure_ascii=False)
+        # Parent row, history row and the v5 projection share ONE transaction: a section
+        # that violates the unique key must roll the whole analysis back, not leave a
+        # stored analysis whose facts were only half written.
         with self.connect() as c:
             row=(key,raw,score['score'],score.get('risk_flag',''),'ok',stamp)
             c.execute('INSERT OR IGNORE INTO analysis_history(article_key,result_json,score,risk_flag,status,analyzed_at) VALUES(?,?,?,?,?,?)',row)
             c.execute('INSERT OR REPLACE INTO analyses VALUES(?,?,?,?,?,?)',row)
+            c.executemany('INSERT INTO analysis_sections(article_key,analyzed_at,kind,ordinal,text,status,evidence_id,meta_json) VALUES(?,?,?,?,?,?,?,?)',
+                          self._section_rows(result,key,stamp))
+    @staticmethod
+    def _section_rows(result,article_key,analyzed_at):
+        """Project a v5 analysis into one row per fact/inference/gap/action."""
+        if not isinstance(result,dict) or result.get('schema_version')!=5: return []
+        specs=(('fact','facts','text'),('inference','inferences','text'),('gap','gaps','missing'),('action','actions','step'))
+        rows=[]
+        for kind,key,text_field in specs:
+            entries=result.get(key)
+            if not isinstance(entries,list): continue
+            for entry in entries:
+                if not isinstance(entry,dict): continue
+                ordinal=entry.get('ordinal'); text=entry.get(text_field); status=entry.get('status')
+                if not isinstance(ordinal,int) or not text or not status: continue
+                meta={k:v for k,v in entry.items() if k not in ('ordinal','text','missing','step','status','evidence_id')}
+                rows.append((article_key,analyzed_at,kind,ordinal,str(text),str(status),
+                             entry.get('evidence_id') or None,json.dumps(meta,ensure_ascii=False,default=str)))
+        return rows
+    def analysis_sections(self,article_key,analyzed_at=None):
+        """Sections of one analysis; the latest analysed_at is the default read."""
+        with self.connect() as c:
+            if analyzed_at is None:
+                row=c.execute('SELECT MAX(analyzed_at) FROM analysis_sections WHERE article_key=?',(article_key,)).fetchone()
+                analyzed_at=row[0] if row else None
+            if not analyzed_at: return []
+            rows=[dict(r) for r in c.execute('''SELECT section_id,article_key,analyzed_at,kind,ordinal,text,status,evidence_id,meta_json
+                                                FROM analysis_sections WHERE article_key=? AND analyzed_at=?
+                                                ORDER BY CASE kind WHEN 'fact' THEN 1 WHEN 'inference' THEN 2 WHEN 'gap' THEN 3 ELSE 4 END, ordinal''',
+                                             (article_key,analyzed_at))]
+        out=[]
+        for d in rows:
+            raw=d.pop('meta_json') or '{}'
+            try: d['meta']=json.loads(raw)
+            except ValueError: d['meta']={}
+            out.append(d)
+        return out
     def record_analysis_failure(self,run_id,article_key,url,stage,error):
         """Persist one failed article so a bad run stays diagnosable after the log rotates."""
         with self.connect() as c:

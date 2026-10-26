@@ -166,20 +166,102 @@ def _estimate_hint(x):
         return ['   内容完整性估计：这段文本看起来是全文；只有把该来源复核为 content_access_level=full_text，才能按 E2 计。']
     return []
 
+def _confidence_label(value):
+    return {'low':'低','medium':'中','high':'高'}.get(str(value or '').lower(),'—')
+
+def _basis_label(inference):
+    basis=[b for b in (inference or {}).get('basis') or [] if isinstance(b,int)]
+    return '、'.join(f'F{b}' for b in basis) if basis else '—'
+
+def _v5_sections(x):
+    """Facts, inferences, gaps and actions. Unverified claims never share a label with
+    located ones: a quote the locator rejected is not evidence, and an inference with no
+    located fact behind it is not a conclusion."""
+    a=x.get('analysis',{})
+    facts=[f for f in a.get('facts') or [] if isinstance(f,dict)]
+    located=[f for f in facts if f.get('status')=='located']
+    unlocated=[f for f in facts if f.get('status')!='located']
+    inferences=[i for i in a.get('inferences') or [] if isinstance(i,dict)]
+    supported=[i for i in inferences if i.get('status')=='supported']
+    unsupported=[i for i in inferences if i.get('status')!='supported']
+    gaps=[g for g in a.get('gaps') or [] if isinstance(g,dict)]
+    actions=[c for c in a.get('actions') or [] if isinstance(c,dict)]
+    lines=['   事实（可在原文定位）']
+    if located:
+        for f in located:
+            eid=f.get('evidence_id') or ''
+            line=f"     {('['+eid+'] ') if eid else ''}{f.get('text','')}"
+            quote=str(f.get('quote') or '').strip()
+            if quote: line+=f" — “{quote}”"
+            lines.append(line)
+            actor=str(f.get('actor') or '').strip()
+            url=str(f.get('source_url') or x.get('url') or '').strip()
+            if actor or url:
+                lines.append(f"          来源：{actor}{' · ' if actor and url else ''}{url}".rstrip())
+    else:
+        lines.append('     无可定位事实')
+    if len(supported)==1:
+        lines.append(f"   推断（基于 {_basis_label(supported[0])}，置信度 {_confidence_label(supported[0].get('confidence'))}）")
+    else:
+        lines.append('   推断')
+    if supported:
+        for inf in supported:
+            suffix=''
+            if len(supported)>1:
+                suffix=f"（基于 {_basis_label(inf)}；置信度 {_confidence_label(inf.get('confidence'))}）"
+            assumptions=[str(v).strip() for v in inf.get('assumptions') or [] if str(v).strip()]
+            assumption=f"（假设：{'；'.join(assumptions)}）" if assumptions else ''
+            lines.append(f"     - {inf.get('text','')}{suffix}{assumption}")
+    else:
+        lines.append('     无获事实支持的推断')
+    lines.append('   证据缺口')
+    if gaps:
+        for g in gaps:
+            detail=[]
+            if g.get('why_it_matters'): detail.append(f"为什么重要：{g['why_it_matters']}")
+            if g.get('how_to_close'): detail.append(f"如何补齐：{g['how_to_close']}")
+            lines.append(f"     - {g.get('missing','')}"+(f"（{'；'.join(detail)}）" if detail else ''))
+    else:
+        lines.append('     无')
+    lines.append('   建议行动')
+    if actions:
+        for c in actions:
+            done=f"（完成标准：{c['done_when']}）" if c.get('done_when') else ''
+            lines.append(f"     - {c.get('step','')}{done}")
+    else:
+        lines.append('     无')
+    if unlocated:
+        lines.append('   未能定位（不作为事实）')
+        for f in unlocated:
+            quote=str(f.get('quote') or '').strip()
+            line=f"     - {f.get('text','')}"
+            if quote: line+=f" — “{quote}”"
+            lines.append(line)
+    if unsupported:
+        lines.append('   未获事实支持的推断')
+        for inf in unsupported:
+            lines.append(f"     - {inf.get('text','')}")
+    return lines
+
 def _card(i,x):
     a=x.get('analysis',{}); cls=x.get('classification',{}); lane=_lane(x)
-    ev=x.get('evidence') or []
+    v5=a.get('schema_version')==5
     unknown='；'.join(a.get('uncertainties',[])) or '未填写'
     lines=['',f"{i}. [{x.get('score',0)}/100] {x.get('title','')}",
            f"   通道：{lane} · {LANE_LABEL[lane]}",
-           f"   证据：{_evidence_text(x)} · 来源质量：{SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality',''))}",
-           f"   初判：{_judgment(a)}"]
-    lines+=_quote_lines(ev)
-    lines+=_estimate_hint(x)
-    lines+=[_commercial_line(x),
-            f"   关键未知：{unknown}",
-            f"   下一步观察：{a.get('suggested_next_step','人工复核')}",
-            f"   来源：{x.get('source_name','Unknown')} · {x.get('url','')}"]
+           f"   证据：{_evidence_text(x)} · 来源质量：{SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality',''))}"]
+    if v5:
+        lines.append(f"   排序分：{x.get('score',0)}/100（仅用于本期排序，不是结论）")
+        lines+=_v5_sections(x)
+    else:
+        lines+=[f"   初判：{_judgment(a)}"]
+        lines+=_quote_lines(x.get('evidence') or [])
+        lines+=_estimate_hint(x)
+    lines.append(_commercial_line(x))
+    if not v5:
+        lines+=[f"   关键未知：{unknown}",
+                f"   下一步观察：{a.get('suggested_next_step','人工复核')}"]
+    lines.append(f"   来源：{x.get('source_name','Unknown')} · {x.get('url','')}")
     return lines
 
 def executive_brief(items):

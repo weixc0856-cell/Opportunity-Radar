@@ -56,7 +56,7 @@ class Settings:
                 pass
         return cls(freshrss_base_url=g('OR_FRESHRSS_BASE_URL','http://127.0.0.1:8088').rstrip('/'),freshrss_username=g('OR_FRESHRSS_USERNAME'),freshrss_api_key=g('OR_FRESHRSS_API_KEY'),
                    llm_base_url=g('OR_LLM_BASE_URL','http://127.0.0.1:8080/v1').rstrip('/'),llm_model=g('OR_LLM_MODEL'),llm_api_key=g('OR_LLM_API_KEY'),
-                   llm_timeout=int(g('OR_LLM_TIMEOUT_SECONDS','90')),llm_max_tokens=int(g('OR_LLM_MAX_TOKENS','500')),
+                   llm_timeout=int(g('OR_LLM_TIMEOUT_SECONDS','90')),llm_max_tokens=int(g('OR_LLM_MAX_TOKENS','1200')),
                    smtp_host=g('OR_SMTP_HOST'),smtp_port=port,smtp_username=g('OR_SMTP_USERNAME'),smtp_password=g('OR_SMTP_PASSWORD'),
                    email_from=g('OR_EMAIL_FROM'),email_to=email_to,smtp_starttls=bval('OR_SMTP_STARTTLS',True),smtp_security=security,
                    max_articles=max(1,int(g('OR_MAX_ARTICLES','10'))),request_timeout=int(g('OR_REQUEST_TIMEOUT_SECONDS','20')),

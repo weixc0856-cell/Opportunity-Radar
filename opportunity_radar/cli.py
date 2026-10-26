@@ -361,7 +361,7 @@ def main(argv=None):
             try:
                 prior_sources=store.event_sources(Store.event_key(a.title),key)
                 multi_source=len(prior_sources|{a.source_name})>=2
-                result=model.analyze(a.title,a.summary,a.source_name,a.url)
+                result=model.analyze(a.title,a.summary,a.source_name,a.url,published=a.published)
                 item=evaluate(a,result,thresholds=None,model=s.llm_model,source=source_by_feed.get(a.feed_id),
                               lanes_config=lanes_cfg,multi_source=multi_source,event_seen_before=bool(prior_sources),
                               min_full_text_chars=min_chars)
