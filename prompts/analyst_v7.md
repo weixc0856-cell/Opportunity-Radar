@@ -24,6 +24,14 @@ Claims
   If the text states any figure with a unit or a period, at least one claim is expected.
   When the text states several figures, cover the ones that change a decision; do not stop at
   two because the article is long, and do not pad with statements that carry no figure.
+- Include changes as well as levels. If the text says personal income rose 0.2 percent at a
+  monthly rate, that 0.2 is a claim of its own (unit "%", comparison monthly_rate) even when the
+  level ($54.5 billion) is also claimed. A deficit that moved from $92.8 billion to $105.6
+  billion yields both figures.
+
+  (Measured 2026-11-01: this wording neither raised nor lowered recall on the BEA releases; a
+  stronger "count every figure" variant produced the same claims and one extra truncated call,
+  so it was reverted. Fixing the remaining misses needs a second focused pass, not wording.)
 - Only claim what the text states. A field the text does not give stays "" (or "unknown" for the
   enumerated fields). Never fill a number, unit, period or currency from context or from what you
   know about the world.
