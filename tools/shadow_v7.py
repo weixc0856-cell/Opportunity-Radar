@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from opportunity_radar import claim_contract, schema  # noqa: E402
-from opportunity_radar.analyzer import LocalAnalyzer  # noqa: E402
+from opportunity_radar.analyzer import LocalAnalyzer, output_budget  # noqa: E402
 from opportunity_radar.config import Settings, parse_backoff  # noqa: E402
 from opportunity_radar.freshrss_client import FreshRSSClient, ordered_feed_ids  # noqa: E402
 from opportunity_radar.source_policy import is_approved, load_sources  # noqa: E402
@@ -139,11 +139,10 @@ def main(argv=None):
     out_dir.mkdir(parents=True, exist_ok=True)
     stream = (out_dir / 'v7.jsonl').open('w', encoding='utf-8')
 
-    # v7 answers are longer than v6 (facts + claims); the budget is raised and recorded, and
-    # the analyser's own recovery path is used rather than a second implementation of it.
-    token_budget = max(settings.llm_max_tokens, 2400)
+    # v7 answers are longer than v6 (facts + claims) and a figure-dense article needs more of
+    # them, so the budget scales with the article instead of being fixed for all lengths.
     analyzer = LocalAnalyzer(settings.llm_base_url, settings.llm_model, settings.llm_timeout,
-                             token_budget, api_key=settings.llm_api_key,
+                             output_budget(''), api_key=settings.llm_api_key,
                              connect_retries=settings.llm_connect_retries,
                              timeout_retries=settings.llm_timeout_retries,
                              backoff=parse_backoff(settings.llm_retry_backoff),
@@ -158,6 +157,8 @@ def main(argv=None):
                   'has_digits': any(ch.isdigit() for ch in (article.summary or '')),
                   'prompt_version': version}
         try:
+            token_budget = output_budget(article.summary)
+            analyzer.max_tokens = token_budget
             trace = []
             parsed = analyzer.analyze(article.title, article.summary, article.source_name, article.url,
                                       trace=trace, published=getattr(article, 'published', ''))
@@ -238,7 +239,8 @@ def summarise(rows, version):
         'seconds_total': round(sum(r.get('seconds', 0) for r in rows), 1),
         'recovered': sum(1 for r in rows if r.get('recovered')),
         'first_call_unparsed': sum(1 for r in rows if r.get('ok') and not r.get('first_call_parsed', True)),
-        'token_budget': next((r.get('token_budget') for r in rows if r.get('token_budget')), None),
+        'token_budget': {'min': min((r.get('token_budget') for r in rows if r.get('token_budget')), default=None),
+                         'max': max((r.get('token_budget') for r in rows if r.get('token_budget')), default=None)},
         'model_calls': sum(r.get('model_calls') or 0 for r in rows),
         'failures': [{'n': r['n'], 'title': r['title'][:60], 'error': r.get('error', '')}
                      for r in rows if not r.get('ok')],

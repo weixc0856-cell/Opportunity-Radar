@@ -3,7 +3,9 @@ param(
   [string]$ServerExe = "D:\AI\bin-sycl\llama-server.exe",
   [int]$Port = 8080,
   [string]$Device = "SYCL0",
-  [int]$ContextSize = 16384,
+  # 64K is the verified ceiling for this card: with f16 KV it does not fit, with q8_0 KV it
+  # uses about 7.3 of 8 GB. The GPU/MoE split below is unchanged from the 16K baseline.
+  [int]$ContextSize = 65536,
   [int]$BatchSize = 256,
   [int]$UBatchSize = 128,
   [int]$CpuMoeLayers = 48,
@@ -54,6 +56,8 @@ $serverArgs = @(
   '-b', "$BatchSize",
   '-ub', "$UBatchSize",
   '-fa', 'on',
+  '-ctk', 'q8_0',
+  '-ctv', 'q8_0',
   '--metrics',
   '--jinja',
   '--alias', "$alias,default",

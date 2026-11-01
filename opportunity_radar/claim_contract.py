@@ -16,12 +16,15 @@ import re
 
 from . import units
 
-CONTRACT_VERSION = 'r2-v2'
+CONTRACT_VERSION = 'r2-v3'
 
 KINDS = ('fact', 'source_interpretation', 'system_inference', 'hypothesis', 'forecast',
          'opinion', 'unknown')
 COMPARISONS = ('level', 'year_over_year', 'quarter_over_quarter', 'month_over_month',
-               'period_change', 'percentage_point_change', 'share', 'unknown')
+               'period_change', 'percentage_point_change', 'share',
+               # r2-v3: statistics releases state a change "at a monthly rate"; that is a
+               # different statement from month-over-month and was being deviated away.
+               'monthly_rate', 'quarterly_rate', 'annual_rate', 'unknown')
 SEASONALITY = ('seasonally_adjusted', 'not_seasonally_adjusted', 'unknown')
 # r2-v2 adds the estimate stages a statistics release actually uses. The earlier four stay:
 # dropping them would invalidate every record written under r2-v1.

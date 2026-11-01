@@ -44,6 +44,16 @@ PROMPT_VERSION,SYSTEM=load_prompt()
 PROMPT_HASH=hashlib.sha256(SYSTEM.encode('utf-8')).hexdigest()[:12]
 
 
+def output_budget(summary, base=2400, cap=6000, floor=2000):
+    """How many output tokens an article may need.
+
+    A short post cannot need 6000 tokens; a figure-dense release needs more than the old
+    fixed 2400 and was being cut off mid-JSON. Both ends are bounded so a pathological
+    input cannot ask for an unbounded answer.
+    """
+    return min(int(cap), max(int(base), int(floor) + len(summary or '') // 4))
+
+
 class ModelCallError(RuntimeError):
     """One call that failed after a known number of attempts.
 
@@ -182,7 +192,7 @@ class LocalAnalyzer:
                      ' each text under 200 characters. Do not repeat the article text.')
             try:
                 raw=self._call([{'role':'system','content':compact},{'role':'user','content':'Reformat the following into the required JSON schema without adding facts:\n'+raw[:6000]}],
-                               max_tokens=min(2400,self.max_tokens+1200))
+                               max_tokens=min(6000,self.max_tokens+1200))
             except ModelCallError as exc:
                 exc.attempts+=prior
                 raise

@@ -186,3 +186,19 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(retry_after_seconds(_http_error(429, {'Retry-After': '90'}), 30), 30.0)
         self.assertIsNone(retry_after_seconds(_http_error(429, {}), 30))
         self.assertIsNone(retry_after_seconds(ConnectionResetError(), 30))
+
+import unittest as _unittest
+from opportunity_radar.analyzer import output_budget
+
+
+class OutputBudgetTests(_unittest.TestCase):
+    def test_a_short_post_gets_the_base_budget(self):
+        self.assertEqual(output_budget('x' * 200), 2400)
+
+    def test_a_long_article_gets_more_but_not_more_than_the_cap(self):
+        self.assertEqual(output_budget('x' * 4000), 3000)
+        self.assertEqual(output_budget('x' * 40000), 6000)
+
+    def test_the_budget_never_falls_below_the_base(self):
+        self.assertEqual(output_budget(''), 2400)
+

@@ -19,7 +19,9 @@ Facts
   {"text": "one sentence, <=200 chars", "quote": "exact excerpt", "actor": "who stated it"}
 
 Claims
-- 0-6 items. A claim is one statement reduced to fields so a program can check it.
+- 0-8 items. A claim is one statement reduced to fields so a program can check it.
+  When the text states several figures, cover the ones that change a decision; do not stop at
+  two because the article is long, and do not pad with statements that carry no figure.
 - Only claim what the text states. A field the text does not give stays "" (or "unknown" for the
   enumerated fields). Never fill a number, unit, period or currency from context or from what you
   know about the world.
@@ -51,8 +53,8 @@ Claims
 - period: "YYYY", "YYYY-MM", "YYYY-MM-DD", "YYYY-Qn", "YYYY-MM-DD/YYYY-MM-DD" or an annual
   range "YYYY-YYYY" (e.g. 1997-2024). If the text gives no period, "" — do not use the publication
   date.
-- comparison: level|year_over_year|quarter_over_quarter|month_over_month|period_change|
-  percentage_point_change|share|unknown. Use "unknown" when the text states no comparison basis;
+- comparison: level|year_over_year|quarter_over_quarter|month_over_month|monthly_rate|
+  quarterly_rate|annual_rate|period_change|percentage_point_change|share|unknown. Use "unknown" when the text states no comparison basis;
   never guess year-over-year from the word "rose".
 - denominator: fill only when the text states what a share or rate is out of.
 - seasonality: seasonally_adjusted|not_seasonally_adjusted|unknown.
