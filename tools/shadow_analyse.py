@@ -73,6 +73,7 @@ def store_claims(records):
                 'subject': claim.get('subject') or '', 'predicate': claim.get('predicate') or '',
                 'value_num': claim.get('value_num'), 'value_text': claim.get('value_text') or '',
                 'unit': claim.get('unit') or '', 'unit_raw': claim.get('unit_raw') or '',
+                'scale': claim.get('scale') or '',
                 'currency': claim.get('currency') or '', 'region': claim.get('region') or '',
                 'period': claim.get('period') or '', 'period_raw': claim.get('period_raw') or '',
                 'comparison': claim.get('comparison') or 'unknown', 'denominator': '',

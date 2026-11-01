@@ -152,6 +152,18 @@ def same_number(left, right, rel_tolerance=1e-6):
     return scale > 0 and abs(left - right) / scale <= rel_tolerance
 
 
+SCALE_NAMES = {1e3: 'thousand', 1e6: 'million', 1e9: 'billion', 1e12: 'trillion'}
+
+
+def scale_name(factor):
+    """'million' for 1e6, '' for no scaling. A magnitude is not a unit."""
+    try:
+        value = float(factor)
+    except (TypeError, ValueError):
+        return ''
+    return SCALE_NAMES.get(value, '')
+
+
 def split_unit(unit):
     """('USD million',) -> ('USD', 1e6). A scale word inside a unit is part of the unit."""
     canonical = normalize_unit(unit)

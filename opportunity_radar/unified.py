@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS claims(
   value_text TEXT NOT NULL DEFAULT '',
   unit TEXT NOT NULL DEFAULT '',
   unit_raw TEXT NOT NULL DEFAULT '',
+  scale TEXT NOT NULL DEFAULT '',
   currency TEXT NOT NULL DEFAULT '',
   region TEXT NOT NULL DEFAULT '',
   period TEXT NOT NULL DEFAULT '',
@@ -504,6 +505,7 @@ class UnifiedStore:
             claim_columns = {row[1] for row in conn.execute('PRAGMA table_info(claims)')}
             for name, ddl in (('verified_at', 'TEXT'), ('verification_basis', "TEXT NOT NULL DEFAULT ''"),
                               ('unit_raw', "TEXT NOT NULL DEFAULT ''"),
+                              ('scale', "TEXT NOT NULL DEFAULT ''"),
                               ('period_raw', "TEXT NOT NULL DEFAULT ''"),
                               ('revision_raw', "TEXT NOT NULL DEFAULT ''")):
                 if name not in claim_columns:
@@ -575,7 +577,7 @@ class UnifiedStore:
         """Insert one claim. The *_raw columns keep the model's own wording beside the
         normalised value, so a deviation can be traced back to what it actually said."""
         columns = ('claim_id', 'article_key', 'event_id', 'fact_ordinal', 'subject', 'predicate',
-                   'value_num', 'value_text', 'unit', 'unit_raw', 'currency', 'region', 'period',
+                   'value_num', 'value_text', 'unit', 'unit_raw', 'scale', 'currency', 'region', 'period',
                    'period_raw', 'comparison', 'denominator', 'seasonality', 'revision', 'revision_raw',
                    'kind', 'quote', 'locator_json', 'verification_state', 'extractor', 'rules_version',
                    'created_at')

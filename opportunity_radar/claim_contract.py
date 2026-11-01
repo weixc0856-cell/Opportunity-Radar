@@ -16,7 +16,7 @@ import re
 
 from . import units
 
-CONTRACT_VERSION = 'r2-v3'
+CONTRACT_VERSION = 'r2-v4'
 
 KINDS = ('fact', 'source_interpretation', 'system_inference', 'hypothesis', 'forecast',
          'opinion', 'unknown')
@@ -94,6 +94,10 @@ def normalize(payload):
 
     claim['unit_raw'] = _text(payload.get('unit'), 80)
     unit = units.normalize_unit(payload.get('unit'))
+    # 'million' is a magnitude, not a unit: it goes to `scale`, and only what remains is a unit.
+    base_unit, factor = units.split_unit(unit)
+    claim['scale'] = units.scale_name(factor)
+    unit = base_unit
     if unit and units.unit_family(unit) == 'unknown':
         deviations.append(_deviation('unit', 'unknown_unit', unit))
     claim['unit'] = unit
@@ -164,6 +168,7 @@ def contract_summary():
         'period_formats': ['YYYY', 'YYYY-MM', 'YYYY-MM-DD', 'YYYY-Qn', 'YYYY-MM-DD/YYYY-MM-DD',
                            'YYYY/YYYY', 'YYYY-YYYY'],
         'required': ['subject', 'predicate', 'kind'],
+        'scale_is_not_a_unit': True,   # r2-v4: magnitude lives in `scale`, not in `unit`
         'degrades_to_deviation': ['value_num', 'unit', 'currency', 'period', 'comparison',
                                   'seasonality', 'revision', 'quote'],
     }

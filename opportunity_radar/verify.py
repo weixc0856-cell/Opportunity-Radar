@@ -44,17 +44,30 @@ def _period_end(period):
     return text.split('/')[-1][:10] if '/' in text else text[:10]
 
 
+def _value_in_base_unit(claim):
+    """The claim's number expressed without its magnitude word: 54.5 'USD billion' -> 5.45e10.
+
+    The magnitude may arrive inside the unit (older rows) or in `scale` (contract r2-v4);
+    both are accepted so a stored claim never has to be rewritten to be verifiable.
+    """
+    value = claim.get('value_num')
+    if value is None:
+        return None
+    _, unit_factor = units.split_unit(claim.get('unit'))
+    _, scale_factor = units.split_unit(claim.get('scale') or '')
+    return float(value) * unit_factor * scale_factor
+
+
 def classify_support(claim, evidence):
     """(support, reason): does the quote say what the claim says it says?"""
     quote = _norm(evidence.get('quote'))
     if not quote:
         return 'unsupported', 'no_quote'
-    value = claim.get('value_num')
-    if value is None:
+    claim_value = _value_in_base_unit(claim)
+    if claim_value is None:
         return 'direct', 'quote_present_no_value'
-    base_unit, scale = units.split_unit(claim.get('unit'))
+    base_unit = units.normalize_unit(claim.get('unit'))
     family = units.unit_family(base_unit)
-    claim_value = float(value) * scale
     comparable = [(v, u) for v, u in units.quantities(quote) if u and units.unit_family(u) == family]
     if not comparable:
         # No number of the same kind in the quote; a bare number elsewhere is not evidence.
@@ -148,9 +161,12 @@ def check_claim(claim, evidence):
         return {'state': 'unverifiable', 'support': 'unsupported', 'basis': 'no_evidence',
                 'checks': [{'name': 'evidence', 'result': 'fail', 'detail': 'claim cites no evidence'}],
                 'deviations': []}
+    # Reassemble the unit and its magnitude so the contract can split them the same way.
+    unit_text = ' '.join(part for part in (claim.get('unit') or '', claim.get('scale') or '') if part)
     fields = {k: claim.get(k) for k in ('subject', 'predicate', 'kind', 'value_num', 'value_text',
-                                        'unit', 'currency', 'period', 'comparison', 'seasonality',
+                                        'currency', 'period', 'comparison', 'seasonality',
                                         'revision', 'region', 'denominator', 'quote')}
+    fields['unit'] = unit_text
     # A structured claim keeps its quote on the evidence, not on the claim row.
     fields['quote'] = fields.get('quote') or (evidence.get('quote') or '')
     contract, deviations = claim_contract.normalize(fields)
