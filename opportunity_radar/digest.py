@@ -1,3 +1,4 @@
+import json
 from collections import Counter
 from datetime import datetime
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
@@ -63,22 +64,81 @@ def group_by_event(items):
     return reps, siblings
 
 
+CLAIM_KIND_LABEL={'fact':'事实','source_interpretation':'来源解释','system_inference':'系统推断',
+                  'hypothesis':'假设','forecast':'预测','opinion':'观点'}
+CLAIM_STATE_LABEL={'unverified':'未核验','verified':'已核验','rejected':'已否决','unverifiable':'无法核验'}
+
+
+def _locator_text(raw):
+    """`summary@0-15` or the filing/series reference, in one short form."""
+    try:
+        loc=json.loads(raw or '{}')
+    except ValueError:
+        return ''
+    if not isinstance(loc,dict): return ''
+    if loc.get('field'):
+        start=loc.get('start'); length=loc.get('length')
+        return f"{loc['field']}@{start}-{start+length}" if isinstance(start,int) and isinstance(length,int) else str(loc['field'])
+    for key in ('accn','series_id','period'):
+        if loc.get(key): return f"{key}={loc[key]}"
+    return ''
+
+
+def _claim_lines(event):
+    items=event.get('claim_items') or []
+    if not items: return []
+    states=Counter(i.get('verification_state') or 'unverified' for i in items)
+    summary='，'.join(f"{CLAIM_STATE_LABEL.get(k,k)} {v}" for k,v in states.items())
+    lines=[f"   事实主张：{len(items)} 条（{summary}）"]
+    for item in items[:2]:
+        kind=CLAIM_KIND_LABEL.get(item.get('kind'),item.get('kind') or '')
+        state=CLAIM_STATE_LABEL.get(item.get('verification_state'),item.get('verification_state') or '')
+        text=(item.get('value_text') or item.get('quote') or '').strip()
+        if len(text)>48: text=text[:48]+'…'
+        pointer=item.get('evidence_id') or '无证据'
+        where=_locator_text(item.get('locator_json'))
+        source=item.get('evidence_source_id') or ''
+        detail='；'.join(part for part in (where, source) if part)
+        lines.append(f"     · [{kind}·{state}] 「{text}」 ← 证据 {pointer}"+(f"（{detail}）" if detail else ''))
+    if len(items)>2: lines.append(f"     · 另有 {len(items)-2} 条主张，见归档 JSON")
+    return lines
+
+
+def _link_lines(event):
+    items=event.get('link_items') or []
+    if not items: return []
+    by_status=Counter(i.get('status') or 'candidate' for i in items)
+    label='，'.join(f"{k} {v}" for k,v in by_status.items())
+    lines=[f"   候选关联：{len(items)} 条（{label}）· 未经确认，不作为已发生的事实"]
+    for item in items[:2]:
+        peer=item.get('right_key') if item.get('left_kind')=='claim' else item.get('left_key')
+        pointer=f"{item.get('left_kind')}→{item.get('right_kind')}" if item.get('left_kind') else ''
+        lines.append(f"     · {pointer} {peer}（{item.get('basis')}，{item.get('confidence')}，{item.get('status')}）")
+    return lines
+
+
 def event_summary_lines(x):
-    """What the R1 tables add: how many reports, how many families, whether they corroborate."""
+    """What the R1 tables add: the claims, their evidence, and the corroboration picture."""
     event = x.get('event') or {}
     if not event:
         return []
     members = event.get('members') or []
     families = event.get('source_families') or []
     others = max(0, len(members) - 1)
-    if others == 0 and len(families) <= 1 and not event.get('candidate_links'):
+    claims = event.get('claim_items') or []
+    links = event.get('link_items') or []
+    if others == 0 and len(families) <= 1 and not links and not claims:
         return []
     verdict = '是' if event.get('independent_corroboration') else '否'
     outlets = len(event.get('member_sources') or []) or len(event.get('sources') or [])
-    lines = [f"   事件结构：同事件报道 {len(members)} 篇 · 报道来源 {outlets} 个 · "
-             f"来源族 {len(families)} 个 · 独立佐证：{verdict}"]
-    if event.get('candidate_links'):
-        lines.append(f"   候选关联：{event['candidate_links']} 条（候选，未经确认）")
+    lines = []
+    # A single report from a single family says nothing about corroboration; printing the
+    # line anyway would train the reader to skip it.
+    if others or len(families) > 1 or links:
+        lines.append(f"   事件结构：同事件报道 {len(members)} 篇 · 报道来源 {outlets} 个 · "
+                     f"来源族 {len(families)} 个 · 独立佐证：{verdict}")
+    lines += _claim_lines(event)
+    lines += _link_lines(event)
     if others:
         listed = [f"{m.get('source_name','?')}《{str(m.get('title',''))[:36]}》{m.get('url','')}"
                   for m in members if m.get('url') and m['url'] != x.get('url')][:4]

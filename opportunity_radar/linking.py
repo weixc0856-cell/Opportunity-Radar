@@ -258,6 +258,7 @@ def event_profile(store, event_id):
     family counts as a corroborating unit only when its evidence carries a recorded
     independence; evidences that merely share a wire copy collapse into one unit.
     """
+    store_has_articles = getattr(store, 'has_articles', False)
     with store.connect() as conn:
         articles = conn.execute('SELECT COUNT(*) FROM event_articles WHERE event_id=?', (event_id,)).fetchone()[0]
         has_lineage = True
@@ -272,12 +273,34 @@ def event_profile(store, event_id):
                FROM event_articles ea JOIN evidences v USING(article_key) WHERE ea.event_id=?''', (event_id,))]
         claims = conn.execute('''SELECT COUNT(*) FROM claims c JOIN event_articles ea ON ea.article_key = c.article_key
                                  WHERE ea.event_id=?''', (event_id,)).fetchone()[0]
+        members = [dict(r) for r in conn.execute(
+            '''SELECT a.title, a.url, a.source_name FROM event_articles e
+               JOIN articles a USING(article_key) WHERE e.event_id=?
+               ORDER BY a.published, a.article_key''', (event_id,))] if store_has_articles else []
         member_sources = sorted({r[0] for r in conn.execute(
             'SELECT a.source_name FROM event_articles e JOIN articles a USING(article_key) '
             'WHERE e.event_id=? AND a.source_name IS NOT NULL AND length(a.source_name)>0', (event_id,))})
         links = conn.execute('''SELECT COUNT(*) FROM event_links
                                 WHERE (left_kind='event' AND left_key=?) OR (right_kind='event' AND right_key=?)''',
                              (event_id, event_id)).fetchone()[0]
+        # What the reader can actually check: each claim with the evidence that backs it,
+        # the evidence's place in the source text, and who published it.
+        claim_items = [dict(r) for r in conn.execute(
+            '''SELECT c.claim_id, c.article_key, c.subject, c.predicate, c.value_text, c.kind,
+                      c.verification_state, c.extractor, c.locator_json,
+                      (SELECT ce.evidence_id FROM claim_evidence ce WHERE ce.claim_id=c.claim_id LIMIT 1) AS evidence_id,
+                      (SELECT v.source_id FROM claim_evidence ce JOIN evidences v USING(evidence_id)
+                        WHERE ce.claim_id=c.claim_id LIMIT 1) AS evidence_source_id
+               FROM claims c JOIN event_articles ea ON ea.article_key = c.article_key
+               WHERE ea.event_id=?
+               ORDER BY CASE c.verification_state WHEN 'verified' THEN 0 ELSE 1 END, c.fact_ordinal
+               LIMIT 6''', (event_id,))]
+        link_items = [dict(r) for r in conn.execute(
+            '''SELECT link_id, left_kind, left_key, right_kind, right_key, relation, basis, status, confidence
+               FROM event_links
+               WHERE (left_kind='event' AND left_key=?) OR (right_kind='event' AND right_key=?)
+               ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'candidate' THEN 1 ELSE 2 END, confidence DESC
+               LIMIT 6''', (event_id, event_id))]
     sources = sorted({r['source_id'] for r in rows if r['source_id']})
     families = sorted({r['source_family'] for r in rows if r['source_family']})
     independence, kinds, groups = {}, {}, set()
@@ -301,6 +324,7 @@ def event_profile(store, event_id):
     return {
         'event_id': event_id,
         'articles': articles,
+        'members': members,
         'sources': sources,
         'member_sources': member_sources,
         'evidences': len(rows),
@@ -311,6 +335,10 @@ def event_profile(store, event_id):
         'syndication_groups': sorted(groups),
         'corroborating_units': len(units),
         'candidate_links': links,
+        'claim_items': claim_items,
+        'link_items': link_items,
+        'links_by_status': {status: sum(1 for item in link_items if item['status'] == status)
+                            for status in sorted({item['status'] for item in link_items})},
         'independent_corroboration': independent,
         'quality_note': note,
     }

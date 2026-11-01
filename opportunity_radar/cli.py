@@ -230,14 +230,7 @@ def attach_event_context(store, items, write=True):
         for item, event_id in placed_events:
             if not event_id:
                 continue
-            profile = event_profile(uni, event_id)
-            with uni.connect() as conn:
-                members = [dict(r) for r in conn.execute(
-                    '''SELECT a.title, a.url, a.source_name FROM event_articles e
-                         JOIN articles a USING(article_key) WHERE e.event_id=?
-                         ORDER BY a.published, a.article_key''', (event_id,))]
-            profile['members'] = members
-            item['event'] = profile
+            item['event'] = event_profile(uni, event_id)
             grouped += 1
         return grouped
     except Exception:

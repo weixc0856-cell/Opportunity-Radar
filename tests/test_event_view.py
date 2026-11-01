@@ -70,9 +70,10 @@ class SummaryLineTests(unittest.TestCase):
         self.assertIn('NYT', joined)
 
     def test_candidates_are_labelled_as_candidates(self):
-        lines = event_summary_lines(item('A', 50, event=event_block(candidate_links=3)))
-        self.assertIn('候选关联：3 条', ' '.join(lines))
-        self.assertIn('未', ' '.join(lines))
+        block = event_block(candidate_links=3, link_items=[link(link_id=f'lnk-{i}') for i in range(3)])
+        text = ' '.join(event_summary_lines(item('A', 50, event=block)))
+        self.assertIn('候选关联：3 条', text)
+        self.assertIn('未经确认', text)
 
 
 class ReportTests(unittest.TestCase):
@@ -131,6 +132,68 @@ class AttachTests(unittest.TestCase):
         self.assertEqual(cli.attach_event_context(self.store, items, write=False), 0)
         with UnifiedStore(str(self.db)).connect() as conn:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM events').fetchone()[0], 0)
+
+
+
+def claim(**kw):
+    base = {'claim_id': 'cl-1', 'article_key': 'k1', 'subject': 'ONS', 'predicate': 'assertion',
+            'value_text': 'Retail sales rose 1.2% in September', 'kind': 'fact',
+            'verification_state': 'unverified', 'extractor': 'skeleton',
+            'locator_json': '{"field": "summary", "start": 3, "length": 20}',
+            'evidence_id': 'ev-1', 'evidence_source_id': 'bbc-business'}
+    base.update(kw)
+    return base
+
+
+def link(**kw):
+    base = {'link_id': 'lnk-1', 'left_kind': 'claim', 'left_key': 'cl-1', 'right_kind': 'event',
+            'right_key': 'evt-1', 'relation': 'same_subject', 'basis': 'entity_period_window',
+            'status': 'candidate', 'confidence': 0.6}
+    base.update(kw)
+    return base
+
+
+class ClaimDisplayTests(unittest.TestCase):
+    def lines(self, block):
+        return ' '.join(event_summary_lines(item('A', 50, event=block)))
+
+    def test_a_claim_is_shown_with_its_evidence_and_position(self):
+        block = event_block(claim_items=[claim()])
+        text = self.lines(block)
+        self.assertIn('事实主张：1 条', text)
+        self.assertIn('事实·未核验', text)
+        self.assertIn('Retail sales rose', text)
+        self.assertIn('证据 ev-1', text)
+        self.assertIn('summary@3-23', text)
+        self.assertIn('bbc-business', text)
+
+    def test_a_claim_is_never_called_confirmed(self):
+        block = event_block(claim_items=[claim()])
+        text = self.lines(block)
+        self.assertNotIn('已核验', text.replace('未核验', ''))
+
+    def test_kinds_are_labelled(self):
+        block = event_block(claim_items=[claim(kind='system_inference', verification_state='unverified')])
+        self.assertIn('系统推断·未核验', self.lines(block))
+
+    def test_only_the_first_claims_are_printed(self):
+        block = event_block(claim_items=[claim(claim_id=f'cl-{i}') for i in range(6)])
+        self.assertIn('另有 4 条主张', self.lines(block))
+
+    def test_candidate_links_are_labelled_as_unconfirmed(self):
+        block = event_block(link_items=[link()], candidate_links=1)
+        text = self.lines(block)
+        self.assertIn('候选关联：1 条', text)
+        self.assertIn('未经确认', text)
+        self.assertIn('candidate', text)
+
+    def test_an_accepted_link_still_reports_its_status(self):
+        block = event_block(link_items=[link(status='accepted')], candidate_links=1)
+        self.assertIn('accepted', self.lines(block))
+
+    def test_an_event_with_only_claims_still_gets_a_block(self):
+        self.assertTrue(event_summary_lines(item('A', 50, event=event_block(claim_items=[claim()]))))
+
 
 
 if __name__ == '__main__':
