@@ -55,6 +55,22 @@ UNIT_FAMILY.update({
     'cells': 'count', 'fps': 'rate', 'metres': 'length', 'kilometres': 'length',
     'centimetres': 'length', 'millimetres': 'length',
 })
+# N1 classifies common count and duration nouns (vehicles, customers, months, ...). Without
+# these families, N5 would report a required case such as '5 million vehicles' as an unknown
+# unit even though the scanner already classified it. This is additive: no existing key is
+# changed, and no conversion is introduced for these families.
+for _count_unit in ('vehicle', 'vehicles', 'customer', 'customers', 'user', 'users',
+                    'employee', 'employees', 'people', 'person', 'persons', 'company',
+                    'companies', 'home', 'homes', 'store', 'stores', 'unit', 'units', 'job',
+                    'jobs', 'patient', 'patients', 'subscriber', 'subscribers', 'member',
+                    'members', 'device', 'devices', 'site', 'sites', 'machine', 'machines',
+                    'shipment', 'shipments', 'order', 'orders', 'account', 'accounts',
+                    'passenger', 'passengers', 'school', 'schools', 'hospital', 'hospitals',
+                    'household', 'households'):
+    UNIT_FAMILY.setdefault(_count_unit, 'count')
+for _duration_unit in ('month', 'months', 'week', 'weeks', 'day', 'days', 'year', 'years',
+                       'hour', 'hours', 'minute', 'minutes', 'quarter', 'quarters'):
+    UNIT_FAMILY.setdefault(_duration_unit, 'duration')
 
 # A number never swallows a bare space: '08 70937.35' is two numbers, not 870937.35.
 # The trailing guard rejects only another digit: "500bn" and "$1tn" attach the scale

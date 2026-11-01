@@ -18,15 +18,17 @@
     event instead of one per article.
 12. SEC/EIA keep their own database and entry points (`ingest/`); they share the R1 table contract but
     never write to the RSS database.
-13. The claim pipeline (`docs/CLAIM_PIPELINE.md`) has four offline nodes. `article_text.py` (N0)
+13. The claim pipeline (`docs/CLAIM_PIPELINE.md`) has six offline nodes. `article_text.py` (N0)
     normalises the title and body into text with paragraph and sentence IDs, document offsets and
     raw-HTML spans; `numeric_candidates.py` (N1) lists every numeric expression as an atom and
     records ranges, from/to, direction and comparison statements as expression groups.
     `n2_semantic.py` asks the local model what each atom describes (subject, measure, claim or
     context) and `n3_relationships.py` asks it what relation the text states, with program checks
-    for IDs, enums, coverage, evidence location and comparison wording. `pipeline_store.py` keeps
-    the runs in a separate append-only SQLite file. N4/N5 (normalisation, claim assembly, verification)
-    are not implemented; nothing here writes to the production database or changes the analyzer.
+    for IDs, enums, coverage, evidence location and comparison wording. `n4_normalization.py` (N4)
+    turns those semantics into value/unit/scale/currency/period records without re-deciding
+    anything, and `n5_assembly.py` (N5) disposes every N1 candidate and assembles r2-v4 shadow
+    claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file. Nothing here
+    writes to the production database or changes the analyzer.
 
 The order in step 6 matters. Evidence is established before scoring, so a lane can never
 promote an item whose quotes could not be located in the text we actually received. See

@@ -1,170 +1,145 @@
 # 主张提取流水线（N0–N5）
 
-版本：3.0 · 2026-11-02
+版本：4.0 · 2026-11-02
 定位：规定"文章 → 主张"这条链路怎么拆、每个节点的输入输出契约、失败语义、留存方式与验收方式。
-现状：**N0–N3 已实现；N4–N5 未开始。** 生产提示词仍是 v6，v7 仍是影子，切换判定仍是
-**NOT READY**，生产启用需 G6 批准。
+现状：**N0–N5 已实现，形成离线影子链路；Claim 仍是影子 Claim，不是已核实事实。**
+生产提示词仍是 v6，v7 仍是影子，切换判定仍是 **NOT READY**，生产启用需 G6 批准。
 
-- N0/N1 契约见本文件 §4–§5，验收见 `docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`。
-- N2/N3 契约见本文件 §6–§7 与 `docs/archive/R2_BATCH9_N2_N3_SPEC_2026-11-02.md`，
-  验收见 `docs/archive/R2_BATCH9_N2_N3_ACCEPTANCE_2026-11-02.md`。
+- N0/N1：`docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`
+- N2/N3：`docs/archive/R2_BATCH9_N2_N3_SPEC_2026-11-02.md`、`R2_BATCH9_N2_N3_ACCEPTANCE_2026-11-02.md`
+- N4/N5：`docs/archive/R2_BATCH10_N4_N5_SPEC_2026-11-02.md`、`R2_BATCH10_N4_N5_ACCEPTANCE_2026-11-02.md`
 
 ---
 
-## 1. 为什么拆
+## 1. 原则
 
-一条提示词同时完成"读文章、找数字、判断主体/指标、判断变化口径、生成 Claim"时，出错无法
-定位，只能反复改总提示词。拆分后的规则：**每个节点只解决一种问题。上一个节点交付确定的数据，
-下一个节点只处理这些数据，不重新猜测上一个节点已经完成的事情。**
-
-N0、N1、N4、N5 是确定性程序；N2、N3 使用本地模型，输出是待核验材料，不是事实。
+每个节点只解决一种问题。上一个节点交付确定的数据，下一个节点只处理这些数据，不重新猜测
+上一个节点已经完成的事情。N0、N1、N4、N5 是确定性程序；N2、N3 使用本地模型，输出是
+待核验材料。N5 只写影子 Claim，不写生产表，也不把模型判断标记为已核实事实。
 
 ## 2. 输入边界
 
-输入是**本系统实际拿到的文本**：FreshRSS 标题与 RSS 正文（正文抓取关闭）。
-- 生产分析器有 12,000 字符上限；N0 不受该限制，离线工具以 `max_content=0` 读取完整正文。
-- 流水线的召回上限等于这段文本。
-- N0 的 canonical text 与 `schema._normalize` 一致；N1 偏移与证据定位器同源。
+输入是 FreshRSS 标题与 RSS 正文（正文抓取关闭）。生产分析器有 12,000 字符上限，N0 不受该限制；
+离线工具以 `max_content=0` 读取完整正文。流水线的召回上限等于这段文本。
 
 ## 3. 节点
 
-| 节点 | 角色 | 只回答一个问题 | 输出 | 状态 |
-|---|---|---|---|---|
-| N0 | 程序 | 文本是什么，每段每句在什么位置 | 规范化文档、段落/句子 ID、偏移、哈希 | 已实现 `article_text.py` |
-| N1 | 程序 | 有哪些数字表达，文本声明了哪些关系 | 原子候选 + 复合表达组 | 已实现 `numeric_candidates.py` |
-| N2 | 本地模型 | 这个数字描述谁、什么指标、是否构成主张 | 每个候选的 disposition/subject/predicate/证据 | 已实现 `n2_semantic.py` |
-| N3 | 本地模型 | 数字之间是什么关系 | 水平/变化/比较/区间/修订/份额/比率 | 已实现 `n3_relationships.py` |
-| N4 | 程序 | 数值如何规范化 | 数值、数量级、币种、单位、期间、比较口径 | 未开始 |
-| N5 | 程序 | 候选是否都被处理、Claim 是否可定位 | r2-v4 主张 + 未处理候选清单 | 未开始 |
+| 节点 | 角色 | 输出 | 状态 |
+|---|---|---|---|
+| N0 | 程序 | 规范化文档、段落/句子 ID、偏移、哈希 | 已实现 |
+| N1 | 程序 | 原子候选 + 复合表达组 | 已实现 |
+| N2 | 本地模型 | 每个候选的 disposition/subject/predicate/证据 | 已实现 |
+| N3 | 本地模型 | 水平/变化/比较/区间/修订/份额/比率关系与候选处置 | 已实现 |
+| N4 | 程序 | 数值/单位/数量级/币种/期间/baseline 标准化记录 | 已实现 |
+| N5 | 程序 | 候选完整处置 + r2-v4 影子 Claim | 已实现 |
 
-## 4. N0 文章标准化（`n0-v1`）
+## 4. N0 / N1（确定性头）
 
-输入：`article_id` / `source_id` / `title` / `content` / `content_format` / `language` /
-`source_url`；兼容现有文章对象的 `title` + `summary`。
+- N0：`document_id`、`content_hash`、`text`（标题+正文）、`paragraphs`/`sentences`（稳定 ID、
+  全文与原始偏移）、`offset_unit=unicode_codepoint`、`offset_convention=half_open`；不截断、
+  不改写数字。
+- N1：原子类型 `percentage`、`percentage_point`、`currency`、`quantity`、`scalar`、`date`、
+  `period`、`ratio`、`unclassified_numeric`（另有 `magnitude`/`time`/`ordinal`/`identifier`）；
+  复合表达 `range`/`from_to`/`increase_decrease`/`comparison`/`temporal_comparison`；
+  每个十进制数字字符恰好属于一个原子；不计算最终数值。
 
-输出：`document_id`、`content_hash`、`text_hash`、`text`（标题 + 正文）、`body_start`、
-`paragraphs[]`（`p0001`…）、`sentences[]`（`s0001`…）、`offset_unit=unicode_codepoint`、
-`offset_convention=half_open`、`ruleset`、`content_truncated`、`stats`。
+## 5. N2 / N3（本地模型）
 
-规则：`text[start:end]` 精确还原；N0 自身不截断；HTML 标签转空格、实体解码、引号/空白折叠、
-小写；数字表达式不改写；段落按块级标签（HTML）或空行（纯文本）切分；句子按 `.!?。！？` 切分，
-数字中的点与常见缩写不断句。无标题也无正文 → `ValueError`。
+- N2：批次 = 候选所在句完整 + 相邻句（预算 3500 字符，默认 4 个候选）；每个候选恰好一个
+  `claim_value`/`context_only`/`non_claim`/`ambiguous`/`unresolved`；`claim_value` 必须有
+  subject/predicate 与可定位逐字引文；predicate 关系泄漏由程序用 subject 重建。
+- N3：只对 N2 `claim_value` 且 resolved 的候选建关系；`context_only` 可作期间/基准；
+  `non_claim` 拒绝；N2 未成功 → `blocked`；每个 claim_value 必须有处置；比较口径必须原文出现
+  且紧邻该数值；revision/seasonality 只在原文出现时保留。
 
-## 5. N1 数字候选（`n1-v1`）
+## 6. N4 数值标准化（`n4-v1`）
 
-输入 N0 输出。输出 `candidates[]` + `expression_groups[]` + `statistics`。
+输入 N0/N1/N2/N3。输出 `normalized_records[]`：
 
-- 原子类型：`percentage`、`percentage_point`、`currency`、`quantity`、`scalar`、`date`、
-  `period`、`ratio`、`unclassified_numeric`；另有明确状态 `magnitude`、`time`、`ordinal`、
-  `identifier`。
-- 候选字段：`candidate_id`（content hash + 版本 + 类型 + 位置 + 原文）、`raw_text`、
-  `start/end`（N0 全文位置）、`sentence_id`/`paragraph_id`、`context`、`detection_method`、
-  `detection_status`、`value/scale/unit/currency/temporal/flags/cues`、`related_candidates`。
-- 复合表达：`range` / `from_to` / `increase_decrease` / `comparison` /
-  `temporal_comparison`，只引用原子 ID。
-- 不变量：每个十进制数字字符恰好属于一个原子（`statistics.coverage.uncovered` 为空）；
-  不乘数量级；左端最长、相邻不合并；相同输入与规则得到相同 ID。
-- `RULESET` 源码哈希随输出保存并进入缓存键。
+- `value`（原文数值，不乘数量级）、`unit`（基单位）、`scale`（billion/million/…）、
+  `currency`、`unit_string`（供 r2-v4，如 `USD billion`、`million vehicles`）、`unit_family`；
+- `raw_value`/`raw_unit`/`raw_scale`；`comparison`/`seasonality`/`revision`/`direction`；
+- `period`/`period_raw`/`period_candidate_ids`；`baseline`/`baseline_candidate_ids`；
+  `denominator`；`source_candidate_ids`/`source_relationship_ids`；证据与 N2 解释引文；
+- `status`：`normalized` / `partially_normalized` / `unsupported_unit` / `ambiguous_numeric` /
+  `missing_semantics` / `invalid_relationship` / `unresolved`。
 
-## 6. N2 数字候选语义（`n2-v1`）
+规则：数量级与币种不重复乘入；`%` 与 `pp` 不同；无单位不赋予经济单位；未知单位明确标记；
+括号数字不擅自取负（记 `parenthesized_sign_not_inferred`）；`range`/`unknown` 关系不可组装；
+缺失 period/baseline 保持空并记录；每个 claim_value 必须有记录（无关系 → `missing_semantics`）。
+N4 不调用模型、不补造关系。
 
-### 输入与批次
+## 7. N5 完整性门禁与 Claim 组装（`n5-v1`）
 
-N0 文档 + N1 输出。程序按候选位置构造句子窗口（候选所在句完整 + 前后各一句，预算 3500 字符），
-每批默认 4 个候选，一次模型调用。候选不跨 title/body，且每个候选只属于一批。
+输入 N0–N4。输出：
 
-### 输出
+- `claims[]`：r2-v4 字段（`subject/predicate/kind/value_num/value_text/unit/unit_raw/scale/
+  currency/period/period_raw/comparison/seasonality/revision/denominator/region/quote`），
+  外加 `claim_id`、`status=accepted`、`deviations`、`trace`（候选、关系、N4 记录、证据定位、
+  N2 subject/predicate、direction、baseline）。
+- `candidate_dispositions[]`：每个 N1 候选一个处置——`claim_accepted`/`context_only`/`non_claim`/
+  `ambiguous`/`unresolved`/`relationship_unassigned`/`normalization_failed`/`rejected`/
+  `used_as_context`。
+- `rejected_items[]`、`unresolved_items[]`、`coverage_statistics`、`contract_validation`、
+  `duplicates`、`status`。
 
-`candidate_interpretations[]`：`candidate_id`、`disposition`、`subject`、`predicate`、
-`predicate_raw`、`predicate_source`、`kind`、`reason`、`evidence_sentence_ids`、
-`evidence_quote`、`evidence_start/end/field`、`status`、`deviations`。
-另有 `batches[]`、`statistics`、`model`、`input_hash`、Prompt/Schema 版本与哈希、`status`。
+组装规则：subject/predicate/kind 来自 N2；数值/单位/数量级/币种来自 N4；关系/方向/比较/期间/
+baseline 来自 N3，只用明确提供的信息。证据必须回到 N0 原文；标题单独证据 → 拒绝
+`title_only_evidence`；缺 subject/predicate、value 非数值、单位/币种未知、期间非法、证据缺失 → 拒绝；
+重复 Claim 只保留一条。契约校验把所有 payload 交给 `claim_contract.parse_claims`，全部通过才算有效。
+coverage_complete 要求处置数与 N1 候选数相等且唯一；Claim 数量不是成功指标。
 
-- `disposition`：`claim_value` / `context_only` / `non_claim` / `ambiguous` / `unresolved`。
-- `kind`：r2-v4 的枚举，**禁止 `system_inference`**。
-- `status`：`resolved` / `ambiguous` / `unresolved`。
-
-### 程序校验
-
-每个输入候选恰好一个结果；缺失补 `unresolved`，重复/额外记录并忽略；枚举非法降级；
-`claim_value` 缺 subject/predicate、证据无法定位、字段超长 → `unresolved`（原文保留，不截断）；
-`predicate` 含方向/关系词时用 subject 规范化替换并记 `relationship_leak`，原值入 `predicate_raw`。
-
-## 7. N3 数字关系（`n3-v1`）
-
-### 输入
-
-N0 + N1 + N2 输出。N2 `status` 不是 `success`/`partial` 时返回 `blocked`，不调用模型。
-只对 N2 `claim_value` 且 `resolved` 的候选建立数值关系；`context_only` 可作期间/基准上下文；
-`non_claim` 不得引用。
-
-### 输出
-
-`relationships[]`：`relationship_id`（程序生成）、`relationship_type`、`value_candidate_ids`、
-`baseline_candidate_ids`、`period_candidate_ids`、`comparison_period_candidate_ids`、
-`denominator_candidate_ids`、`related_expression_ids`、`direction`、`comparison`、
-`seasonality`、`revision`、`period_raw`、`evidence_sentence_ids`、`evidence_quote`、
-`evidence_start/end/field`、`status`、`reason`、`deviations`。
-另有 `candidate_dispositions[]`（每个 claim_value 的 assigned/ambiguous/unresolved）与统计。
-
-- `relationship_type`：`level` / `change` / `comparison` / `range` / `revision` / `share` /
-  `rate` / `unknown`。
-- `comparison` / `seasonality` / `revision` 严格使用 r2-v4 枚举。
-
-### 程序校验与守卫
-
-ID/枚举/证据校验；`value_candidate_ids` 为空的关系丢弃；`non_claim` 引用拒绝；
-每个 claim_value 必须有处置；比较口径只在原文出现对应措辞且紧邻该数值时接受，否则改为
-`unknown`/`level` 并记偏差（`not_stated` / `attached_to_other_candidate`）；
-`change` 不得用 `comparison=level`；`period_raw` 必须能回到原文。
+`status`：N2 未成功 → `blocked`；覆盖不完整 → `failed`；所有候选为 claim_accepted/context_only/
+non_claim/used_as_context 且 N4 `success` → `success`；否则 `partial`（缺失期间/比较口径等偏差
+在 Claim 中可见，不伪装成完整成功）。
 
 ## 8. 留存与缓存
 
 `pipeline_store.py` 独立、追加式 SQLite（默认 `data/claim-pipeline/node_runs.sqlite3`）：
 article_id、document_id、content_hash、node_name、node_version、input_hash、output_hash、
-execution_status、executed_at、params_json、tools_json、output_json。
-`INSERT OR IGNORE`；失败运行带状态标记，不占成功键。
+execution_status、executed_at、params_json、tools_json、output_json。`INSERT OR IGNORE`；
+失败运行带状态标记，不占成功键。
 
-- N2 输入哈希包含 N0/N1 哈希、节点/Prompt/Schema 哈希、规则源码哈希（`RULESET`）、模型与参数。
-- N3 输入哈希包含 N2 稳定哈希（排除 `seconds`/`batches`）、规则源码哈希（`RULESET`）、
-  模型与参数；N2 内容或规则变化自动使 N3 失效。
-- 规则源码哈希（`RULESET`）和 Prompt/Schema 哈希进入各自输入键。
+- N2/N3 输入哈希含上游哈希、Prompt/Schema 哈希、规则源码哈希、模型与参数。
+- N4 输入哈希含 N0–N3 稳定哈希、N4 版本、规则源码哈希、`units.py` 源码哈希。
+- N5 输入哈希含 N0–N4 稳定哈希、N5 版本、r2-v4 版本与契约源码哈希、规则源码哈希。
+- 时间/耗时/重试次数不进入稳定哈希；N3 依赖 N2 稳定哈希，N5 依赖 N4 稳定哈希。
 
 ## 9. Microsoft Recognizers-Text
 
-第八批实测（PyPI 1.0.2a2，需 `emoji==1.7.0`）：无 datetime 包、无 percentage/percentage-point
+第八批实测（1.0.2a2，需 `emoji==1.7.0`）：无 datetime 包、无 percentage/percentage-point
 识别器；`$92.8bn` 丢失数量级，`USD 12.8 billion` 丢失币种，`FY2025` 无结果；36 个样本上规则
 覆盖 36/36、识别器 33/36、组合新增 0。**不引入**；自定义规则为唯一运行路径。
-对比脚本：`tools/eval_numeric_tools.py`。
 
 ## 10. 与 r2-v4、v7、G6 的关系
 
-- N0–N3 不改动 `claim_contract.py`（r2-v4）、`verify.py`（r2-v2）、`units.py`、生产提示词、
-  评分与门禁。
-- N4/N5 未实现：当前不产出 r2-v4 Claim，也不能声称完成文章到 Claim 的完整链路。
+- N0–N5 不改动 `claim_contract.py`（r2-v4）、`verify.py`（r2-v2）、生产提示词、评分与门禁。
+- 第十批对 `units.py` 只做了追加式 count/duration 单位族补充（`5 million vehicles` 的直接阻断），
+  没有修改既有单位、换算或核验规则。
+- N5 产出的是 r2-v4 影子 Claim，尚未进入生产 Claim 表、日报或 `verify.py`；不是已核实事实。
 - v7 未启用；生产仍是 v6；G6 未批准。
 
 ## 11. 已知限制
 
 1. 输入是标题 + RSS 正文，不是全文。
-2. N2/N3 是模型判断；程序只保证引用、枚举、覆盖与比较口径的确定性守卫。
-3. 比较口径守卫基于措辞与最近候选，覆盖不了所有自然语言变体；无法判断时保留 `unknown`。
-4. N1 括号数字标 `ambiguous`；N3 不把 ambiguous 当确认数值。
-5. 修订/季节调整只接受原文明确措辞；模型可能漏记，统计中体现为 `unknown`。
-6. 模型指纹未知（llama.cpp 不提供 GGUF 内容哈希）；`seed`/`top_p` 未发送。
-7. N2 精确率/语义准确率没有全量人工基准；覆盖率不是语义准确率。
+2. N2/N3 是模型判断；程序只保证引用、枚举、覆盖、比较口径与单位结构的确定性守卫。
+3. 已处理的 BEA 文章 N3 没有关联期间，N4/N5 保持 `period_missing`，没有补造；因此 N4/N5 为 partial。
+4. 修订/季节调整只接受原文明确措辞；模型漏记时保持 unknown。
+5. 标题单独证据被拒绝；固定夹具中缺少 N2 留存的文章不会产生 Claim。
+6. N2/N3 语义准确率没有全量人工基准；候选覆盖率、处置完整性与 Claim 数量都不是语义准确率。
+7. v7 与 G6 未推进。
 
 ## 12. 运行
 
 ```
 python tools/run_n1.py --limit 50
 python tools/run_n2_n3.py --limit 50 --n3-limit 15
-python tools/run_n2_n3.py --fixture data/claim-pipeline/n2n3-fixtures.json
-python tools/run_n2.py --limit 20
-python tools/run_n3.py --limit 20
+python tools/run_n4_n5.py --limit 50
+python tools/run_n4_n5.py --fixture data/claim-pipeline/n2n3-fixtures.json --limit 2
+python tools/run_n4.py --limit 20
+python tools/run_n5.py --limit 20
 python tools/eval_numeric_tools.py
 ```
 
-`run_n2_n3.py` 先跑 N2，再对前 N 篇有 claim_value 的文章跑 N3；复用已留存结果；
-输出 `data/claim-pipeline/<时间戳>/`（`n2n3.jsonl`、`summary.json`、`summary.md`）。
-不写生产库、不改日报、不改生产分析器。
+N4/N5 工具默认复用已留存 N0–N3；N2/N3 缺失时记录 missing，不调用模型。
+输出 `data/claim-pipeline/<时间戳>/`（JSONL、summary.json、summary.md），不写生产库。
