@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 RULES_VERSION = 'r1-v1'
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TITLE_WINDOW_HOURS = 72
 
 # Relations an article can have to the event it was filed under.
@@ -143,6 +143,11 @@ def _stable_id(prefix, *parts):
 def _plain(value):
     text = unescape(re.sub(r'<[^>]+>', ' ', str(value or '')))
     return re.sub(r'\s+', ' ', text).strip()
+
+
+def stable_id(prefix, *parts):
+    """Public alias: other modules build ids the same way so they cannot drift."""
+    return _stable_id(prefix, *parts)
 
 
 def canonical_url(url):
@@ -453,7 +458,9 @@ class UnifiedStore:
 
     def init(self):
         with self.connect() as conn:
+            from .linking import ENTITY_SCHEMA   # local import: linking imports this module
             conn.executescript(SCHEMA)
+            conn.executescript(ENTITY_SCHEMA)
             current = conn.execute('PRAGMA user_version').fetchone()[0]
             if current < SCHEMA_VERSION:
                 conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
