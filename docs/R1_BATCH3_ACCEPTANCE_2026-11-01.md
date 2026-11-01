@@ -150,3 +150,39 @@ python -m opportunity_radar.unified_main lineage
 | 谱系字段进入 `sources` 登记表 | 独立的 `config/source_lineage.csv` | `sources.local.csv` 是本机文件且被 gitignore；谱系需要版本控制与 diff |
 | `multi_source_coverage` 改为要求 ≥2 个独立来源族 | 已实现判定逻辑，但未接入证据状态机 | 证据状态机属于评分链路，本批按要求不改 |
 | 转载/联合发布识别 | 字段与计数规则已就绪，数据为空 | 没有可核实的转载证据时不填，避免虚构 |
+
+---
+
+## 8. 生产部署记录（2026-11-01）
+
+### 8.1 备份
+
+`data/archive/r1-batch3-deploy-2026-11-01/`，含 `SHA256SUMS.txt`：
+
+| 备份 | SHA-256 | 字节 | 表数 | `user_version` |
+|---|---|---|---|---|
+| `opportunity_radar.sqlite3.bak` | `f4bb12caa65d8539…` | 2,654,208 | 23 | 2 |
+| `opportunity_radar_ingest.sqlite3.bak` | `4437346ac5e1aa32…` | 5,357,568 | 18 | 2 |
+
+### 8.2 执行
+
+| 命令 | 结果 |
+|---|---|
+| `unified_main lineage`（生产库） | 应用 15 个源、更新 220 条证据；未登记来源 0 |
+| 摄取库兼容迁移 | `evidences` 补 `lineage_basis`、`syndication_group` 两列，`user_version` 2 → 3 |
+| 重跑 `lineage` | 更新 0 条（幂等） |
+
+### 8.3 部署后状态
+
+| 项 | 生产库 | 摄取库 |
+|---|---|---|
+| SHA-256 | `ab199788cea710a8…` | `08124ab9a2838c2d…` |
+| 表数 / `user_version` | 23 / **3** | 18 / **3** |
+| `integrity_check` | ok | ok |
+
+证据按来源族：ycombinator-hn 109、openai 24、simscale 17、nyt 17、paraview 15、bbc 14、
+bea 8、nvidia 7、precice 5、ons 3、federal-reserve 1。
+
+证据按独立性：unknown 170、independent_secondary 31、independent_primary 19。
+
+业务表 articles 117 / analyses 108 / runs 14 / deliveries 26 与部署前一致。
