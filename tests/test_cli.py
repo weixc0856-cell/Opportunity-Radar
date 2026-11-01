@@ -1,6 +1,6 @@
 import tempfile,unittest
 from pathlib import Path
-from opportunity_radar.cli import _validate_report, _atomic_write, _write, send_decision, run_status
+from opportunity_radar.cli import _validate_report, _atomic_write, _write, send_decision, run_status, dry_run_status
 
 class Tests(unittest.TestCase):
  def test_validate_accepts_complete_report(self):
@@ -24,6 +24,10 @@ class Tests(unittest.TestCase):
    self.assertRegex(Path(path).name,r'^\d{4}-\d{2}-\d{2}-\d{6}\.txt$')
    self.assertTrue(Path(str(path).replace('.txt','.html')).exists())
    self.assertEqual(len(h),16)
+ def test_dry_run_status_never_hides_failures(self):
+  self.assertEqual(dry_run_status(0,2),'analysis_failed')
+  self.assertEqual(dry_run_status(3,1),'partial_failed')
+  self.assertEqual(dry_run_status(3,0),'dry_run')
  def test_send_decision_separates_failure_from_no_content(self):
   self.assertEqual(send_decision(0,0,2,False),'analysis_failed')
   self.assertEqual(send_decision(0,0,0,False),'no_new_content')
@@ -197,3 +201,32 @@ class CallSiteTests(unittest.TestCase):
      checked+=1
      self.assertIn(kw.arg,params,f'unknown kwarg {kw.arg!r} at line {node.lineno}')
   self.assertGreater(checked,0,'no evaluate() call sites found')
+
+class PublicationGateSourceTests(unittest.TestCase):
+ def test_hold_status_reports_nothing_analysed_as_analysis_failed(self):
+  from opportunity_radar.cli import hold_status
+  self.assertEqual(hold_status(0,3),'analysis_failed')
+  self.assertEqual(hold_status(2,3),'partial_failed')
+ def test_failure_cause_and_attempts_come_from_the_exception(self):
+  from opportunity_radar.analyzer import ModelCallError
+  from opportunity_radar.cli import failure_cause, failure_attempts
+  exc=ModelCallError('connect_reset','reset',attempts=3)
+  self.assertEqual((failure_cause(exc),failure_attempts(exc)),('connect_reset',3))
+  self.assertEqual((failure_cause(ValueError('x')),failure_attempts(ValueError('x'))),('unknown',None))
+ def test_the_hold_gate_runs_before_every_send_path(self):
+  from pathlib import Path as _Path
+  body=_Path('opportunity_radar/cli.py').read_text(encoding='utf-8')
+  body=body[body.index('def main('):]
+  hold=body.index('if pub==publication.HOLD:')
+  for later in ('decision=send_decision(','send_email_detailed(','store.delivery('):
+   self.assertLess(hold,body.index(later),later)
+ def test_no_failure_path_sends_an_alert_email(self):
+  from pathlib import Path as _Path
+  body=_Path('opportunity_radar/cli.py').read_text(encoding='utf-8')
+  self.assertEqual(body.count('_alert('),1,b'only the definition may remain')
+ def test_a_report_without_coverage_disclosure_is_rejected(self):
+  stats={'counts':{'priority':0,'watch':1,'filtered':0},'coverage':0.4,'analyzed':2,'queued':5}
+  items=[{'status':'watch'}]
+  with self.assertRaises(ValueError):
+   _validate_report('subject','【执行摘要】x','<html>ok</html>',items=items,stats=stats)
+

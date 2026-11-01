@@ -1,0 +1,201 @@
+{
+  "baseline": "production",
+  "created_at": "2026-10-26T14:27:54+08:00",
+  "git_commit": "de6fc95c90f055b37a4d17d48b13aad5069fb705",
+  "git_dirty": true,
+  "entry": "deploy/windows/run-digest.ps1",
+  "prompt_version": "6",
+  "prompt_hash": "b9b5666851ad",
+  "model": "Qwen3-30B-A3B-Instruct-2507-Q4_K_M",
+  "rules_version": "v5",
+  "run": {
+    "run_id": 8,
+    "started_at": "2026-10-26T06:21:47.345861+00:00",
+    "finished_at": "2026-10-26T06:27:08.641165+00:00",
+    "status": "success",
+    "article_count": 20,
+    "analyzed_count": 6,
+    "error_count": 0,
+    "message": "",
+    "report_path": "reports\\archive\\2026\\10\\26\\2026-10-26-142702.txt",
+    "report_hash": "f47b98ab2ff858ef",
+    "stage": "done",
+    "exit_code": 0,
+    "pid": 26704
+  },
+  "deliveries": {
+    "sent": 3
+  },
+  "analyses_count": 6,
+  "fact_totals": {
+    "facts": 23,
+    "located": 23,
+    "unlocated": 0,
+    "deviations": 0
+  },
+  "analyses": [
+    {
+      "title": "Ask HN: How do drone companies conduct tests internally?",
+      "source_name": "Hacker News Ask",
+      "analyzed_at": "2026-10-26T06:23:16.416815+00:00",
+      "schema_version": 5,
+      "relevance": "adjacent",
+      "facts": 5,
+      "located": 5,
+      "unlocated": 0,
+      "inferences": 1,
+      "gaps": 3,
+      "actions": 3,
+      "action_kinds": [
+        "monitor_trend",
+        "verify_fact",
+        "verify_fact"
+      ],
+      "schema_deviations": [],
+      "status": "filtered",
+      "score": 43,
+      "lane": "B",
+      "evidence_rank": "E1",
+      "filter_reason": "low_score"
+    },
+    {
+      "title": "Show HN: Proc-CLI – An agent-friendly CLI tool for process and port management",
+      "source_name": "Hacker News Show",
+      "analyzed_at": "2026-10-26T06:24:11.316721+00:00",
+      "schema_version": 5,
+      "relevance": "adjacent",
+      "facts": 5,
+      "located": 5,
+      "unlocated": 0,
+      "inferences": 2,
+      "gaps": 3,
+      "actions": 3,
+      "action_kinds": [
+        "verify_fact",
+        "monitor_trend",
+        "monitor_trend"
+      ],
+      "schema_deviations": [],
+      "status": "filtered",
+      "score": 34,
+      "lane": "B",
+      "evidence_rank": "E1",
+      "filter_reason": "low_score"
+    },
+    {
+      "title": "I love learning new technologies, solving problems, and turning ideas",
+      "source_name": "OpenAI Developer Community",
+      "analyzed_at": "2026-10-26T06:24:50.433007+00:00",
+      "schema_version": 5,
+      "relevance": "none",
+      "facts": 3,
+      "located": 3,
+      "unlocated": 0,
+      "inferences": 1,
+      "gaps": 2,
+      "actions": 2,
+      "action_kinds": [
+        "verify_fact",
+        "monitor_trend"
+      ],
+      "schema_deviations": [],
+      "status": "filtered",
+      "score": 33,
+      "lane": "B",
+      "evidence_rank": "E2",
+      "filter_reason": "no_business_signal"
+    },
+    {
+      "title": "What is the Budget and what could be in it?",
+      "source_name": "BBC Business",
+      "analyzed_at": "2026-10-26T06:25:24.978302+00:00",
+      "schema_version": 5,
+      "relevance": "core",
+      "facts": 1,
+      "located": 1,
+      "unlocated": 0,
+      "inferences": 1,
+      "gaps": 2,
+      "actions": 2,
+      "action_kinds": [
+        "monitor_trend",
+        "monitor_trend"
+      ],
+      "schema_deviations": [],
+      "status": "watch",
+      "score": 69,
+      "lane": "A",
+      "evidence_rank": "E1",
+      "filter_reason": ""
+    },
+    {
+      "title": "Open-source crypto trading terminal in Rust and WebAssembly",
+      "source_name": "Hacker News Ask",
+      "analyzed_at": "2026-10-26T06:26:16.694605+00:00",
+      "schema_version": 5,
+      "relevance": "adjacent",
+      "facts": 4,
+      "located": 4,
+      "unlocated": 0,
+      "inferences": 2,
+      "gaps": 3,
+      "actions": 3,
+      "action_kinds": [
+        "verify_fact",
+        "monitor_trend",
+        "verify_fact"
+      ],
+      "schema_deviations": [],
+      "status": "filtered",
+      "score": 24,
+      "lane": "B",
+      "evidence_rank": "E1",
+      "filter_reason": "low_score"
+    },
+    {
+      "title": "Show HN: How religions evolved? Charts, Maps, Citations",
+      "source_name": "Hacker News Show",
+      "analyzed_at": "2026-10-26T06:27:02.814463+00:00",
+      "schema_version": 5,
+      "relevance": "adjacent",
+      "facts": 5,
+      "located": 5,
+      "unlocated": 0,
+      "inferences": 2,
+      "gaps": 2,
+      "actions": 2,
+      "action_kinds": [
+        "verify_fact",
+        "monitor_trend"
+      ],
+      "schema_deviations": [],
+      "status": "filtered",
+      "score": 26,
+      "lane": "B",
+      "evidence_rank": "E1",
+      "filter_reason": "no_business_signal"
+    }
+  ],
+  "artifacts": {
+    "database": "opportunity_radar.sqlite3",
+    "logs": [
+      "opportunity-radar.log",
+      "scheduler-run.log",
+      "cli-run.log",
+      "cli-run.err.log"
+    ],
+    "reports": [
+      "latest-digest.html",
+      "latest-digest.txt",
+      "archive/2026/10/26/2026-10-26-142702.html",
+      "archive/2026/10/26/2026-10-26-142702.txt",
+      "archive/2026/10/26/2026-10-26-142702.items.json",
+      "archive/2026/10/26/2026-10-26-142702.manifest.json"
+    ]
+  },
+  "notes": [
+    "Real production entry run on the live database and report directory.",
+    "Recipient addresses are recorded only as counts; the database snapshot is local evidence.",
+    "Database, logs and reports are gitignored; verification.json and MANIFEST.json are the tracked record."
+  ]
+}

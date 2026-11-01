@@ -41,3 +41,27 @@ class Tests(unittest.TestCase):
  def test_mail_config_flags_invalid_recipient_among_many(self):
   issues=' '.join(settings(email_to='a@163.com, not-an-email').validate_mail())
   self.assertIn('OR_EMAIL_TO contains an invalid address',issues)
+
+class PublicationSettingsTests(unittest.TestCase):
+ def test_defaults_match_the_approved_thresholds(self):
+  s=settings()
+  self.assertEqual((s.publish_min_coverage,s.publish_hold_below),(0.8,0.5))
+  self.assertEqual((s.llm_connect_retries,s.llm_timeout_retries),(3,1))
+ def test_ratio_is_clamped_and_junk_falls_back(self):
+  from opportunity_radar.config import _ratio
+  self.assertEqual(_ratio('0.9'),0.9); self.assertEqual(_ratio('1.5'),1.0)
+  self.assertEqual(_ratio('-1'),0.0); self.assertEqual(_ratio('abc'),1.0)
+  self.assertEqual(_ratio('nan'),1.0)
+ def test_backoff_parsing_ignores_junk(self):
+  from opportunity_radar.config import parse_backoff
+  self.assertEqual(parse_backoff('1,2,3'),(1.0,2.0,3.0))
+  self.assertEqual(parse_backoff('x,4'),(4.0,))
+  self.assertEqual(parse_backoff(''),(2.0,5.0,10.0))
+ def test_environment_overrides_are_read(self):
+  import os
+  from unittest import mock
+  with mock.patch.dict(os.environ,{'OR_PUBLISH_MIN_COVERAGE':'0.9','OR_PUBLISH_HOLD_BELOW':'0.6',
+                                   'OR_LLM_CONNECT_RETRIES':'2'},clear=False):
+   s=Settings.from_env()
+  self.assertEqual((s.publish_min_coverage,s.publish_hold_below,s.llm_connect_retries),(0.9,0.6,2))
+

@@ -8,6 +8,17 @@ class Tests(unittest.TestCase):
    s=Store(str(Path(d)/'test.sqlite3'));rid=s.start_run();s.finish_run(rid,'success',2,1,1)
    with s.connect() as c:r=c.execute('SELECT status,article_count FROM runs WHERE run_id=?',(rid,)).fetchone()
    self.assertEqual(r['status'],'success');self.assertEqual(r['article_count'],2)
+ def test_analysis_failures_are_recorded_per_run(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'test.sqlite3'));rid=s.start_run()
+   s.record_analysis_failure(rid,'k1','https://example.invalid/a','analyze','ValueError: Invalid category')
+   s.record_analysis_failure(rid,'k2','https://example.invalid/b','analyze','TimeoutError')
+   other=s.start_run();s.record_analysis_failure(other,'k3','https://example.invalid/c','analyze','X')
+   rows=s.analysis_failures(rid)
+   self.assertEqual([r['url'] for r in rows],['https://example.invalid/a','https://example.invalid/b'])
+   self.assertTrue(all(r['run_id']==rid for r in rows))
+   self.assertEqual(len(s.analysis_failures()),3)
+   with s.connect() as c: self.assertEqual(c.execute('SELECT COUNT(*) FROM analyses').fetchone()[0],0)
  def test_save_article_reports_whether_new(self):
   with tempfile.TemporaryDirectory() as d:
    s=Store(str(Path(d)/'test.sqlite3'))
@@ -145,3 +156,50 @@ class ReadOnlyStoreTests(unittest.TestCase):
    with self.assertRaises(Exception):
     with ro.connect() as c: c.execute('SELECT 1 FROM analyses')
    self.assertFalse(path.exists())
+
+class PublicationPersistenceTests(unittest.TestCase):
+ def store(self,d): return Store(str(Path(d)/'test.sqlite3'))
+ def test_finish_run_records_the_publication_verdict(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=self.store(d);rid=s.start_run()
+   s.finish_run(rid,'partial_failed',10,2,3,'held',exit_code=1,publication_status='HOLD',
+                coverage=0.4,failed_causes={'connect_refused':3},not_attempted=5)
+   r=s.latest_run()
+   self.assertEqual(r['publication_status'],'HOLD');self.assertAlmostEqual(r['coverage'],0.4)
+   self.assertEqual(r['not_attempted'],5);self.assertEqual(s.parse_causes(r),{'connect_refused':3})
+ def test_calls_without_publication_fields_keep_working(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=self.store(d);rid=s.start_run();s.finish_run(rid,'success',1,1,0)
+   r=s.latest_run()
+   self.assertIsNone(r['publication_status']);self.assertIsNone(r['coverage']);self.assertEqual(s.parse_causes(r),{})
+ def test_failure_rows_store_cause_and_attempts(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=self.store(d);rid=s.start_run()
+   s.record_analysis_failure(rid,'k','https://example.invalid/a','analyze','boom',cause='timeout',attempts=2)
+   row=s.analysis_failures(rid)[0]
+   self.assertEqual((row['cause'],row['attempts']),('timeout',2))
+ def test_an_older_database_is_migrated_additively(self):
+  """A pre-R0 database keeps every row and gains the new columns."""
+  import sqlite3
+  with tempfile.TemporaryDirectory() as d:
+   path=Path(d)/'old.sqlite3'
+   c=sqlite3.connect(path)
+   c.executescript("""CREATE TABLE runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL,
+      finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0,
+      error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT, stage TEXT,
+      exit_code INTEGER, pid INTEGER);
+      CREATE TABLE analysis_failures(failure_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, article_key TEXT,
+      url TEXT, stage TEXT, error TEXT, created_at TEXT NOT NULL);
+      INSERT INTO runs(started_at,status,article_count,analyzed_count,error_count) VALUES('t','success',5,4,1);
+      INSERT INTO analysis_failures(run_id,article_key,url,stage,error,created_at) VALUES(1,'k','u','analyze','e','t');""")
+   c.commit();c.close()
+   s=Store(str(path))                      # opening it migrates in place
+   r=s.latest_run()
+   self.assertEqual((r['run_id'],r['status'],r['analyzed_count']),(1,'success',4))
+   self.assertIsNone(r['publication_status'])
+   row=s.analysis_failures(1)[0]
+   self.assertEqual((row['error'],row['cause']),( 'e',None))
+   probe=sqlite3.connect(path)
+   try: self.assertEqual(probe.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+   finally: probe.close()
+

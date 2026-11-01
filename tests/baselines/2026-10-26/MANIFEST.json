@@ -1,0 +1,63 @@
+{
+  "created_at": "2026-10-26T13:29:07.637120+08:00",
+  "git_commit": "03b0cb4f564c23e3762fdd9577aea394e50768b1",
+  "git_dirty": true,
+  "files": [
+    {
+      "path": "reports/archive/2026/10/26/2026-10-26-132850.html",
+      "bytes": 14080,
+      "sha256": "dd30a8bf5c46bd1fb0f55a0a819f8baa7e74cf2b13c2e42603ed0f4ded831f94"
+    },
+    {
+      "path": "reports/archive/2026/10/26/2026-10-26-132850.items.json",
+      "bytes": 27532,
+      "sha256": "d80992330fbbc81fbc1eeaf15a1e8d7cb62a1a8bdfb885c066cbc873a95b772d"
+    },
+    {
+      "path": "reports/archive/2026/10/26/2026-10-26-132850.manifest.json",
+      "bytes": 2099,
+      "sha256": "04e205fa8dde12deb206e5595851f977e6bf40b69ae74e6de267ba20821c61ec"
+    },
+    {
+      "path": "reports/archive/2026/10/26/2026-10-26-132850.txt",
+      "bytes": 3778,
+      "sha256": "d286a90074c77d78a32529a12413906f4f7316a25ebeff90fd4aa12e36066c22"
+    },
+    {
+      "path": "reports/latest-digest.html",
+      "bytes": 14080,
+      "sha256": "dd30a8bf5c46bd1fb0f55a0a819f8baa7e74cf2b13c2e42603ed0f4ded831f94"
+    },
+    {
+      "path": "reports/latest-digest.txt",
+      "bytes": 3778,
+      "sha256": "d286a90074c77d78a32529a12413906f4f7316a25ebeff90fd4aa12e36066c22"
+    },
+    {
+      "path": "run.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "run.sqlite3",
+      "bytes": 106496,
+      "sha256": "4463b5fee3254096b56e92c95389875b4328be3cf0139dbaec9aab36a3d7f458"
+    },
+    {
+      "path": "stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "stdout.txt",
+      "bytes": 3861,
+      "sha256": "24fe893a50da53185e1c91e65244bc7943eaefcf79cd2a83087f9885c73db20b"
+    },
+    {
+      "path": "verification.json",
+      "bytes": 5170,
+      "sha256": "112a865a361747c65396c1750f4171e27bf727e9d9060c235dc2028c674bbb4e"
+    }
+  ],
+  "note": "Local verification baseline. Article text is feed-supplied excerpts, not full articles; the database and reports are gitignored by tests/baselines/.gitignore."
+}

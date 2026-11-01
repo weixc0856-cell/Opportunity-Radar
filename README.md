@@ -92,6 +92,7 @@ py -3 -m opportunity_radar.source_audit --check-urls
 .\.venv\Scripts\python.exe -m opportunity_radar.acceptance
 ```
 逐项检查配置、来源审计、FreshRSS、本地模型、SQLite、报告、邮件配置和 Windows 计划任务；`--send-mail` 额外发送测试信，`--json` 输出机器可读结果。关键项失败时返回非零。
+- 真实流程验证：`.\.venv\Scripts\python.exe tools\e2e_verify.py --limit 3`（可加 `--baseline-dir tests\baselines\<日期>`）。它把采集、模型、SQLite 与报告串成两次运行：一次正常流程，一次注入非法分类的故障流程；失败必须表现为非零退出、`analysis_failed` 状态和逐条失败记录，不能渲染成"正常的空日报"。成功运行的数据库、日志与报告可打包到 `tests/baselines/`（本地证据，数据库与报告不入库）。详见 `docs/E2E_VERIFICATION.md`。
 
 ## 管理 API 契约
 - 成功：`{"ok": true, "request_id": "...", ...}`；失败：`{"ok": false, "error": {"code": "...", "message": "...", "details": []}, "request_id": "..."}`。

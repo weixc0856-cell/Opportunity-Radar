@@ -17,6 +17,9 @@ def funnel(stats):
     alias={'fetched':stats.get('fetched',stats.get('article_count',0)),'new':stats.get('new',0),'updated':stats.get('updated',0),
            'queued':stats.get('queued',stats.get('analyzed_count',0)),'analyzed':stats.get('analyzed',stats.get('analyzed_count',0))}
     rows=[(FUNNEL_LABELS[k],alias[k]) for k in FUNNEL_STEPS]
+    if stats.get('not_attempted'):
+        # A breaker stops the run mid-way; hiding those articles would make the funnel add up.
+        rows.append(('熔断未尝试',stats.get('not_attempted',0)))
     rows.append(('持续观察',counts.get('watch',0))); rows.append(('优先验证',counts.get('priority',0)))
     return rows
 

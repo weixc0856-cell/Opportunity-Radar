@@ -8,7 +8,7 @@ from .evidence import (LEGACY_LEVEL, content_basis, content_basis_estimate, stat
 
 # Weights, thresholds and the promotion gate are per lane; config/scoring.toml can
 # override each one, and the CLI passes that config in so an edit changes the report.
-RULES_VERSION='v4'
+RULES_VERSION='v5'
 DEFAULT_LANE_WEIGHTS={
  'A':{'importance':25,'source_reliability':20,'evidence_completeness':20,'novelty':15,'relevance':10,'timeliness':10},
  'B':{'pain_severity':20,'buyer_clarity':15,'payment_evidence':25,'corroboration':15,'feasibility':10,'solution_gap':10,'novelty':5},
@@ -114,7 +114,13 @@ def _completeness(rank):
     return {'E2':5,'E1':3}.get(rank,1)
 
 
+RELEVANCE_SCORES={'core':5,'adjacent':4,'peripheral':3,'none':2}
+
 def _relevance(a):
+    # v5 states relevance as a coarse enum; v4 archives keep the numeric field and are
+    # scored on it exactly as before. An unknown enum never falls through to a high score.
+    value=str(a.get('relevance') or '').strip().lower()
+    if value in RELEVANCE_SCORES: return RELEVANCE_SCORES[value]
     v=a.get('relevance_score')
     if not isinstance(v,(int,float)): return 1
     return 5 if v>=80 else 4 if v>=60 else 3 if v>=40 else 2

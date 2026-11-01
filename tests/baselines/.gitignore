@@ -1,0 +1,8 @@
+# Baseline artifacts are local evidence, not repository content: they contain a SQLite
+# database, run logs and third-party feed excerpts. The project rule is that databases
+# and reports are never committed. The manifest and the verification summary are kept.
+*.sqlite3
+*.log
+stdout.txt
+stderr.txt
+reports/

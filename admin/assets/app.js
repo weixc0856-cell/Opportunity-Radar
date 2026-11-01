@@ -84,7 +84,12 @@ async function refreshAll() {
     $('s-sources').textContent = s.enabled_sources + ' 个已启用 / ' + s.source_count + ' 个登记';
     $('s-report').textContent = s.report_exists ? s.report_mtime : '尚无真实日报';
     const lr = s.latest_run;
-    $('s-run').textContent = lr ? `#${lr.run_id} · ${lr.status}${lr.stage ? ' · ' + lr.stage : ''} · ${lr.started_at}` : '尚无运行记录';
+    const pub = s.publication || {};
+    const pubText = pub.status
+      ? ` · 发布 ${pub.status}${pub.coverage != null ? ' · 覆盖率 ' + Math.round(pub.coverage * 100) + '%' : ''}`
+        + (pub.not_attempted ? ` · 未尝试 ${pub.not_attempted}` : '')
+      : '';
+    $('s-run').textContent = lr ? `#${lr.run_id} · ${lr.status}${lr.stage ? ' · ' + lr.stage : ''} · ${lr.started_at}${pubText}` : '尚无运行记录';
     $('run-state').textContent = s.run.running ? '运行中' : '空闲';
     $('smtp-host').value = s.smtp_host || '未配置';
     $('smtp-mode').value = (s.smtp_port || '—') + ' / ' + (s.smtp_security || '未配置');

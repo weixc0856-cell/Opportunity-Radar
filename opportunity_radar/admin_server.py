@@ -265,7 +265,13 @@ class Handler(BaseHTTPRequestHandler):
                           'report_dir': str(rd),
                           'run': {'running': running, 'pid': RUN_PROCESS.pid if running else None, 'started_at': RUN_STARTED or None,
                                   'just_finished': bool(previous and not RUN_PROCESS)},
-                          'latest_run': latest, 'deliveries': store.latest_deliveries(), 'scheduler': scheduler_status(),
+                          'latest_run': latest,
+                          'publication': ({'status': latest.get('publication_status'),
+                                           'coverage': latest.get('coverage'),
+                                           'not_attempted': latest.get('not_attempted'),
+                                           'failed_causes': Store.parse_causes(latest)}
+                                          if latest else None),
+                          'deliveries': store.latest_deliveries(), 'scheduler': scheduler_status(),
                           'smtp_host': s.smtp_host, 'smtp_port': s.smtp_port, 'email_from': s.email_from,
                           'smtp_security': s.smtp_security or ('starttls' if s.smtp_starttls else 'none'),
                           'log_tail': redact(tail(s.log_path, 30))})

@@ -1,0 +1,1436 @@
+{
+  "generated_at": "2026-11-01",
+  "scope": "fixture 集合自洽性与文档一致性；不验证连接器行为",
+  "fixture_count": 25,
+  "checks": [
+    {
+      "fixture_id": "EIA-01",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "no_key.json 163B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C2 观测来源可回溯",
+      "status": "PASS",
+      "detail": "引用 data/eia-sample-2026-11-01/no_key.json；真实请求记录状态 403，样本声明 403"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 403，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "auth 期望状态 [401, 403]，实际 403"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "EIA-01",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "metadata_route_404.json 33B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C2 观测来源可回溯",
+      "status": "PASS",
+      "detail": "引用 data/eia-sample-2026-11-01/metadata_route_404.json；真实请求记录状态 404，样本声明 404"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 404，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "not_found 期望状态 [404]，实际 404"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "EIA-03",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "invalid_facet.json 522B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C2 观测来源可回溯",
+      "status": "PASS",
+      "detail": "引用 data/eia-sample-2026-11-01/invalid_facet.json；真实请求记录状态 200，样本声明 200"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "empty_result 期望状态 [200]，实际 200"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "total='0'，数据行 0"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "拒绝类失败：响应体 0 行，期望输出 0 行（拒绝后为 0，属连接器行为，见 A 组）"
+    },
+    {
+      "fixture_id": "EIA-07",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "paging_offset0.json 3249B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C2 观测来源可回溯",
+      "status": "PASS",
+      "detail": "引用 data/eia-sample-2026-11-01/paging_offset0.json；真实请求记录状态 200，样本声明 200"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C7 场景语义",
+      "status": "NOT_VERIFIED",
+      "detail": "该样本无场景缺陷断言（正向样本）"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 10 行，声明输出 10 行"
+    },
+    {
+      "fixture_id": "EIA-08",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "annual_2026_check.json 1010B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C2 观测来源可回溯",
+      "status": "PASS",
+      "detail": "引用 data/eia-sample-2026-11-01/annual_2026_check.json；真实请求记录状态 200，样本声明 200"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C7 场景语义",
+      "status": "NOT_VERIFIED",
+      "detail": "该样本无场景缺陷断言（正向样本）"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 2 行，声明输出 2 行"
+    },
+    {
+      "fixture_id": "EIA-15",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_auth_invalid_key.json 172B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_auth_invalid_key.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 401，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "auth 期望状态 [401, 403]，实际 401"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "low（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "EIA-02",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_rate_limited_429.json 93B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_rate_limited_429.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 429，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "rate_limit 期望状态 [429]，实际 429"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "low（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "EIA-04",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_server_error_500.html 100B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_server_error_500.html 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 500，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "server 期望状态 [500, 502, 503, 504]，实际 500"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "low（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "EIA-05",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_timeout.descriptor.json 140B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_timeout.descriptor.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "无响应体描述文件"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "timeout 期望状态 None，实际 None"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "n/a（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "描述文件声明超时异常"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "EIA-06",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_missing_units.json 1354B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_missing_units.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "schema 期望状态 [200]，实际 200"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "medium（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "所有行缺 generation-units"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "拒绝类失败：响应体 2 行，期望输出 0 行（拒绝后为 0，属连接器行为，见 A 组）"
+    },
+    {
+      "fixture_id": "EIA-09",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_generation_numeric.json 1109B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_generation_numeric.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "medium（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "generation 类型确实偏离字符串"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 1 行，声明输出 1 行"
+    },
+    {
+      "fixture_id": "EIA-10",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_missing_total.json 1093B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_missing_total.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "schema 期望状态 [200]，实际 200"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "medium（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "response.total 缺失"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "拒绝类失败：响应体 1 行，期望输出 0 行（拒绝后为 0，属连接器行为，见 A 组）"
+    },
+    {
+      "fixture_id": "EIA-11",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_incomplete_pagination.json 3442B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_incomplete_pagination.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "truncation 期望状态 [200]，实际 200"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "medium（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "offset 20 + 行数 7 = 27 < total 32"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "拒绝类失败：响应体 7 行，期望输出 0 行（拒绝后为 0，属连接器行为，见 A 组）"
+    },
+    {
+      "fixture_id": "EIA-12",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_snapshot_a.json 1115B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_snapshot_a.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high 且结构匹配真实响应；与真实响应结构比对：缺失行键 []，缺失响应键 []"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C7 场景语义",
+      "status": "NOT_VERIFIED",
+      "detail": "该样本无场景缺陷断言（正向样本）"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 1 行，声明输出 1 行"
+    },
+    {
+      "fixture_id": "EIA-13",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "eia_snapshot_b.json 1115B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "eia_snapshot_b.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high 且结构匹配真实响应；与真实响应结构比对：缺失行键 []，缺失响应键 []"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C7 场景语义",
+      "status": "NOT_VERIFIED",
+      "detail": "该样本无场景缺陷断言（正向样本）"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 1 行，声明输出 1 行"
+    },
+    {
+      "fixture_id": "EIA-14",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_forbidden_403.html 97B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_forbidden_403.html 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 403，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "auth 期望状态 [401, 403]，实际 403"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "low（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "SEC-01",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_not_found_404.html 76B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_not_found_404.html 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 404，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "not_found 期望状态 [404]，实际 404"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "low（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "SEC-02",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_rate_limited_429.html 92B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_rate_limited_429.html 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 429，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "rate_limit 期望状态 [429]，实际 429"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "low（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "SEC-03",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_server_error_500.html 100B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_server_error_500.html 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 500，错误体 存在，数据行 0"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "server 期望状态 [500, 502, 503, 504]，实际 500"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "low（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "错误体 + 无数据行（0 行）"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "SEC-04",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_timeout.descriptor.json 128B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_timeout.descriptor.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "无响应体描述文件"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "timeout 期望状态 None，实际 None"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "n/a（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "描述文件声明超时异常"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "SEC-05",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_empty_units.json 201B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_empty_units.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high 且结构匹配真实响应；与真实 SEC 响应比对：缺失顶层键 []，缺失行键 []"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "units={}"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 0 行，声明输出 0 行"
+    },
+    {
+      "fixture_id": "SEC-06",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_unexpected_shape.json 113B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_unexpected_shape.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "schema 期望状态 [200]，实际 200"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "medium（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "units 类型为 str"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "拒绝类失败：响应体 0 行，期望输出 0 行（拒绝后为 0，属连接器行为，见 A 组）"
+    },
+    {
+      "fixture_id": "SEC-07",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_revision_restated.json 732B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_revision_restated.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high 且结构匹配真实响应；与真实 SEC 响应比对：缺失顶层键 []，缺失行键 []"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C7 场景语义",
+      "status": "NOT_VERIFIED",
+      "detail": "该样本无场景缺陷断言（正向样本）"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 2 行，声明输出 2 行"
+    },
+    {
+      "fixture_id": "SEC-08",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "sec_ytd_durations.json 932B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "sec_ytd_durations.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "HTTP 200，JSON 解析 成功"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "非失败样本，无需对应"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "high 且结构匹配真实响应；与真实 SEC 响应比对：缺失顶层键 []，缺失行键 []"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "3 行，共享起始日 1 个"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "响应体 3 行，声明输出 3 行"
+    },
+    {
+      "fixture_id": "SEC-09",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C1 文件存在且哈希一致",
+      "status": "PASS",
+      "detail": "rights_unverified_scope.json 922B sha256 一致，字节数 一致"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C2 合成来源定位正确",
+      "status": "PASS",
+      "detail": "rights_unverified_scope.json 位于专用样本目录"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C3 状态码与响应体类别",
+      "status": "PASS",
+      "detail": "非 HTTP 事务的权利记录，按权利样本校验"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C4 期望块完整性",
+      "status": "PASS",
+      "detail": "字段齐全且取值合法"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C5 error_class 与状态码对应",
+      "status": "PASS",
+      "detail": "rights 期望状态 None，实际 None"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C6 置信度声明",
+      "status": "PASS",
+      "detail": "n/a（按声明接受，未做结构比对）"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C7 场景语义",
+      "status": "PASS",
+      "detail": "commercial_use='unknown'，redistribution='not_permitted'，license_status='not_verified'；两类权限分开记录=True"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C8 输出行数与响应体自洽",
+      "status": "PASS",
+      "detail": "失败样本响应体含 0 行数据（符合）"
+    },
+    {
+      "fixture_id": "RIGHTS-01",
+      "check": "C9 无密钥材料",
+      "status": "PASS",
+      "detail": "未发现密钥材料"
+    }
+  ],
+  "cross_checks": [
+    {
+      "criterion": "M1 fixture_id 唯一",
+      "status": "PASS",
+      "detail": "无重复"
+    },
+    {
+      "criterion": "M2 manifest 与验收文档样本清单一致",
+      "status": "PASS",
+      "detail": "manifest 25 条，文档 25 条；文档缺 []，manifest 缺 []"
+    },
+    {
+      "criterion": "M3 文档与 manifest 的逐条期望一致",
+      "status": "PASS",
+      "detail": "25 条逐项比对一致"
+    },
+    {
+      "criterion": "M4 9 类失败分类覆盖",
+      "status": "PASS",
+      "detail": "覆盖 9/9：['auth', 'rate_limit', 'not_found', 'server', 'timeout', 'schema', 'truncation', 'empty_result', 'rights']；未覆盖：[]"
+    },
+    {
+      "criterion": "M5 目录内无未登记样本文件",
+      "status": "PASS",
+      "detail": "无游离文件"
+    },
+    {
+      "criterion": "M6 观测样本均指向真实响应且不复制文件",
+      "status": "PASS",
+      "detail": "5 条观测样本均以 ref 引用 eia-sample-2026-11-01/"
+    },
+    {
+      "criterion": "A1 来源间隔离",
+      "status": "NOT_VERIFIED",
+      "detail": "需要连接器同时处理两个来源，当前不存在"
+    },
+    {
+      "criterion": "A2 修订版本不被覆盖",
+      "status": "NOT_VERIFIED",
+      "detail": "输入已具备（EIA-13/EIA-14 同期不同值，均无修订字段）：True；版本保留行为需连接器与存储层"
+    },
+    {
+      "criterion": "A3 warnings 不当作截断",
+      "status": "NOT_VERIFIED",
+      "detail": "判别输入已具备（EIA-08 有 warnings 且数据完整 / EIA-12 有 warnings 且不完整）；判定逻辑需连接器"
+    },
+    {
+      "criterion": "A4 empty_result 与 truncation 可区分",
+      "status": "NOT_VERIFIED",
+      "detail": "两个样本在结构上可区分（total=\"0\" vs offset+行数<total）；分类行为需连接器"
+    },
+    {
+      "criterion": "A5 同期多申报的选择状态",
+      "status": "NOT_VERIFIED",
+      "detail": "输入已具备（SEC-08 两版本 / SEC-09 三条累计期）；选择规则需连接器"
+    },
+    {
+      "criterion": "A6 失败不产生「0」或「无数据」",
+      "status": "NOT_VERIFIED",
+      "detail": "需要对系统输出做断言，当前无输出层"
+    },
+    {
+      "criterion": "A7 失败原因可读且具体",
+      "status": "NOT_VERIFIED",
+      "detail": "需要运行记录与报告，当前无输出层"
+    }
+  ],
+  "summary": {
+    "per_fixture": {
+      "PASS": 220,
+      "FAIL": 0,
+      "NOT_VERIFIED": 5
+    },
+    "cross": {
+      "PASS": 6,
+      "FAIL": 0,
+      "NOT_VERIFIED": 7
+    }
+  }
+}

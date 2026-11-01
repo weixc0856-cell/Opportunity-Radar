@@ -3,6 +3,7 @@ from datetime import datetime
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL, summarize
 from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES, state_of
+from .publication import disclosure, headline_notice
 from .lanes import LANES, LANE_LABEL, LANE_PROMISE, item_lane as _lane
 
 STATUS_LABEL={'priority':'优先验证','watch':'持续观察','filtered':'已过滤'}
@@ -60,7 +61,11 @@ def _market(x):
     return 'single_source' if (x.get('evidence') or []) else 'none'
 
 def decision_headline(items,stats):
+    """One line a reader can act on. An incomplete run says so before it says anything else."""
     if stats.get('sample_mode'): return '本页仅展示报告结构与评分流程，不形成真实商业判断。'
+    return headline_notice(stats)+_decision_body(items,stats)
+
+def _decision_body(items,stats):
     visible=_shown(items); pri=[x for x in visible if x.get('status')=='priority']; watch=[x for x in visible if x.get('status')=='watch']
     deferred=_deferred(items)
     if pri:
@@ -71,8 +76,10 @@ def decision_headline(items,stats):
         return f"本期筛选出 {len(pri)} 条优先、{len(watch)} 条观察信号，另有 {len(deferred)} 条受来源单期配额限制未进入阅读区，详见附录。"
     if deferred: return f"本期有 {len(deferred)} 条达到观察或验证门槛，但受来源单期配额限制未进入阅读区，详见附录。"
     if not stats.get('fetched',stats.get('article_count',0)): return '本轮未获取到新内容，无法形成商业判断。'
-    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('skipped',0)>0: return '本轮没有新增分析任务，结论沿用已有结果；不代表没有机会。'
+    # A failed analysis is not "nothing new". Check it first, or a run in which every new
+    # article failed prints "no new analysis tasks" while the stats line says "failed 5".
     if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('failed',stats.get('error_count',0))>0: return '本轮分析未完成，暂不形成商业判断。'
+    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('skipped',0)>0: return '本轮没有新增分析任务，结论沿用已有结果；不代表没有机会。'
     return '本期没有信号通过筛选门槛，建议维持观察。'
 
 def management_note(items):
@@ -113,6 +120,8 @@ def empty_reason(stats):
     if not fetched: return '本轮没有从 FreshRSS 获取到文章。请检查来源状态与运行日志；这不代表没有商业机会。'
     if analyzed==0 and failed>0: return f'本轮分析结果为空：{failed} 篇尝试分析均未通过，请查看运行日志排查原因。'
     if analyzed==0 and skipped>0: return f'本轮没有新的分析任务：{skipped} 篇文章均已有分析结果，无需重新分析。这只说明本轮没有新内容，不代表没有机会。'
+    if stats.get('coverage') is not None and stats['coverage']<1:
+        return disclosure(stats)
     return f'本轮没有满足条件的机会：{analyzed} 篇进入分析，均未达到观察门槛或未通过硬性过滤。'
 
 def _counts(items):
@@ -164,20 +173,102 @@ def _estimate_hint(x):
         return ['   内容完整性估计：这段文本看起来是全文；只有把该来源复核为 content_access_level=full_text，才能按 E2 计。']
     return []
 
+def _confidence_label(value):
+    return {'low':'低','medium':'中','high':'高'}.get(str(value or '').lower(),'—')
+
+def _basis_label(inference):
+    basis=[b for b in (inference or {}).get('basis') or [] if isinstance(b,int)]
+    return '、'.join(f'F{b}' for b in basis) if basis else '—'
+
+def _v5_sections(x):
+    """Facts, inferences, gaps and actions. Unverified claims never share a label with
+    located ones: a quote the locator rejected is not evidence, and an inference with no
+    located fact behind it is not a conclusion."""
+    a=x.get('analysis',{})
+    facts=[f for f in a.get('facts') or [] if isinstance(f,dict)]
+    located=[f for f in facts if f.get('status')=='located']
+    unlocated=[f for f in facts if f.get('status')!='located']
+    inferences=[i for i in a.get('inferences') or [] if isinstance(i,dict)]
+    supported=[i for i in inferences if i.get('status')=='supported']
+    unsupported=[i for i in inferences if i.get('status')!='supported']
+    gaps=[g for g in a.get('gaps') or [] if isinstance(g,dict)]
+    actions=[c for c in a.get('actions') or [] if isinstance(c,dict)]
+    lines=['   事实（可在原文定位）']
+    if located:
+        for f in located:
+            eid=f.get('evidence_id') or ''
+            line=f"     {('['+eid+'] ') if eid else ''}{f.get('text','')}"
+            quote=str(f.get('quote') or '').strip()
+            if quote: line+=f" — “{quote}”"
+            lines.append(line)
+            actor=str(f.get('actor') or '').strip()
+            url=str(f.get('source_url') or x.get('url') or '').strip()
+            if actor or url:
+                lines.append(f"          来源：{actor}{' · ' if actor and url else ''}{url}".rstrip())
+    else:
+        lines.append('     无可定位事实')
+    if len(supported)==1:
+        lines.append(f"   推断（基于 {_basis_label(supported[0])}，置信度 {_confidence_label(supported[0].get('confidence'))}）")
+    else:
+        lines.append('   推断')
+    if supported:
+        for inf in supported:
+            suffix=''
+            if len(supported)>1:
+                suffix=f"（基于 {_basis_label(inf)}；置信度 {_confidence_label(inf.get('confidence'))}）"
+            assumptions=[str(v).strip() for v in inf.get('assumptions') or [] if str(v).strip()]
+            assumption=f"（假设：{'；'.join(assumptions)}）" if assumptions else ''
+            lines.append(f"     - {inf.get('text','')}{suffix}{assumption}")
+    else:
+        lines.append('     无获事实支持的推断')
+    lines.append('   证据缺口')
+    if gaps:
+        for g in gaps:
+            detail=[]
+            if g.get('why_it_matters'): detail.append(f"为什么重要：{g['why_it_matters']}")
+            if g.get('how_to_close'): detail.append(f"如何补齐：{g['how_to_close']}")
+            lines.append(f"     - {g.get('missing','')}"+(f"（{'；'.join(detail)}）" if detail else ''))
+    else:
+        lines.append('     无')
+    lines.append('   建议行动')
+    if actions:
+        for c in actions:
+            done=f"（完成标准：{c['done_when']}）" if c.get('done_when') else ''
+            lines.append(f"     - {c.get('step','')}{done}")
+    else:
+        lines.append('     无')
+    if unlocated:
+        lines.append('   未能定位（不作为事实）')
+        for f in unlocated:
+            quote=str(f.get('quote') or '').strip()
+            line=f"     - {f.get('text','')}"
+            if quote: line+=f" — “{quote}”"
+            lines.append(line)
+    if unsupported:
+        lines.append('   未获事实支持的推断')
+        for inf in unsupported:
+            lines.append(f"     - {inf.get('text','')}")
+    return lines
+
 def _card(i,x):
     a=x.get('analysis',{}); cls=x.get('classification',{}); lane=_lane(x)
-    ev=x.get('evidence') or []
+    v5=a.get('schema_version')==5
     unknown='；'.join(a.get('uncertainties',[])) or '未填写'
     lines=['',f"{i}. [{x.get('score',0)}/100] {x.get('title','')}",
            f"   通道：{lane} · {LANE_LABEL[lane]}",
-           f"   证据：{_evidence_text(x)} · 来源质量：{SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality',''))}",
-           f"   初判：{_judgment(a)}"]
-    lines+=_quote_lines(ev)
-    lines+=_estimate_hint(x)
-    lines+=[_commercial_line(x),
-            f"   关键未知：{unknown}",
-            f"   下一步观察：{a.get('suggested_next_step','人工复核')}",
-            f"   来源：{x.get('source_name','Unknown')} · {x.get('url','')}"]
+           f"   证据：{_evidence_text(x)} · 来源质量：{SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality',''))}"]
+    if v5:
+        lines.append(f"   排序分：{x.get('score',0)}/100（仅用于本期排序，不是结论）")
+        lines+=_v5_sections(x)
+    else:
+        lines+=[f"   初判：{_judgment(a)}"]
+        lines+=_quote_lines(x.get('evidence') or [])
+        lines+=_estimate_hint(x)
+    lines.append(_commercial_line(x))
+    if not v5:
+        lines+=[f"   关键未知：{unknown}",
+                f"   下一步观察：{a.get('suggested_next_step','人工复核')}"]
+    lines.append(f"   来源：{x.get('source_name','Unknown')} · {x.get('url','')}")
     return lines
 
 def executive_brief(items):
@@ -211,6 +302,8 @@ def render_digest(items,stats,date_label=None):
     lines += ['',f"{'已保存分析' if stats.get('render_only') else '新增信号'}：{len(items) if stats.get('render_only') else new} | 持续观察：{counts['watch']} | 优先验证：{counts['priority']} | 明确付费证据：{strong} | 未纳入分发：{len(deferred)}"]
     lines.append(f'报告来源：基于数据库已保存的 {len(items)} 条分析重新生成（未重新调用模型）。' if stats.get('render_only')
                  else f"运行统计：获取 {fetched} | 新增 {new} | 内容更新 {stats.get('updated',0)} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped} | 重复事件 {stats.get('duplicate_events',0)}")
+    disclosed=disclosure(stats)
+    if disclosed: lines.append(f'运行完整性：{disclosed}')
     window=stats.get('sample_window')
     if window:
         lines.append(f"样本窗口：{window.get('since') or '(无下界)'} 至 {window.get('until') or '(无上界)'} UTC"

@@ -8,6 +8,8 @@ Check model: `Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/v1/model
 
 Test: `py -3 -m unittest discover -s tests -v`; offline sample: `py -3 -m opportunity_radar.cli --dry-run --sample`.
 
+End-to-end verification: `py -3 tools/e2e_verify.py --limit 3` runs the real FreshRSS -> model -> SQLite -> report chain, then repeats it against a local server that returns an invalid category. It exits non-zero if a failed analysis is reported as a clean run. See `docs/E2E_VERIFICATION.md`.
+
 Real run: `deploy\windows\run-digest.ps1`.
 
 Task Scheduler runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<project>\deploy\windows\run-digest.ps1"`, where `<project>` is the checkout path registered by `install-task.ps1`. Run interactively first.
