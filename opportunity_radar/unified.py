@@ -30,7 +30,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 RULES_VERSION = 'r1-v1'
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 TITLE_WINDOW_HOURS = 72
 
 # Relations an article can have to the event it was filed under.
@@ -95,13 +95,16 @@ CREATE TABLE IF NOT EXISTS claims(
   value_num REAL,
   value_text TEXT NOT NULL DEFAULT '',
   unit TEXT NOT NULL DEFAULT '',
+  unit_raw TEXT NOT NULL DEFAULT '',
   currency TEXT NOT NULL DEFAULT '',
   region TEXT NOT NULL DEFAULT '',
   period TEXT NOT NULL DEFAULT '',
+  period_raw TEXT NOT NULL DEFAULT '',
   comparison TEXT NOT NULL DEFAULT '',
   denominator TEXT NOT NULL DEFAULT '',
   seasonality TEXT NOT NULL DEFAULT '',
   revision TEXT NOT NULL DEFAULT '',
+  revision_raw TEXT NOT NULL DEFAULT '',
   kind TEXT NOT NULL DEFAULT 'fact',
   quote TEXT NOT NULL DEFAULT '',
   locator_json TEXT NOT NULL DEFAULT '{}',
@@ -125,6 +128,7 @@ CREATE TABLE IF NOT EXISTS claim_verifications(
   verification_id TEXT PRIMARY KEY,
   claim_id TEXT NOT NULL,
   rules_version TEXT NOT NULL,
+  contract_version TEXT NOT NULL DEFAULT '',
   input_hash TEXT NOT NULL,
   state TEXT NOT NULL,
   support TEXT NOT NULL DEFAULT 'unsupported',
@@ -498,9 +502,15 @@ class UnifiedStore:
                 if name not in have:
                     conn.execute(f"ALTER TABLE evidences ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             claim_columns = {row[1] for row in conn.execute('PRAGMA table_info(claims)')}
-            for name, ddl in (('verified_at', 'TEXT'), ('verification_basis', "TEXT NOT NULL DEFAULT ''")):
+            for name, ddl in (('verified_at', 'TEXT'), ('verification_basis', "TEXT NOT NULL DEFAULT ''"),
+                              ('unit_raw', "TEXT NOT NULL DEFAULT ''"),
+                              ('period_raw', "TEXT NOT NULL DEFAULT ''"),
+                              ('revision_raw', "TEXT NOT NULL DEFAULT ''")):
                 if name not in claim_columns:
                     conn.execute(f'ALTER TABLE claims ADD COLUMN {name} {ddl}')
+            verification_columns = {row[1] for row in conn.execute('PRAGMA table_info(claim_verifications)')}
+            if 'contract_version' not in verification_columns:
+                conn.execute("ALTER TABLE claim_verifications ADD COLUMN contract_version TEXT NOT NULL DEFAULT ''")
             current = conn.execute('PRAGMA user_version').fetchone()[0]
             if current < SCHEMA_VERSION:
                 conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
@@ -562,17 +572,18 @@ class UnifiedStore:
             return cur.rowcount > 0
 
     def add_claim(self, claim):
+        """Insert one claim. The *_raw columns keep the model's own wording beside the
+        normalised value, so a deviation can be traced back to what it actually said."""
+        columns = ('claim_id', 'article_key', 'event_id', 'fact_ordinal', 'subject', 'predicate',
+                   'value_num', 'value_text', 'unit', 'unit_raw', 'currency', 'region', 'period',
+                   'period_raw', 'comparison', 'denominator', 'seasonality', 'revision', 'revision_raw',
+                   'kind', 'quote', 'locator_json', 'verification_state', 'extractor', 'rules_version',
+                   'created_at')
+        values = tuple(claim.get(name, '') for name in columns)
         with self.connect() as conn:
-            cur = conn.execute('INSERT OR IGNORE INTO claims(claim_id,article_key,event_id,fact_ordinal,subject,predicate,'
-                               'value_num,value_text,unit,currency,region,period,comparison,denominator,seasonality,'
-                               'revision,kind,quote,locator_json,verification_state,extractor,rules_version,created_at) '
-                               'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                               tuple(claim[k] for k in ('claim_id', 'article_key', 'event_id', 'fact_ordinal',
-                                                        'subject', 'predicate', 'value_num', 'value_text', 'unit',
-                                                        'currency', 'region', 'period', 'comparison', 'denominator',
-                                                        'seasonality', 'revision', 'kind', 'quote', 'locator_json',
-                                                        'verification_state', 'extractor', 'rules_version',
-                                                        'created_at')))
+            cur = conn.execute(
+                'INSERT OR IGNORE INTO claims(%s) VALUES(%s)'
+                % (','.join(columns), ','.join('?' * len(columns))), values)
             return cur.rowcount > 0
 
     def link(self, claim_id, evidence_id, support='direct', independence='unknown', locator_json='{}'):

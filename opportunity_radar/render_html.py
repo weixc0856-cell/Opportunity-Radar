@@ -219,6 +219,10 @@ def render_html(items,stats,date_label=None):
     quality=Counter(_evidence_text(x) for x in items)
     q=', '.join(f'{k} {v}' for k,v in quality.most_common()) or '无'
     parts.append(f'<div style="font-size:12px;color:#4b5563;line-height:1.75;margin-top:12px;"><strong style="color:{INK};">数据质量：</strong>证据等级分布 {_e(q)}。仅标题或无法在原文中定位的摘录不能作为已验证需求。</div>')
+    conflict_lines=stats.get('conflicts') or []
+    if conflict_lines:
+        body='<br>'.join(_e(line.strip()) for line in conflict_lines)
+        parts.append(f'<div style="font-size:12px;color:#7c2d12;line-height:1.75;margin-top:12px;background:#fff7ed;border:1px solid #fdba74;padding:10px 12px;"><strong>数据冲突（记录，不判定对错）：</strong><br>{body}</div>')
     parts.append(f'<div style="font-size:12px;color:#4b5563;line-height:1.75;margin-top:8px;"><strong style="color:{INK};">来源审计：</strong>{_audit_html(stats)}</div>')
     parts.append(f'<div style="font-size:12px;color:#4b5563;line-height:1.75;margin-top:8px;"><strong style="color:{INK};">评分规则：</strong>版本 {_e(stats.get("rules_version","v2"))}。{_rules_html(stats)}</div>')
     parts.append(f'<div style="font-size:12px;color:#4b5563;line-height:1.75;margin-top:8px;"><strong style="color:{INK};">分析记录：</strong>模型 {_e(stats.get("model") or "未记录")} · 提示词 v{_e(stats.get("prompt_version") or "未记录")}（{_e(stats.get("prompt_hash") or "hash未记录")}）· 规则 {_e(stats.get("rules_version","v2"))}</div>')

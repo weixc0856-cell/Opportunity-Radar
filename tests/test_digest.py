@@ -235,3 +235,14 @@ class CoverageDisclosureTests(unittest.TestCase):
   _,body=render_digest([item()],stats(fetched=5,queued=5,analyzed=5,coverage=1.0,publication_status='PASS'))
   self.assertNotIn('运行完整性',body)
 
+class ConflictSectionTests(unittest.TestCase):
+ def test_conflicts_are_printed_with_both_values(self):
+  _,body=render_digest([item()],stats(fetched=1,analyzed=1,conflicts=[
+      '冲突主张：1 组（记录，不判定对错）',
+      '  · COCA COLA CO · capex · 2017-01-01/2017-12-31 · USD（restatement）']))
+  self.assertIn('数据冲突',body)
+  self.assertIn('COCA COLA CO',body)
+ def test_no_conflicts_no_section(self):
+  _,body=render_digest([item()],stats(fetched=1,analyzed=1))
+  self.assertNotIn('数据冲突',body)
+

@@ -102,13 +102,20 @@ python -m opportunity_radar.unified_main report     # 各表计数与缺口
 
 ```
 python -m opportunity_radar.verify --db <库> [--dry-run] [--limit N]
-python -m opportunity_radar.verify --db <库> --summary
+python -m opportunity_radar.verify --db <库> --summary          # 状态与支持关系分布
+python -m opportunity_radar.verify --db <库> --audit            # 哪些检查执行了、哪些跳过，按来源分组
+python -m opportunity_radar.verify --db <库> --conflicts        # 记录到的冲突，双方数值与依据
 ```
+
+结构化提示词 `prompts/analyst_v7.md` 已存在，但**只在影子运行中使用**（`tools/shadow_v7.py`），
+生产仍用 v6。`verify` 模块也尚未在生产库运行，未接入日报或门禁（待 G6）。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
 百分比与百分点是否混用、比较口径是否与措辞矛盾。结果写入 `claim_verifications`（追加式），
 并更新主张状态。`verified` 的含义是"主张与其证据一致"，不是"该事实为真"；散文骨架主张一律
-`unverifiable`。**该模块尚未在生产库运行，也未接入日报或门禁**（待 G6）。
+`unverifiable`；有数值但无单位的主张也按 `unverifiable` 处理。主张契约 `r2-v2` 支持
+`advance_estimate` 等修订状态与年度区间（`1997-2024`），并把模型的原始表达保留在
+`unit_raw` / `period_raw` / `revision_raw` 里。**核验尚未在生产库运行，也未接入日报或门禁**（待 G6）。
 
 - 六张表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`；
   实体层：`entities`、`entity_aliases`、`entity_mentions`、`event_links`。

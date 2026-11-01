@@ -37,3 +37,11 @@ class Tests(unittest.TestCase):
  def test_includes_data_overview_charts(self):
   html=render_html([item()],stats(),'2026-10-20')
   self.assertIn('数据概览',html);self.assertIn('处理漏斗',html);self.assertIn('<svg',html);self.assertIn('来源贡献',html)
+
+class ConflictBlockTests(unittest.TestCase):
+ def test_the_conflict_block_renders_both_sides(self):
+  html=render_html([item()],stats(conflicts=['冲突主张：1 组（记录，不判定对错）','  · COCA COLA CO · capex · 2017（restatement）']),'2026-10-20')
+  self.assertIn('数据冲突',html);self.assertIn('COCA COLA CO',html);self.assertIn('不判定对错',html)
+ def test_no_block_without_conflicts(self):
+  self.assertNotIn('数据冲突',render_html([item()],stats(),'2026-10-20'))
+
