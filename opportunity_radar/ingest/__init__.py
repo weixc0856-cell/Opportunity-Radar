@@ -1,6 +1,6 @@
 """Independent ingestion channel for SEC EDGAR and EIA.
 
-Authorised by G-D2 (docs/IMPLEMENTATION_AUTHORIZATION_2026-11-01.md).
+Authorised by G-D2 (docs/archive/IMPLEMENTATION_AUTHORIZATION_2026-11-01.md).
 Scope: data acquisition, normalisation, storage, quality validation only.
 
 Hard isolation rules (do not relax without a new authorization):

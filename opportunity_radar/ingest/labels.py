@@ -1,6 +1,6 @@
 """Explicit SEC tag mapping for the ten companies in the condition-1 sample matrix.
 
-docs/SEC_SAMPLE_MATRIX_2026-11-01.md is the authority for these rows. A metric with no
+docs/archive/SEC_SAMPLE_MATRIX_2026-11-01.md is the authority for these rows. A metric with no
 verified tag is recorded as unsupported rather than guessed; sparse or dimensional cases are
 marked requires_filing_parse.
 """

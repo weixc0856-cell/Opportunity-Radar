@@ -141,3 +141,43 @@ SEC/EIA 的定位字段；回填幂等；主张可回溯到文章与位置；未
 | 事件候选分级规则 | 未实现 | 需要实体/事件类型抽取；没有它就无法把"高度重叠"与"共享关键词"分开 |
 | 回填从 analysis_sections 取 located fact | 同 | — |
 | 来源谱系字段进入登记表 | 未做 | 属于来源治理批次，与本批解耦 |
+
+---
+
+## 8. 生产回填记录（2026-11-01）
+
+### 8.1 备份
+
+| 文件 | SHA-256 | 字节 | 表数 | 完整性 |
+|---|---|---|---|---|
+| `data/archive/r1-backfill-2026-11-01/opportunity_radar.sqlite3.bak` | `e18272e69fcaea50…` | 2,150,400 | 13 | ok |
+| `data/archive/r1-backfill-2026-11-01/opportunity_radar_ingest.sqlite3.bak` | `7a8ad958fa6e9b09…` | 1,482,752 | 8 | ok |
+
+哈希清单同时写入同目录的 `SHA256SUMS.txt`。
+
+### 8.2 执行顺序与结果
+
+1. `--dry-run`（在内部副本上执行）：RSS 220 条主张、SEC 2,719、EIA 34，与预期一致；两个原始库的
+   SHA-256 在 dry-run 后完全不变。
+2. 正式执行 `rss`：108 个事件 / 108 条事件关联 / 220 证据 / 220 主张 / 220 关联；跳过 38 篇 v4、
+   12 条无法定位的 fact。
+3. 正式执行 `sec`、`eia`：2,719 与 34 条证据、主张、关联。
+4. 复核：两库 `PRAGMA integrity_check` = ok；`claims` 无定位缺失（0）、无孤立证据关联（0）、
+   无重复 claim_id（0）。
+5. 再次运行 `rss`/`sec`/`eia`：新增证据、主张、关联全部为 **0**（幂等）。
+
+### 8.3 隔离核对
+
+| 检查 | 结果 |
+|---|---|
+| 生产库业务表 | articles 117 / analyses 108 / analysis_sections 756 / runs 14 / deliveries 26，与回填前一致 |
+| 摄取库业务表 | sec_facts 2,719 / eia_observations 34 / versions 34 / snapshots 22 / ingest_runs 13，与回填前一致 |
+| 摄取库是否出现 `articles` 表 | 否（RSS 数据未进入摄取库） |
+| 生产库是否出现摄取业务表 | 否（只有统一的 R1 表，且不含 SEC/EIA 记录） |
+
+### 8.4 回填后的库指纹
+
+| 库 | SHA-256 | 字节 | 表数 | `user_version` |
+|---|---|---|---|---|
+| `data/opportunity_radar.sqlite3` | `9e1a4d4b248d72ac…` | 2,592,768 | 19 | 1 |
+| `data/ingest/opportunity_radar_ingest.sqlite3` | `a559f22723ba47ac…` | 5,296,128 | 14 | 1 |

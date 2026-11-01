@@ -82,3 +82,19 @@ whether the body is complete, and enabling it does **not** raise the evidence ra
   body first, then change the declaration. See `docs/FULL_TEXT_FETCH.md`.
 - An invalid value is an audit error (`invalid_full_text_fetch`); a registry without the
   column defaults to `none`.
+
+## 来源谱系（R1 Batch 3）
+
+`config/source_lineage.csv` 是独立于登记表的谱系判断，随版本控制：
+
+| 字段 | 含义 |
+|---|---|
+| `source_family` | 机构级标识；同一机构的不同栏目/feed 属同一族 |
+| `lineage_kind` | `official_statistics` / `first_party_announcement` / `news_organisation` / `community_forum` / `aggregator` |
+| `syndication_group` | 同一稿件的联合发布组；**没有证据就留空** |
+| `independence` | `independent_primary` / `independent_secondary` / `syndicated` / `republished` / `derived_from_same_source` / `unknown` |
+| `basis` / `basis_source` | 判断依据与依据来源 |
+| `review_status` | `declared`（人工声明）或 `verified` |
+
+应用：`python -m opportunity_radar.unified_main lineage` 把族与独立性写回 `evidences`。
+未登记的来源保持 `unknown`，不继承任何族。新增来源必须同步登记。

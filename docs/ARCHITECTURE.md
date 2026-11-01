@@ -11,6 +11,13 @@
 7. `digest.py` renders the briefing by lane, separating located quotations from unlocated ones.
 8. `email_sender.py` sends SMTP mail.
 9. SQLite stores analysis and run records.
+10. `publication.py` decides PASS / PASS_WITH_LIMITATIONS / HOLD from analysis coverage; HOLD sends nothing.
+11. R1: `unified.py` builds events, evidences and claims from what was already stored; `linking.py` adds
+    entities, mentions and candidate links; `lineage.py` maps each source to the organisation behind it.
+    `cli.attach_event_context` attaches that context to the digest, and the digest prints one card per
+    event instead of one per article.
+12. SEC/EIA keep their own database and entry points (`ingest/`); they share the R1 table contract but
+    never write to the RSS database.
 
 The order in step 6 matters. Evidence is established before scoring, so a lane can never
 promote an item whose quotes could not be located in the text we actually received. See

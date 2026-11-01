@@ -1,7 +1,7 @@
 """HTTP transport, rate limiting and the failure taxonomy for the ingest channel.
 
 The taxonomy matches the acceptance criteria in
-docs/FAILURE_INJECTION_ACCEPTANCE_2026-11-01.md §3:
+docs/archive/FAILURE_INJECTION_ACCEPTANCE_2026-11-01.md §3:
 auth / rate_limit / not_found / server / timeout / schema / truncation / empty_result / rights.
 """
 from __future__ import annotations

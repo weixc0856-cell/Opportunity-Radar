@@ -189,3 +189,14 @@ opportunity, engineering, maintenance).
 This is why the six-line restructuring can proceed without touching the scoring model:
 the report gains a supply-structure view, while the evidence and lane rules stay as they
 were reviewed.
+
+## 与独立佐证的关系（R1）
+
+通道评分里的 `multi_source_coverage` 仍按**文章数**判断多来源覆盖，它说明"同一事件有多篇已分析条目"，
+不说明这些来源是否独立。独立佐证的判定在 R1 层：
+
+- `evidences.source_family` 来自来源谱系登记（见 `docs/SOURCE_POLICY.md`）；
+- 至少两个来源族、且这些族有已记录的独立性判断，才算独立佐证；
+- 同一机构的不同栏目算一个族；共享联合发布组的不同机构算一个单元；未知来源不计入。
+
+两者尚未合并：把 `multi_source_coverage` 改为按来源族计数需要单独批准，并会改变现有条目的证据状态。

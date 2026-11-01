@@ -1,6 +1,6 @@
 # 独立摄取通道（SEC / EIA）
 
-授权：G-D2（`docs/IMPLEMENTATION_AUTHORIZATION_2026-11-01.md`）。第一阶段只做数据获取、规范化、存储、质量验证。
+授权：G-D2（`docs/archive/IMPLEMENTATION_AUTHORIZATION_2026-11-01.md`）。第一阶段只做数据获取、规范化、存储、质量验证。
 
 ## 边界（不可自行放宽）
 

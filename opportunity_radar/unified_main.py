@@ -23,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import unified
+from . import lineage, linking, unified
 from .store import Store
 
 DEFAULT_DB = 'data/opportunity_radar.sqlite3'
@@ -135,6 +135,84 @@ def backfill_eia(db_path):
     return _structured(db_path, 'eia_observations', unified.eia_evidence, unified.eia_claim, join=True)
 
 
+def seed_entities_and_mentions(db_path):
+    """Register the companies the structured sources already cover, then find them in text.
+
+    The company list is the same static registry the SEC connector uses; nothing is derived
+    from filing values. Mentions are searched in what the pipeline actually holds: the title
+    and every fact and inference the analysis produced.
+    """
+    from .ingest.labels import COMPANIES   # static registry, not ingest data
+
+    store = unified.UnifiedStore(db_path)
+    companies = [{'cik': cik, 'name': info['name'], 'ticker': info['ticker']}
+                 for cik, info in COMPANIES.items()]
+    created = linking.seed_entities(store, companies)
+
+    analyser = Store(db_path)
+    texts = []
+    with analyser.connect() as conn:
+        articles = [(r['article_key'], r['title'] or '') for r in conn.execute('SELECT article_key, title FROM articles')]
+    for article_key, title in articles:
+        parts = [title]
+        for section in analyser.analysis_sections(article_key):
+            if section.get('kind') in ('fact', 'inference') and section.get('text'):
+                parts.append(section['text'])
+        texts.append((article_key, ' | '.join(parts)))
+    indexed = linking.index_mentions(store, texts)
+    return {'entities_created': created, 'mentions_created': indexed['mentions'],
+            'articles_with_mentions': indexed['articles']}
+
+
+def apply_lineage(db_path, registry_path=None):
+    """Trace every evidence row back to the organisation behind its source.
+
+    An invalid registry is not applied at all: a half-applied lineage would make some
+    evidences look independent while their neighbours stayed unknown.
+    """
+    registry = lineage.load(registry_path or lineage.DEFAULT_REGISTRY)
+    if not registry:
+        return {'applied': False, 'problems': ['registry is empty or missing']}
+    problems = lineage.validate(registry)
+    if problems:
+        return {'applied': False, 'problems': problems}
+    store = unified.UnifiedStore(db_path)
+    result = lineage.apply(store, registry)
+    result['applied'] = True
+    result['families'] = lineage.families_for(registry)
+    return result
+
+
+def build_links(db_path, ingest_db):
+    """Candidate links only: claim<->event when a company and a period line up, and
+    event<->event when two events name the same company within a few days."""
+    store = unified.UnifiedStore(db_path)
+    with store.connect() as conn:
+        cik_to_entity = {r['cik']: r['entity_id'] for r in conn.execute("SELECT cik, entity_id FROM entities WHERE cik<>''")}
+    claims = []
+    source = Path(ingest_db)
+    if source.exists():
+        conn = sqlite3.connect(source)
+        conn.row_factory = sqlite3.Row
+        try:
+            has_claims = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='claims'").fetchone()
+            if has_claims:
+                for row in conn.execute("SELECT claim_id, period, locator_json FROM claims WHERE extractor='structured'"):
+                    try:
+                        locator = json.loads(row['locator_json'] or '{}')
+                    except ValueError:
+                        continue
+                    entity_id = cik_to_entity.get(str(locator.get('cik') or ''))
+                    if entity_id:
+                        claims.append({'claim_id': row['claim_id'], 'entity_id': entity_id, 'period': row['period']})
+        finally:
+            conn.close()
+    claim_links = linking.link_claims_to_events(store, claims)
+    event_links = linking.link_events_by_entity(store)
+    return {'structured_claims_considered': len(claims), 'claim_event_links': claim_links,
+            'event_event_links': event_links}
+
+
 def report(db_path):
     """What the model holds, and where it is still thin. Counts only; no interpretation."""
     uni = unified.UnifiedStore(db_path, read_only=True)
@@ -152,6 +230,28 @@ def report(db_path):
             'SELECT verification_state, COUNT(*) FROM claims GROUP BY verification_state ORDER BY 2 DESC')}
         out['relations'] = {r[0]: r[1] for r in conn.execute(
             'SELECT relation, COUNT(*) FROM event_articles GROUP BY relation ORDER BY 2 DESC')}
+        for table in ('entities', 'entity_mentions', 'event_links'):
+            try:
+                out[table] = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+            except sqlite3.OperationalError:
+                out[table] = 'absent'
+        try:
+            out['links_by_status'] = {r[0]: r[1] for r in conn.execute(
+                'SELECT status, COUNT(*) FROM event_links GROUP BY status')}
+            out['links_by_relation'] = {r[0]: r[1] for r in conn.execute(
+                'SELECT relation, COUNT(*) FROM event_links GROUP BY relation')}
+            out['mentions_by_entity'] = [dict(r) for r in conn.execute(
+                'SELECT en.canonical_name name, COUNT(*) n FROM entity_mentions m JOIN entities en USING(entity_id) '
+                'GROUP BY en.entity_id ORDER BY n DESC LIMIT 10')]
+        except sqlite3.OperationalError:
+            pass
+        try:
+            out['evidences_by_family'] = {r[0] or '(none)': r[1] for r in conn.execute(
+                'SELECT source_family, COUNT(*) FROM evidences GROUP BY source_family ORDER BY 2 DESC')}
+            out['evidences_by_independence'] = {r[0]: r[1] for r in conn.execute(
+                'SELECT independence, COUNT(*) FROM evidences GROUP BY independence ORDER BY 2 DESC')}
+        except sqlite3.OperationalError:
+            pass
     out['top_multi_source_events'] = multi[:10]
     return out
 
@@ -176,8 +276,10 @@ def main(argv=None):
     except (AttributeError, ValueError):
         pass
     parser = argparse.ArgumentParser(description='Backfill the unified Event/Evidence/Claim model')
-    parser.add_argument('what', choices=('rss', 'sec', 'eia', 'report'))
+    parser.add_argument('what', choices=('rss', 'sec', 'eia', 'entities', 'links', 'lineage', 'report'))
     parser.add_argument('--db', help='database to read and write')
+    parser.add_argument('--ingest-db', help='SEC/EIA database (links)')
+    parser.add_argument('--registry', help='source lineage registry (lineage)')
     parser.add_argument('--limit', type=int, help='only the first N articles (rss)')
     parser.add_argument('--dry-run', action='store_true', help='work on a copy and leave the database untouched')
     parser.add_argument('--json', action='store_true')
@@ -192,6 +294,15 @@ def main(argv=None):
     elif args.what == 'eia':
         db = _ingest_db(args.db)
         action = backfill_eia
+    elif args.what == 'entities':
+        db = _rss_db(args.db)
+        action = seed_entities_and_mentions
+    elif args.what == 'lineage':
+        db = _rss_db(args.db)
+        action = lambda path: apply_lineage(path, args.registry)
+    elif args.what == 'links':
+        db = _rss_db(args.db)
+        action = lambda path: build_links(path, _ingest_db(args.ingest_db))
     else:
         db = _rss_db(args.db)
         action = report

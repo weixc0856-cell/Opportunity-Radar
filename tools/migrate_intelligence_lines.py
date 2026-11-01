@@ -56,7 +56,7 @@ DEFAULT_MAP = {
     'sia-news': INDUSTRY,
     'mit-tech-review': f'{NEWS},{TECH}',
     'ieee-spectrum': f'{INDUSTRY},{TECH}',
-    # Verified official and news sources added 2026-10-23 (see docs/SOURCE_REVIEW.md).
+    # Verified official and news sources added 2026-10-23 (see docs/archive/SOURCE_REVIEW.md).
     'cn-pbc': POLICY,
     'us-bea': MACRO,
     'us-bls': MACRO,
