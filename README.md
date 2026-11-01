@@ -120,6 +120,10 @@ python tools/run_n1.py --limit 600 --benchmark data/r2-shadow/benchmark.json   #
 python tools/run_n2_n3.py --limit 50 --n3-limit 15                            # N2/N3 真实模型
 python tools/run_n2.py --limit 20                                             # 仅 N2
 python tools/run_n3.py --limit 20                                             # 仅 N3（需已留存 N2）
+python tools/run_n4_n5.py --limit 50                                          # N4/N5（无模型调用）
+python tools/run_n4_n5.py --fixture data/claim-pipeline/n2n3-fixtures.json --limit 2
+python tools/run_n4.py --limit 20                                             # 仅 N4
+python tools/run_n5.py --limit 20                                             # 仅 N5（需已留存 N4）
 python tools/eval_numeric_tools.py      # 识别器对比，需安装 recognizers-text 的解释器
 ```
 
@@ -128,8 +132,10 @@ N1 输出原子候选（类型、原始表达、全文位置、数量级/单位/
 （range / from_to / increase_decrease / comparison / temporal_comparison）。
 N2 用本地 Qwen3-30B-A3B 判定每个候选的主体/指标/主张状态，N3 判定水平/变化/比较/区间等关系
 并对每个 claim_value 给出处置；两者输出都经过程序校验（ID、枚举、覆盖、证据定位、比较口径守卫）。
-节点运行写入独立的追加式留存（`data/claim-pipeline/node_runs.sqlite3`），不写生产库。
-N4/N5（数值规范化、Claim 组装与核验接入）未实现，契约见 `docs/CLAIM_PIPELINE.md`。
+N4 确定性地标准化数值/单位/数量级/币种/期间/baseline；N5 检查每个 N1 候选的处置并组装
+r2-v4 影子 Claim，证据回指 N0，缺失期间/比较口径只记录不补造。
+节点运行写入独立的追加式留存（`data/claim-pipeline/node_runs.sqlite3`），不写生产库；
+影子 Claim 不进入生产 Claim 表、日报或核验。契约见 `docs/CLAIM_PIPELINE.md`。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
 百分比与百分点是否混用、比较口径是否与措辞矛盾。结果写入 `claim_verifications`（追加式），
