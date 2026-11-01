@@ -26,6 +26,21 @@ def make_settings(**over):
     return IngestSettings(**base)
 
 
+def eia_page(relative, rows=1, total=None):
+    """A local EIA sample when present, otherwise a self-contained page.
+
+    The fallback has to be a page the client accepts: `total` must match the rows it
+    carries, or `fetch_all` reports truncation instead of exercising the case at hand.
+    Every caller here asserts behaviour, not the content of the sample.
+    """
+    path = EIA_SAMPLE / relative
+    if have(path):
+        return load_json(path)
+    return {'response': {'total': str(total if total is not None else rows),
+                         'data': [{'period': f'2024-{i % 12 + 1:02d}', 'generation': '1'}
+                                  for i in range(rows)]}}
+
+
 def fact(accn, filed, form='10-K', start='2024-09-29', end='2025-09-27'):
     return {'cik': '0000320193', 'taxonomy': 'us-gaap', 'tag': 'Revenues', 'unit': 'USD',
             'period_start': start, 'period_end': end, 'accn': accn, 'filed': filed,
@@ -128,8 +143,7 @@ class RightsPolicyTests(unittest.TestCase):
 class RetryAndPartialFailureTests(unittest.TestCase):
     def test_a_rate_limit_then_success_recovers_without_losing_data(self):
         calls = {'n': 0}
-        payload = load_json(EIA_SAMPLE / 'annual_sample.json') if have(
-            EIA_SAMPLE / 'annual_sample.json') else {'response': {'total': '1', 'data': []}}
+        payload = eia_page('annual_sample.json')
 
         def handler(url):
             calls['n'] += 1
@@ -143,8 +157,7 @@ class RetryAndPartialFailureTests(unittest.TestCase):
         self.assertTrue(rows)
 
     def test_a_mid_pagination_failure_stores_nothing(self):
-        pages = {0: load_json(EIA_SAMPLE / 'paging_offset0.json')} if have(
-            EIA_SAMPLE / 'paging_offset0.json') else {}
+        pages = {0: eia_page('paging_offset0.json', rows=2, total=5)}
 
         def handler(url):
             if 'offset=0' in url:
@@ -201,8 +214,7 @@ class SecretHygieneTests(unittest.TestCase):
     def test_no_snapshot_or_report_contains_the_api_key(self):
         settings = make_settings()
         store = IngestStore(settings.db_path)
-        payload = load_json(EIA_SAMPLE / 'annual_sample.json') if have(
-            EIA_SAMPLE / 'annual_sample.json') else {'response': {'total': '1', 'data': []}}
+        payload = eia_page('annual_sample.json')
         client = eia.EiaClient(settings, transport=FakeTransport(lambda u: json_response(payload)))
         client.fetch_all(eia.Query('annual', '2024', '2025'), store=store)
         for root, _dirs, files in os.walk(Path(settings.db_path).parent):
