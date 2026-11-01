@@ -24,7 +24,9 @@ from pathlib import Path
 from . import claim_contract, units
 from .unified import UnifiedStore, now, stable_id
 
-RULES_VERSION = 'r2-v1'
+# r2-v2: 'the quote has no comparable number' is unverifiable, not rejected. Rejection is
+# reserved for a comparable number that disagrees.
+RULES_VERSION = 'r2-v2'
 SUPPORTS = ('direct', 'indirect', 'unsupported', 'contradiction')
 FAILING = ('fail',)
 
@@ -69,7 +71,8 @@ def _check_value(claim, evidence, support):
         return {'name': 'value_in_quote', 'result': 'pass', 'detail': 'value found in the quote'}
     if support == 'contradiction':
         return {'name': 'value_in_quote', 'result': 'fail', 'detail': 'the quote states a different value'}
-    return {'name': 'value_in_quote', 'result': 'fail', 'detail': 'the quote has no comparable value'}
+    return {'name': 'value_in_quote', 'result': 'skip',
+            'detail': 'the quote carries no number of the same kind; nothing to compare'}
 
 
 def _check_unit(claim, evidence):
@@ -78,8 +81,11 @@ def _check_unit(claim, evidence):
         return {'name': 'unit', 'result': 'skip', 'detail': 'claim declares no unit'}
     quote_units = [u for _, u in units.quantities(_norm(evidence.get('quote'))) if u]
     if not quote_units:
-        return {'name': 'unit', 'result': 'fail', 'detail': 'the quote carries no unit to compare'}
+        return {'name': 'unit', 'result': 'skip', 'detail': 'the quote carries no unit to compare'}
     claim_family = units.unit_family(unit)
+    if claim_family == 'unknown':
+        return {'name': 'unit', 'result': 'skip',
+                'detail': f'unit {unit!r} is not in the unit table; no honest comparison'}
     if any(units.unit_family(u) == claim_family for u in quote_units):
         if claim_family == 'percent':
             kinds = {units.percent_or_point(u) for u in quote_units}

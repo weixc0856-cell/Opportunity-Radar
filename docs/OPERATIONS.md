@@ -4,7 +4,10 @@ Start FreshRSS: `docker compose up -d`; inspect with `docker compose ps` and `do
 
 Open `http://127.0.0.1:8088`, initialize FreshRSS, verify API availability and add only approved feeds.
 
-Check model: `Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/v1/models"`.
+Check model: `Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/v1/models"`; the context actually
+in use can be read back from `/props` (`default_generation_settings.n_ctx`, requires the API key).
+`start-model.ps1` launches with `-c 65536` and q8_0 KV by default; at f16 the same context does not fit
+on an 8 GB card.
 
 Test: `py -3 -m unittest discover -s tests -v`; offline sample: `py -3 -m opportunity_radar.cli --dry-run --sample`.
 

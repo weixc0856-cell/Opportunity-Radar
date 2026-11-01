@@ -93,10 +93,18 @@ class SupportTests(unittest.TestCase):
         self.assertEqual(result['support'], 'contradiction')
         self.assertIn('value_in_quote', result['basis'])
 
-    def test_a_quote_without_a_comparable_number_is_unsupported(self):
+    def test_a_quote_without_a_comparable_number_is_unverifiable_not_rejected(self):
+        # Nothing in the quote can confirm or contradict the figure; calling that "rejected"
+        # would claim a disproof we do not have.
         result = self.check(claim(value=5.2), evidence('ev-1', 'Retail sales rose in September'))
-        self.assertEqual(result['state'], 'rejected')
+        self.assertEqual(result['state'], 'unverifiable')
         self.assertEqual(result['support'], 'unsupported')
+        checks = {c['name']: c['result'] for c in result['checks']}
+        self.assertEqual(checks['value_in_quote'], 'skip')
+
+    def test_a_quote_number_in_another_unit_is_not_a_disproof(self):
+        result = self.check(claim(value=3.26, unit='million'), evidence('ev-1', 'a mesh of 3.26 million cells'))
+        self.assertEqual(result['state'], 'unverifiable')
 
     def test_a_percentage_point_claimed_as_percent_is_rejected(self):
         result = self.check(claim(value=3, unit='%'), evidence('ev-1', 'The rate rose 3 percentage points'))
@@ -346,7 +354,7 @@ class ContractV2Tests(unittest.TestCase):
 
     def test_the_contract_version_is_declared(self):
         summary = claim_contract.contract_summary()
-        self.assertEqual(summary['version'], 'r2-v2')
+        self.assertEqual(summary['version'], 'r2-v3')
         self.assertIn('YYYY-YYYY', summary['period_formats'])
         self.assertIn('advance_estimate', summary['revision'])
 
@@ -389,6 +397,20 @@ class AuditBySourceTests(unittest.TestCase):
         self.assertEqual(sorted(report['by_source']), ['bbc-business', 'us-bea'])
         self.assertEqual(report['by_source']['us-bea']['states'], {'verified': 1})
 
+
+
+    def test_rate_comparisons_are_part_of_the_vocabulary(self):
+        for term in ('monthly_rate', 'quarterly_rate', 'annual_rate'):
+            parsed, deviations = claim_contract.normalize({'subject': 'x', 'predicate': 'y',
+                                                           'kind': 'fact', 'comparison': term})
+            self.assertEqual(parsed['comparison'], term)
+            self.assertFalse([d for d in deviations if d['field'] == 'comparison'])
+
+    def test_a_rate_comparison_keeps_its_original_wording(self):
+        parsed, _ = claim_contract.normalize({'subject': 'x', 'predicate': 'y', 'kind': 'fact',
+                                              'comparison': 'Monthly Rate'})
+        self.assertEqual(parsed['comparison'], 'monthly_rate')
+        self.assertEqual(parsed['comparison_raw'], 'monthly rate')
 
 
 if __name__ == '__main__':

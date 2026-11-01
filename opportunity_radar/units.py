@@ -34,6 +34,13 @@ UNIT_WORDS = (
     (re.compile(r'^[ 	]*tonnes?(?![a-z])|^[ 	]*metric tons?(?![a-z])', re.I), 'tonnes'),
     (re.compile(r'^[ 	]*barrels?(?![a-z])|^[ 	]*bbl(?![a-z])', re.I), 'barrels'),
     (re.compile(r'^[ 	]*shares?(?![a-z])', re.I), 'shares'),
+    (re.compile(r'^[ 	]*cells?(?![a-z])', re.I), 'cells'),
+    (re.compile(r'^[ 	]*fps(?![a-z])', re.I), 'fps'),
+    (re.compile(r'^[ 	]*km(?![a-z])', re.I), 'kilometres'),
+    (re.compile(r'^[ 	]*cm(?![a-z])', re.I), 'centimetres'),
+    (re.compile(r'^[ 	]*mm(?![a-z])', re.I), 'millimetres'),
+    (re.compile(r'^[ 	]*metres?(?![a-z])|^[ 	]*meters?(?![a-z])|^[ 	]*m(?![a-z])', re.I), 'metres'),
+    (re.compile(r'^[ 	]*kilograms?(?![a-z])|^[ 	]*kg(?![a-z])', re.I), 'kilograms'),
 )
 
 PERCENT_WORDS = ('percent', 'per cent', '%', '百分比', '％')
@@ -44,11 +51,15 @@ UNIT_FAMILY = {code.lower(): 'currency' for code in CURRENCIES}
 UNIT_FAMILY.update({
     '%': 'percent', 'pp': 'percent_point',
     'megawatthours': 'energy', 'gwh': 'energy', 'kwh': 'energy', 'mwh': 'energy',
-    'tonnes': 'mass', 'barrels': 'volume', 'shares': 'count',
+    'tonnes': 'mass', 'kilograms': 'mass', 'barrels': 'volume', 'shares': 'count',
+    'cells': 'count', 'fps': 'rate', 'metres': 'length', 'kilometres': 'length',
+    'centimetres': 'length', 'millimetres': 'length',
 })
 
 # A number never swallows a bare space: '08 70937.35' is two numbers, not 870937.35.
-NUMBER = re.compile(r'(?<![\w.])(?:[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?)(?![\w])')
+# The trailing guard rejects only another digit: "500bn" and "$1tn" attach the scale
+# directly, and a letter after the number is handled by the scale/unit lookups below.
+NUMBER = re.compile(r'(?<![\w.])(?:[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?)(?!\d)')
 SCALE_AFTER = re.compile(
     r'^\s*(trillion|billion|million|thousand|tn|bn|mn|k|万亿|亿|万)\b', re.I)
 PERCENT_AFTER = re.compile(r'^\s*(%|percent\b|per cent\b|％|pp\b|percentage points?\b|百分点|个百分点)', re.I)

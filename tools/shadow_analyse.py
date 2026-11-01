@@ -151,12 +151,17 @@ def render(run_dir, data):
     lines += [
         f"- verified 但某项跳过：{audit['verified_with_skipped_check']}",
         f"- verified 却没有任何检查通过：{audit['verified_without_any_pass']}",
+        '', '## 单篇主张数分布', '',
+        '- ' + ', '.join(f'{k} 条：{v} 篇' for k, v in sorted(Counter(
+            len(r.get('claim_items') or []) for r in ok).items())),
         '', '## 类型分布', '', f'- {dict(kinds)}', '',
         '## 失败与重试', '',
     ]
     for record in records:
         if not record.get('ok'):
             lines.append(f"- [{record['n']}] {record['title'][:50]}：{record.get('error', '')[:120]}")
+    budgets = sorted({r.get('token_budget') for r in records if r.get('token_budget')})
+    lines.append(f'- Token 预算区间：{budgets[0] if budgets else "-"}–{budgets[-1] if budgets else "-"}')
     recovered = [r for r in records if r.get('recovered')]
     lines.append(f'- 触发重排恢复：{len(recovered)} 篇；模型调用合计 {sum(r.get("model_calls") or 0 for r in records)} 次')
     return '\n'.join(lines) + '\n'

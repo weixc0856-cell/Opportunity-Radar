@@ -25,6 +25,8 @@
    `reviewed_at`、`freshrss_feed_id`，设 `enabled=true`。`python -m opportunity_radar.source_audit`
    检查登记完整性。
 5. 启动模型：`.\deploy\windows\start-model.ps1`（参数在脚本顶部；`-Foreground` 前台运行）。
+   默认 64K 上下文 + q8_0 KV（本机 8 GB 显卡实测约 7.3 GB）；GPU offload 与 CPU MoE 分层沿用原配置。
+   交互式启动器 `D:\AI\start_server.bat` 的默认档位也已改为 64K。
 6. 试跑：`python -m opportunity_radar.cli --dry-run`。真实运行：`.\deploy\windows\run-digest.ps1`。
 7. 注册每日任务：`.\deploy\windows\install-task.ps1`。
 8. 测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests`。
