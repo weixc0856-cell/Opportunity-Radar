@@ -1,0 +1,16 @@
+source_id,source_family,lineage_kind,parent_source,syndication_group,ownership_group,independence,basis,basis_source,reviewed_at,review_status
+hn-ask,ycombinator-hn,aggregator,,,ycombinator,unknown,两个 Hacker News feed 同属 news.ycombinator.com，同一 hnrss.org 提供；内容为用户自发帖，没有编辑部,config/sources.local.csv:canonical_domain + feed_provider,2026-11-01,declared
+hn-show,ycombinator-hn,aggregator,,,ycombinator,unknown,两个 Hacker News feed 同属 news.ycombinator.com，同一 hnrss.org 提供；内容为用户自发帖，没有编辑部,config/sources.local.csv:canonical_domain + feed_provider,2026-11-01,declared
+openai-community,openai,community_forum,,,openai,unknown,OpenAI 运营的开发者论坛，帖子来自用户；论坛归属方与被讨论的产品方可能是同一机构,config/sources.local.csv:canonical_domain,2026-11-01,declared
+precice-forum,precice,community_forum,,,precice,unknown,项目方运营的用户论坛；发言者是用户而不是该机构本身,config/sources.local.csv:canonical_domain,2026-11-01,declared
+paraview-forum,paraview,community_forum,,,kitware,unknown,ParaView 项目论坛；发言者是用户而不是该机构本身,config/sources.local.csv:canonical_domain,2026-11-01,declared
+salome-forum,salome,community_forum,,,edf-opensource,unknown,SALOME 平台论坛；发言者是用户而不是该机构本身,config/sources.local.csv:canonical_domain,2026-11-01,declared
+simscale-forum,simscale,community_forum,,,simscale,unknown,SimScale 运营的社区论坛；发言者包含用户与厂商员工，无法逐条区分,config/sources.local.csv:canonical_domain,2026-11-01,declared
+nvidia-newsroom,nvidia,first_party_announcement,,,nvidia,independent_primary,"厂商自己的新闻室：它是公告的原始出处，可以作为""对方这样说过""的一手证据，但不是对该说法的独立核实",config/sources.local.csv:source_type=official_blog,2026-11-01,declared
+us-bea,bea,official_statistics,,,us-government,independent_primary,美国经济分析局官方发布；统计数据由该机构编制,config/sources.local.csv:source_type=government,2026-11-01,declared
+us-fed,federal-reserve,official_statistics,,,us-government,independent_primary,美联储官方新闻稿；政策与数据由该机构发布,config/sources.local.csv:source_type=government,2026-11-01,declared
+uk-ons,ons,official_statistics,,,uk-government,independent_primary,英国国家统计局官方发布；统计数据由该机构编制,config/sources.local.csv:source_type=government,2026-11-01,declared
+bbc-business,bbc,news_organisation,,,bbc,independent_secondary,同一机构 bbc.co.uk 的两个栏目 feed，由同一 feed 提供方发布；栏目不同不等于独立来源。二级报道方；未见转载证据，因此不设联合发布组,config/sources.local.csv:canonical_domain + feed_provider,2026-11-01,declared
+bbc-technology,bbc,news_organisation,,,bbc,independent_secondary,同一机构 bbc.co.uk 的两个栏目 feed，由同一 feed 提供方发布；栏目不同不等于独立来源。二级报道方；未见转载证据，因此不设联合发布组,config/sources.local.csv:canonical_domain + feed_provider,2026-11-01,declared
+nyt-business,nyt,news_organisation,,,nyt-company,independent_secondary,同一机构 nytimes.com 的两个栏目 feed；栏目不同不等于独立来源。二级报道方，未见转载证据,config/sources.local.csv:canonical_domain,2026-11-01,declared
+nyt-technology,nyt,news_organisation,,,nyt-company,independent_secondary,同一机构 nytimes.com 的两个栏目 feed；栏目不同不等于独立来源。二级报道方，未见转载证据,config/sources.local.csv:canonical_domain,2026-11-01,declared

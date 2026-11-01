@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 RULES_VERSION = 'r1-v1'
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TITLE_WINDOW_HOURS = 72
 
 # Relations an article can have to the event it was filed under.
@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS evidences(
   locator_json TEXT NOT NULL DEFAULT '{}',
   source_family TEXT NOT NULL DEFAULT '',
   independence TEXT NOT NULL DEFAULT 'unknown',
+  lineage_basis TEXT NOT NULL DEFAULT '',
+  syndication_group TEXT NOT NULL DEFAULT '',
   observed_at TEXT,
   rules_version TEXT NOT NULL,
   created_at TEXT NOT NULL
@@ -461,6 +463,12 @@ class UnifiedStore:
             from .linking import ENTITY_SCHEMA   # local import: linking imports this module
             conn.executescript(SCHEMA)
             conn.executescript(ENTITY_SCHEMA)
+            # Tables created before batch 3 exist already, so the new evidence columns are
+            # added in place rather than by recreating anything.
+            have = {row[1] for row in conn.execute('PRAGMA table_info(evidences)')}
+            for name in ('lineage_basis', 'syndication_group'):
+                if name not in have:
+                    conn.execute(f"ALTER TABLE evidences ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             current = conn.execute('PRAGMA user_version').fetchone()[0]
             if current < SCHEMA_VERSION:
                 conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')

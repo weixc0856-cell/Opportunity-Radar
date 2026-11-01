@@ -23,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import linking, unified
+from . import lineage, linking, unified
 from .store import Store
 
 DEFAULT_DB = 'data/opportunity_radar.sqlite3'
@@ -164,6 +164,25 @@ def seed_entities_and_mentions(db_path):
             'articles_with_mentions': indexed['articles']}
 
 
+def apply_lineage(db_path, registry_path=None):
+    """Trace every evidence row back to the organisation behind its source.
+
+    An invalid registry is not applied at all: a half-applied lineage would make some
+    evidences look independent while their neighbours stayed unknown.
+    """
+    registry = lineage.load(registry_path or lineage.DEFAULT_REGISTRY)
+    if not registry:
+        return {'applied': False, 'problems': ['registry is empty or missing']}
+    problems = lineage.validate(registry)
+    if problems:
+        return {'applied': False, 'problems': problems}
+    store = unified.UnifiedStore(db_path)
+    result = lineage.apply(store, registry)
+    result['applied'] = True
+    result['families'] = lineage.families_for(registry)
+    return result
+
+
 def build_links(db_path, ingest_db):
     """Candidate links only: claim<->event when a company and a period line up, and
     event<->event when two events name the same company within a few days."""
@@ -226,6 +245,13 @@ def report(db_path):
                 'GROUP BY en.entity_id ORDER BY n DESC LIMIT 10')]
         except sqlite3.OperationalError:
             pass
+        try:
+            out['evidences_by_family'] = {r[0] or '(none)': r[1] for r in conn.execute(
+                'SELECT source_family, COUNT(*) FROM evidences GROUP BY source_family ORDER BY 2 DESC')}
+            out['evidences_by_independence'] = {r[0]: r[1] for r in conn.execute(
+                'SELECT independence, COUNT(*) FROM evidences GROUP BY independence ORDER BY 2 DESC')}
+        except sqlite3.OperationalError:
+            pass
     out['top_multi_source_events'] = multi[:10]
     return out
 
@@ -250,9 +276,10 @@ def main(argv=None):
     except (AttributeError, ValueError):
         pass
     parser = argparse.ArgumentParser(description='Backfill the unified Event/Evidence/Claim model')
-    parser.add_argument('what', choices=('rss', 'sec', 'eia', 'entities', 'links', 'report'))
+    parser.add_argument('what', choices=('rss', 'sec', 'eia', 'entities', 'links', 'lineage', 'report'))
     parser.add_argument('--db', help='database to read and write')
     parser.add_argument('--ingest-db', help='SEC/EIA database (links)')
+    parser.add_argument('--registry', help='source lineage registry (lineage)')
     parser.add_argument('--limit', type=int, help='only the first N articles (rss)')
     parser.add_argument('--dry-run', action='store_true', help='work on a copy and leave the database untouched')
     parser.add_argument('--json', action='store_true')
@@ -270,6 +297,9 @@ def main(argv=None):
     elif args.what == 'entities':
         db = _rss_db(args.db)
         action = seed_entities_and_mentions
+    elif args.what == 'lineage':
+        db = _rss_db(args.db)
+        action = lambda path: apply_lineage(path, args.registry)
     elif args.what == 'links':
         db = _rss_db(args.db)
         action = lambda path: build_links(path, _ingest_db(args.ingest_db))

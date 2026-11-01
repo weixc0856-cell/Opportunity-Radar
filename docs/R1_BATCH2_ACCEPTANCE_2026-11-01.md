@@ -147,3 +147,41 @@ python -m opportunity_radar.unified_main links --ingest-db data/ingest/opportuni
 | 关系类型含 `duplicate_wire` / `follow_up` / `derived_from` 等 | 只实现 `same_story` / `same_subject` / `shared_entity` | 其余关系需要实体类型与事件语义，当前无法可靠区分 |
 | 事件候选分级（`candidate` 合并判定） | 用 `event_links.status='candidate'` 表达，不产生合并候选 | 没有实体/类型抽取时，"高度重叠"与"共享关键词"无法分开 |
 | 来源独立性要求 ≥2 个来源族 | 已实现判定逻辑，但来源族字段尚未登记，结果恒为未知 | 来源治理批次未开始 |
+
+---
+
+## 8. 生产部署记录（2026-11-01）
+
+### 8.1 备份
+
+`data/archive/r1-batch2-deploy-2026-11-01/`，含 `SHA256SUMS.txt`：
+
+| 备份 | SHA-256 | 字节 | 表数 | `user_version` | 完整性 |
+|---|---|---|---|---|---|
+| `opportunity_radar.sqlite3.bak` | `9e1a4d4b248d72ac…` | 2,592,768 | 19 | 1 | ok |
+| `opportunity_radar_ingest.sqlite3.bak` | `a559f22723ba47ac…` | 5,296,128 | 14 | 1 | ok |
+
+### 8.2 副本验证（正式部署前）
+
+在副本上执行 `entities` 与 `links`：10 个实体、2 条提及、3 条关联；事件数 108、事件关联 108
+**均未变化**；3 条关联全部 `status='candidate'`；没有出现多文章事件（没有自动合并）。
+
+### 8.3 正式部署
+
+| 命令 | 结果 |
+|---|---|
+| `unified_main entities`（生产库） | 新建 10 个实体、2 条提及 |
+| `unified_main links --ingest-db data/ingest/opportunity_radar_ingest.sqlite3` | 扫描 2,719 条结构化主张，生成 3 条 claim↔event 候选，0 条 event↔event |
+| 摄取库 schema 升级 | `user_version` 1 → 2（v2 的实体/关联表按设计为空：摄取库没有文章与事件） |
+| 重跑两条命令 | 实体 0、提及 0、关联 0（幂等） |
+
+### 8.4 部署后状态
+
+| 项 | 生产库 | 摄取库 |
+|---|---|---|
+| SHA-256 | `f4bb12caa65d8539…` | `4437346ac5e1aa32…` |
+| 表数 / `user_version` | 23 / 2 | 18 / 2 |
+| `integrity_check` | ok | ok |
+
+事件 108、事件关联 108、实体 10、提及 2、关联 3（全部 `candidate`），多文章事件 0；
+业务表 articles 117 / analyses 108 / runs 14 / deliveries 26 与部署前一致。

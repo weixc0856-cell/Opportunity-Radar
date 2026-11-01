@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from html import unescape
 
 from .unified import hours_apart, now, stable_id
+from .lineage import CORROBORATING
 
 ENTITY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entities(
@@ -250,36 +252,63 @@ def link_events_by_entity(store, window_days=EVENT_EVENT_WINDOW_DAYS):
 
 
 def event_profile(store, event_id):
-    """What stands behind one event, counted three ways and never conflated."""
+    """What stands behind one event, counted four ways and never conflated.
+
+    Articles, sources, source families and corroborating units are different numbers. A
+    family counts as a corroborating unit only when its evidence carries a recorded
+    independence; evidences that merely share a wire copy collapse into one unit.
+    """
     with store.connect() as conn:
         articles = conn.execute('SELECT COUNT(*) FROM event_articles WHERE event_id=?', (event_id,)).fetchone()[0]
+        has_lineage = True
+        try:
+            conn.execute('SELECT syndication_group FROM evidences LIMIT 1')
+        except sqlite3.OperationalError:
+            has_lineage = False
+        group_expr = "COALESCE(v.syndication_group,'')" if has_lineage else "''"
         rows = [dict(r) for r in conn.execute(
-            '''SELECT v.evidence_id, v.source_id, v.source_family, v.independence, v.evidence_kind
+            f'''SELECT v.evidence_id, v.source_id, v.source_family, v.independence, v.evidence_kind,
+                      {group_expr} AS syndication_group
                FROM event_articles ea JOIN evidences v USING(article_key) WHERE ea.event_id=?''', (event_id,))]
         claims = conn.execute('''SELECT COUNT(*) FROM claims c JOIN event_articles ea ON ea.article_key = c.article_key
                                  WHERE ea.event_id=?''', (event_id,)).fetchone()[0]
         links = conn.execute('''SELECT COUNT(*) FROM event_links
                                 WHERE (left_kind='event' AND left_key=?) OR (right_kind='event' AND right_key=?)''',
                              (event_id, event_id)).fetchone()[0]
+    sources = sorted({r['source_id'] for r in rows if r['source_id']})
     families = sorted({r['source_family'] for r in rows if r['source_family']})
-    independence, kinds = {}, {}
+    independence, kinds, groups = {}, {}, set()
+    units = set()
     for row in rows:
-        key = row['independence'] or 'unknown'
-        independence[key] = independence.get(key, 0) + 1
+        status = row['independence'] or 'unknown'
+        independence[status] = independence.get(status, 0) + 1
         kinds[row['evidence_kind']] = kinds.get(row['evidence_kind'], 0) + 1
-    independent = len(families) >= 2 and independence.get('unknown', 0) == 0
+        group = (row.get('syndication_group') or '').strip()
+        if group:
+            groups.add(group)
+        if status in CORROBORATING and row['source_family']:
+            units.add(group or row['source_family'])
+    independent = len(units) >= 2
+    if independent:
+        note = f'至少两个独立单元覆盖（{len(units)} 个），可视为多来源佐证'
+    elif not families:
+        note = '本条事件没有可追溯的来源族'
+    else:
+        note = '来源独立性未知或不足：证据数量不等于独立佐证，也不等于证据质量'
     return {
         'event_id': event_id,
         'articles': articles,
+        'sources': sources,
         'evidences': len(rows),
         'claims': claims,
         'source_families': families,
         'independence': independence,
         'evidence_kinds': kinds,
+        'syndication_groups': sorted(groups),
+        'corroborating_units': len(units),
         'candidate_links': links,
         'independent_corroboration': independent,
-        'quality_note': ('至少两个来源族独立覆盖' if independent
-                         else '来源独立性未知：证据数量不等于独立佐证，也不等于证据质量'),
+        'quality_note': note,
     }
 
 
