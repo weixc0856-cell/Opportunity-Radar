@@ -115,7 +115,7 @@ def retry_after_seconds(exc,cap):
 class LocalAnalyzer:
     def __init__(self,base_url,model,timeout=90,max_tokens=500,api_key='',connect_retries=3,
                  timeout_retries=1,backoff=DEFAULT_BACKOFF,retry_after_max=30,retry_max_seconds=120,
-                 sleep=time.sleep,system=None):
+                 sleep=time.sleep,system=None,temperature=0.2):
         # `system` lets a shadow run use another prompt version without changing the production
         # one; the default is whatever prompts/analyst.md currently is.
         self.system=system or SYSTEM
@@ -127,6 +127,7 @@ class LocalAnalyzer:
         self.retry_after_max=float(retry_after_max)
         self.retry_max_seconds=float(retry_max_seconds)
         self._sleep=sleep
+        self.temperature=float(temperature)
         self.last_attempts=0
 
     def _headers(self):
@@ -142,12 +143,23 @@ class LocalAnalyzer:
         if cause==RATE_LIMITED and retry_after is not None: return retry_after
         return self.backoff[min(attempt-1,len(self.backoff)-1)]
 
-    def _call(self,messages,max_tokens=None):
+    def _call(self,messages,max_tokens=None,temperature=None,response_format=None):
         # Thinking-capable models (Qwen3.5 etc.) otherwise spend the whole token budget on <think>
         # and never emit JSON; triage only needs the structured answer. Servers that do not know
         # this template kwarg ignore it.
-        body={'model':self.model,'temperature':0.2,'max_tokens':max_tokens or self.max_tokens,'messages':messages,'chat_template_kwargs':{'enable_thinking':False}}
+        body={'model':self.model,
+              'temperature':self.temperature if temperature is None else float(temperature),
+              'max_tokens':max_tokens or self.max_tokens,'messages':messages,
+              'chat_template_kwargs':{'enable_thinking':False}}
+        # llama.cpp accepts an OpenAI-style response_format; passing None keeps the production
+        # request byte-for-byte what it was before N2/N3 existed.
+        if response_format is not None: body['response_format']=response_format
         return self._post(json.dumps(body).encode())
+
+    def complete(self,messages,max_tokens=None,temperature=None,response_format=None):
+        """One structured completion for an offline node; production analysis keeps using analyze()."""
+        return self._call(messages,max_tokens=max_tokens,temperature=temperature,
+                          response_format=response_format)
 
     def _post(self,data):
         """One request with a bounded retry budget; never loops on the same dead endpoint."""

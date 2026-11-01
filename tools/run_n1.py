@@ -72,8 +72,8 @@ def _hash(value):
                           .encode('utf-8')).hexdigest()
 
 
-def scan_article(article, index, store=None):
-    started = time.time()
+def prepare_document(article, store=None):
+    """(ArticleText, document dict, N1 output, reused) — N0 always rebuilt, N1 cached."""
     article_id = article.article_id or article.url
     payload = {
         'article_id': article_id,
@@ -83,44 +83,49 @@ def scan_article(article, index, store=None):
         'content_format': 'html',
         'source_url': article.url,
     }
+    text = article_text.build(payload)
+    document = text.to_dict()
+    input_hash = _hash({'title': payload['title'], 'content': payload['content'],
+                        'content_format': payload['content_format'],
+                        'version': article_text.VERSION,
+                        'ruleset': article_text.RULESET})
+    if store is not None:
+        store.record(article_id=article_id, document_id=text.document_id,
+                     content_hash=text.content_hash, node_name='N0',
+                     node_version=article_text.VERSION, input_hash=input_hash,
+                     output=document,
+                     params={'content_format': 'html', 'ruleset': article_text.RULESET},
+                     tools={'python': 'stdlib'})
+    n1_input = _hash({'document_id': text.document_id, 'text_hash': text.text_hash,
+                      'paragraphs': len(text.paragraphs),
+                      'sentences': len(text.sentences),
+                      'version': article_text.VERSION,
+                      'ruleset': numeric_candidates.RULESET})
+    cached = None
+    if store is not None:
+        cached = store.find(article_id, 'N1', numeric_candidates.VERSION, n1_input,
+                            {'recognizers': 'off', 'ruleset': numeric_candidates.RULESET})
+    if cached is not None:
+        result = cached
+    else:
+        result = numeric_candidates.extract(text)
+        if store is not None:
+            store.record(article_id=article_id, document_id=text.document_id,
+                         content_hash=text.content_hash, node_name='N1',
+                         node_version=numeric_candidates.VERSION, input_hash=n1_input,
+                         output=result,
+                         params={'recognizers': 'off', 'ruleset': numeric_candidates.RULESET},
+                         tools=TOOLS)
+    return text, document, result, cached is not None
+
+
+def scan_article(article, index, store=None):
+    started = time.time()
+    article_id = article.article_id or article.url
     record = {'n': index, 'url': article.url, 'title': article.title,
               'source': article.source_name, 'article_id': article_id}
     try:
-        text = article_text.build(payload)
-        document = text.to_dict()
-        input_hash = _hash({'title': payload['title'], 'content': payload['content'],
-                            'content_format': payload['content_format'],
-                            'version': article_text.VERSION,
-                            'ruleset': article_text.RULESET})
-        if store is not None:
-            store.record(article_id=article_id, document_id=text.document_id,
-                         content_hash=text.content_hash, node_name='N0',
-                         node_version=article_text.VERSION, input_hash=input_hash,
-                         output=document,
-                         params={'content_format': 'html', 'ruleset': article_text.RULESET},
-                         tools={'python': 'stdlib'})
-        n1_input = _hash({'document_id': text.document_id, 'text_hash': text.text_hash,
-                          'paragraphs': len(text.paragraphs),
-                          'sentences': len(text.sentences),
-                          'version': article_text.VERSION,
-                          'ruleset': numeric_candidates.RULESET})
-        cached = None
-        if store is not None:
-            cached = store.find(article_id, 'N1', numeric_candidates.VERSION, n1_input,
-                                {'recognizers': 'off',
-                                 'ruleset': numeric_candidates.RULESET})
-        if cached is not None:
-            result = cached
-        else:
-            result = numeric_candidates.extract(text)
-            if store is not None:
-                store.record(article_id=article_id, document_id=text.document_id,
-                             content_hash=text.content_hash, node_name='N1',
-                             node_version=numeric_candidates.VERSION, input_hash=n1_input,
-                             output=result,
-                             params={'recognizers': 'off',
-                                     'ruleset': numeric_candidates.RULESET},
-                             tools=TOOLS)
+        text, document, result, reused = prepare_document(article, store)
         record.update({
             'ok': True,
             'document_id': text.document_id,
@@ -128,7 +133,7 @@ def scan_article(article, index, store=None):
             'text_hash': text.text_hash,
             'n0': document['stats'],
             'content_truncated': document['content_truncated'],
-            'n1_reused': cached is not None,
+            'n1_reused': reused,
             'statistics': result['statistics'],
             'candidates': result['candidates'],
             'expression_groups': result['expression_groups'],
