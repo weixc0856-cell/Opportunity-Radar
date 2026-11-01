@@ -96,6 +96,8 @@ def analyse(run_dir):
     claims = [c for r in ok for c in (r.get('claim_items') or [])]
     texts = article_texts([r['url'] for r in ok])
     key = [n for r in ok for n in key_numbers(texts.get(r['url'], ''))]
+    missing_claims = [r['n'] for r in ok
+                      if not (r.get('claim_items') or []) and key_numbers(texts.get(r['url'], ''))]
     missing_text = [r['n'] for r in ok if r['url'] not in texts]
     covered = 0
     for value, unit in key:
@@ -117,12 +119,13 @@ def analyse(run_dir):
     with store.connect() as conn:
         states = {r[0]: r[1] for r in conn.execute(
             "SELECT verification_state, COUNT(*) FROM claims WHERE extractor='structured' GROUP BY 1")}
-    return records, ok, claims, key, covered, fields, kinds, inserted, report, audit, states, scratch, missing_text
+    return (records, ok, claims, key, covered, fields, kinds, inserted, report, audit, states, scratch,
+            missing_text, missing_claims)
 
 
 def render(run_dir, data):
     (records, ok, claims, key, covered, fields, kinds, inserted, report, audit, states, scratch,
-     missing_text) = data
+     missing_text, missing_claims) = data
     total = len(claims)
     pct = (lambda n: f'{n}（{n * 100 // total}%）') if total else (lambda n: str(n))
     lines = [
@@ -142,6 +145,7 @@ def render(run_dir, data):
         + (f"（{covered * 100 // len(key)}%）" if key else ''),
         (f"- 有 {len(missing_text)} 篇已不在 FreshRSS 池中，未计入关键数字统计：{missing_text}"
          if missing_text else ''),
+        f"- 有数字却零主张的文章：{len(missing_claims)} {missing_claims}",
         '', '## 核验结果（仅影子主张）', '',
         f'- 状态：{states}',
         f'- 支持关系：{report["by_support"]}',

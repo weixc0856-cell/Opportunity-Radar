@@ -12,6 +12,7 @@ with their field completeness, quote location and contract deviations.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
@@ -111,6 +112,7 @@ def main(argv=None):
     parser.add_argument('--out', default='')
     parser.add_argument('--sources', default='', help='comma separated source_name filter')
     parser.add_argument('--per-source', type=int, default=0, help='at most N articles per source')
+    parser.add_argument('--urls-file', default='', help='re-run exactly these URLs')
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
@@ -118,6 +120,10 @@ def main(argv=None):
     stored = stored_analyses(args.db)
     client_pool = pool(settings, args.limit)
     candidates = [a for a in client_pool if a.url in stored]
+    if args.urls_file:
+        wanted = {line.strip() for line in Path(args.urls_file).read_text(encoding='utf-8').splitlines()
+                  if line.strip()}
+        candidates = [a for a in candidates if a.url in wanted]
     if args.sources:
         allowed = {name.strip() for name in args.sources.split(',') if name.strip()}
         candidates = [a for a in candidates if a.source_name in allowed]
@@ -153,6 +159,7 @@ def main(argv=None):
     for index, article in enumerate(candidates, 1):
         started = time.time()
         record = {'n': index, 'url': article.url, 'title': article.title, 'source': article.source_name,
+                  'prompt_hash': hashlib.sha256(system.encode('utf-8')).hexdigest()[:12],
                   'has_percent': '%' in (article.summary or '') or 'percent' in (article.summary or '').lower(),
                   'has_digits': any(ch.isdigit() for ch in (article.summary or '')),
                   'prompt_version': version}
