@@ -35,7 +35,7 @@ v7 仍未启用，生产仍是 v6；v7 切换判定仍是 **NOT READY**。本批
 | `opportunity_radar/pipeline_store.py` | 独立追加式节点留存；`INSERT OR IGNORE`；按版本/输入/参数分键；失败运行不复用 |
 | `tools/run_n1.py` | 只读工具：完整正文 → N0 → N1（可复用）→ JSONL/摘要；人工基准召回与命中位置 |
 | `tools/eval_numeric_tools.py` | 识别器对比（规则 / Recognizers-Text / 组合），仅评估用，运行时不导入 |
-| `tests/test_numeric_pipeline.py` | 54 项测试 |
+| `tests/test_numeric_pipeline.py` | 55 项测试 |
 
 对生产代码的唯一改动：`freshrss_client.py` 新增可选参数 `max_content`（默认 12,000，保持生产行为）
 与 `_feed` 转发；生产分析器仍拿到 12,000 字符上限。默认调用路径不变，现有测试全部通过。
@@ -126,10 +126,10 @@ currency 110、quantity 106、date 104、percentage 94、time 39、ordinal 10、
 
 ## 5. 测试
 
-- 新增/重写 `tests/test_numeric_pipeline.py`：54 项，覆盖 N0 契约与定位、原子类型表、
+- 新增/重写 `tests/test_numeric_pipeline.py`：55 项，覆盖 N0 契约与定位、原子类型表、
   变化/比较/期间关系、边界案例（电话、URL、引用、10-K、8-K、版本号、千分位、负数、括号数、
   科学计数法、重复数字、跨句相同数字）、ID 与顺序确定性、`candidate_ids` 可解析、节点留存复用。
-- 全量：**765 项通过**（本批前 742）。
+- 全量：**766 项通过**（本批前 742）。
 
 ## 6. 未验证与缺口
 
@@ -144,6 +144,7 @@ currency 110、quantity 106、date 104、percentage 94、time 39、ordinal 10、
 ## 7. 生产影响检查
 
 - 未写生产数据库；N0/N1 不读数据库。节点留存写入独立的 `data/claim-pipeline/node_runs.sqlite3`。
+  留存键包含节点版本、输入哈希、参数与规则哈希；失败运行带状态标记，不会占用成功运行的键。
 - 未修改 `claim_contract.py`、`verify.py`、`units.py`、`analyzer.py`、`prompts/`、`schema.py`、
   `digest.py`、`publication.py`、评分与门禁。
 - `freshrss_client.py` 的 `max_content` 默认值与生产行为一致；只有离线工具传 `0`。

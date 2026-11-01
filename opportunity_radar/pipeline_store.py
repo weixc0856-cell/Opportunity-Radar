@@ -79,7 +79,14 @@ class PipelineStore:
                input_hash, output, params=None, tools=None, status='ok', executed_at=None):
         """Insert one run. Returns (inserted, output_hash); an identical run is left alone."""
         output_json = json.dumps(output, ensure_ascii=False, sort_keys=True)
-        params_json = _canonical(params)
+        # A failed run must not occupy the key of a later successful run: the primary key is
+        # the reuse key, so a failure gets a status marker in its parameters and a success
+        # keeps the plain parameters. Otherwise one transient failure would make `find`
+        # return None forever while the successful record was silently ignored.
+        key_params = dict(params or {})
+        if status != 'ok':
+            key_params['_status'] = status
+        params_json = _canonical(key_params)
         tools_json = _canonical(tools)
         output_hash = hashlib.sha256(output_json.encode('utf-8')).hexdigest()
         executed_at = executed_at or datetime.now(timezone.utc).isoformat()

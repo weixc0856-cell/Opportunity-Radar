@@ -492,6 +492,19 @@ class PipelineStoreTests(unittest.TestCase):
                          status='failed')
             self.assertIsNone(store.find('a1', 'N0', 'n0-v1', 'i1'))
 
+    def test_a_failed_run_does_not_block_a_later_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = pipeline_store.PipelineStore(Path(tmp) / 'runs.sqlite3')
+            store.record(article_id='a1', document_id='d1', content_hash='h1', node_name='N1',
+                         node_version='n1-v1', input_hash='i1', output={'error': 'x'},
+                         status='failed')
+            inserted, _ = store.record(article_id='a1', document_id='d1', content_hash='h1',
+                                       node_name='N1', node_version='n1-v1', input_hash='i1',
+                                       output={'value': 2})
+            self.assertTrue(inserted)
+            self.assertEqual(store.find('a1', 'N1', 'n1-v1', 'i1'), {'value': 2})
+            self.assertEqual(len(store.runs('a1')), 2)
+
 
 if __name__ == '__main__':
     unittest.main()
