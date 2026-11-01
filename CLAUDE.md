@@ -48,7 +48,9 @@
 
 ## 当前阶段
 
-R1 统一事件模型已分批交付并部署（Batch 1–4）；**R2 主张核验未开始，需 G6 批准**。
+R1 统一事件模型已分批交付并部署（Batch 1–4）。R2 的规则与 v7 影子提示词已离线实现；
+主张提取流水线的 N0（文章标准化）与 N1（数字候选发现）已交付并在真实语料上验证。
+v7 切换仍是 **NOT READY**，**生产启用需 G6 批准**；N2–N5 未开始。
 已关闭的门与待批准的门见 `docs/IMPLEMENTATION_PLAN.md`。
 
 ## 文档地图
@@ -63,5 +65,6 @@ R1 统一事件模型已分批交付并部署（Batch 1–4）；**R2 主张核�
 | `docs/OPEN_ISSUES.md` | 未解决的工程问题 |
 | `docs/OPERATIONS.md` | 日常运行、排障、任务计划 |
 | `docs/EVIDENCE_AND_LANES.md` | 证据等级与通道评分规则 |
+| `docs/CLAIM_PIPELINE.md` | 主张提取流水线：N0–N5 的契约、失败语义、现状与限制 |
 | `docs/SOURCE_POLICY.md` | 来源准入与治理字段 |
 | `docs/archive/` | 历史记录：审计、设计、授权、验收（冻结，不再修改） |
