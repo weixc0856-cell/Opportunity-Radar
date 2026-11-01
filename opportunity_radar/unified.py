@@ -30,7 +30,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 RULES_VERSION = 'r1-v1'
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 TITLE_WINDOW_HOURS = 72
 
 # Relations an article can have to the event it was filed under.
@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS claims(
   quote TEXT NOT NULL DEFAULT '',
   locator_json TEXT NOT NULL DEFAULT '{}',
   verification_state TEXT NOT NULL DEFAULT 'unverified',
+  verified_at TEXT,
+  verification_basis TEXT NOT NULL DEFAULT '',
   extractor TEXT NOT NULL DEFAULT 'skeleton',
   rules_version TEXT NOT NULL,
   created_at TEXT NOT NULL
@@ -118,6 +120,28 @@ CREATE TABLE IF NOT EXISTS claim_evidence(
   locator_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   PRIMARY KEY(claim_id, evidence_id)
+);
+CREATE TABLE IF NOT EXISTS claim_verifications(
+  verification_id TEXT PRIMARY KEY,
+  claim_id TEXT NOT NULL,
+  rules_version TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  state TEXT NOT NULL,
+  support TEXT NOT NULL DEFAULT 'unsupported',
+  basis TEXT NOT NULL DEFAULT '',
+  checks_json TEXT NOT NULL DEFAULT '[]',
+  deviations_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  UNIQUE(claim_id, rules_version, input_hash)
+);
+CREATE TABLE IF NOT EXISTS claim_conflicts(
+  conflict_id TEXT PRIMARY KEY,
+  claim_a TEXT NOT NULL,
+  claim_b TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE(claim_a, claim_b, reason)
 );
 CREATE TABLE IF NOT EXISTS event_corrections(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -473,6 +497,10 @@ class UnifiedStore:
             for name in ('lineage_basis', 'syndication_group'):
                 if name not in have:
                     conn.execute(f"ALTER TABLE evidences ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+            claim_columns = {row[1] for row in conn.execute('PRAGMA table_info(claims)')}
+            for name, ddl in (('verified_at', 'TEXT'), ('verification_basis', "TEXT NOT NULL DEFAULT ''")):
+                if name not in claim_columns:
+                    conn.execute(f'ALTER TABLE claims ADD COLUMN {name} {ddl}')
             current = conn.execute('PRAGMA user_version').fetchone()[0]
             if current < SCHEMA_VERSION:
                 conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')

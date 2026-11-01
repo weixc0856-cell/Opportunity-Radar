@@ -98,6 +98,18 @@ python -m opportunity_radar.unified_main lineage    # 来源谱系 -> 证据
 python -m opportunity_radar.unified_main report     # 各表计数与缺口
 ```
 
+主张核验（R2 规则，离线运行）：
+
+```
+python -m opportunity_radar.verify --db <库> [--dry-run] [--limit N]
+python -m opportunity_radar.verify --db <库> --summary
+```
+
+核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
+百分比与百分点是否混用、比较口径是否与措辞矛盾。结果写入 `claim_verifications`（追加式），
+并更新主张状态。`verified` 的含义是"主张与其证据一致"，不是"该事实为真"；散文骨架主张一律
+`unverifiable`。**该模块尚未在生产库运行，也未接入日报或门禁**（待 G6）。
+
 - 六张表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`；
   实体层：`entities`、`entity_aliases`、`entity_mentions`、`event_links`。
 - 标识符是内容哈希，重复运行不产生第二条记录。
