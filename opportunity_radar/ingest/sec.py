@@ -1,6 +1,6 @@
 """SEC EDGAR companyconcept client and normaliser — independent channel.
 
-Scope (G-D2): the ten companies in docs/SEC_SAMPLE_MATRIX_2026-11-01.md and the tags in
+Scope (G-D2): the ten companies in docs/archive/SEC_SAMPLE_MATRIX_2026-11-01.md and the tags in
 labels.py. Custom taxonomies, dimensional facts and anything not mapped are marked, not guessed.
 """
 from __future__ import annotations

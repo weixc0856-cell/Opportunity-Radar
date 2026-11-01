@@ -142,20 +142,19 @@ python -m opportunity_radar.unified_main report     # 各表计数与缺口
 
 ## 文档索引
 
-| 文档 | 内容 |
+| 文档 | 写什么 |
 |---|---|
-| `CLAUDE.md` | 主指导文件：方向、阶段边界、质量原则 |
-| `docs/PRD.md` | 产品需求：定位、通道、功能需求、数据模型 |
-| `docs/IMPLEMENTATION_PLAN.md` | 实施计划：S0–R6 工作分解、连接器架构、验收门 |
-| `docs/PROJECT_STATUS.md` | 当前状态、已部署内容、未完成事项 |
-| `docs/OPEN_ISSUES.md` | 开放工程问题 |
-| `docs/R1_BATCH{1,2,3}_ACCEPTANCE_2026-11-01.md` | 统一模型、实体关联、来源谱系的验收与部署记录 |
-| `docs/S0_SOURCE_COVERAGE_AUDIT.md` | 来源覆盖审计（P0 已冻结） |
-| `docs/INTEGRATION_DESIGN_SEC_EIA.md` | SEC/EIA 接入设计 |
+| `CLAUDE.md` | 工作规则：原则、边界、阶段纪律 |
+| `docs/PRD.md` | 产品定义：用户、通道、功能需求、数据模型、质量框架 |
+| `docs/IMPLEMENTATION_PLAN.md` | 开发路线：阶段、依赖、验收要点、审批门 |
+| `docs/PROJECT_STATUS.md` | 当前事实：已交付、数据库现状、缺口 |
 | `docs/ARCHITECTURE.md` | 模块职责与数据流 |
-| `docs/EVIDENCE_AND_LANES.md` | 通道、证据等级与分发语义 |
-| `docs/SOURCE_POLICY.md` | 来源准入与治理字段 |
-| `docs/OPERATIONS.md`、`docs/LOCAL_DAILY_ARCHIVE.md` | 运行与归档 |
+| `docs/OPEN_ISSUES.md` | 未解决的工程问题 |
+| `docs/OPERATIONS.md` | 运行、排障、任务计划与归档 |
+| `docs/EVIDENCE_AND_LANES.md` | 证据等级与通道评分规则 |
+| `docs/SOURCE_POLICY.md` | 来源准入、治理字段、正文获取 |
+| `docs/FULL_TEXT_FETCH.md`、`docs/PAGE_MONITORING.md`、`docs/DATASETS.md` | 三个子系统：正文抓取、页面监测、数据集登记 |
 | `docs/E2E_VERIFICATION.md` | 端到端与故障注入 |
 | `docs/SECURITY_PRIVACY_SOURCE_COMPLIANCE.md` | 安全、隐私与合规清单 |
-| `docs/archive/` | 2026-10-20 至 2026-10-26 的历史实验与审计（冻结） |
+| `docs/LOCAL_DAILY_ARCHIVE.md` | 本地日报归档说明 |
+| `docs/archive/` | 历史记录：审计、设计评审、授权、验收（冻结） |

@@ -1,25 +1,41 @@
-# 历史文档归档（2026-10-20 至 2026-10-26）
+# 历史记录（冻结）
 
-本目录保存**带日期的实验、审计与旧版设计文档**。它们记录了当时的证据与结论，属于冻结材料：
+本目录保存审计、设计评审、授权、验收与实验记录。它们记录**当时**的证据与结论：
 
-- 不修改其中的数字、结论与日期；后续变化写在当前文档中。
-- 当前行为以 `README.md`、`CLAUDE.md`、`docs/PRD.md`、`docs/IMPLEMENTATION_PLAN.md` 与 `docs/` 下的现行文档为准。
-- 归档文档内出现的 `docs/xxx.md` 路径是其撰写时的位置；相关文件现在多半已移入本目录。
+- 不修改其中的数字、结论与日期。后续变化写进 `docs/` 下的现行文档。
+- 文中的 `docs/xxx.md` 路径是撰写时的位置，相关文件多数已移入本目录。
+- 现行事实见 `docs/PROJECT_STATUS.md`；产品定义见 `docs/PRD.md`；路线见 `docs/IMPLEMENTATION_PLAN.md`。
 
-## 分组
+## 2026-11-01：S0、SEC/EIA 通道、R0、R1
 
-| 分组 | 文件 | 说明 |
-|---|---|---|
-| 2026-10-23 开发检查点 | `DEV_CHECKPOINT_2026-10-23.md`、`ACCEPTANCE_2026-10-23.md` | 当时的代码与验收记录（371/381 项测试） |
-| 影子运行与 E2E | `SHADOW_RUN_2026-10-23.md`、`SHADOW_ROUND2_DESIGN.md`、`E2E_ROUND2_RESULTS_2026-10-23.md`、`E2E_SOURCE_QUALITY_2026-10-23.md` | 来源质量与端到端实验 |
-| 评分与构念 | `A_LANE_SCORING_REVIEW_2026-10-23.md`、`CONSTRUCT_REVIEW_2026-10-23.md`、`ACTIONABILITY_EXPERIMENT_DESIGN_2026-10-23.md`、`ACTIONABILITY_EXPERIMENT_RESULTS_2026-10-23.md` | actionability AUC 实验（结论：FAIL） |
-| 正文抓取 | `FULL_TEXT_AUDIT_2026-10-23.md` | 正文抓取抽样审计 |
-| 来源整合 | `SOURCE_CONSOLIDATION_PLAN.md`、`source-probe-2026-10-23.json` | 旧版信源整合方案与探测数据；S0 审计将重新评估 |
-| 2026-10-26 P0 审计 | `P0_AUDIT_2026-10-26.md` | 四个 P0 问题的审计与修复记录 |
-| 旧版建议 | `API_CONTRACT_RECOMMENDATIONS.md`、`QA_TEST_PLAN.md`、`UI_UX_SPEC.md` | 2026-10-20 审查建议；多数已实现或已被现行测试与规范取代 |
+| 主题 | 文件 |
+|---|---|
+| 来源覆盖审计（S0，P0 冻结） | `S0_SOURCE_COVERAGE_AUDIT.md` |
+| SEC/EIA 接入设计（G-D1） | `INTEGRATION_DESIGN_SEC_EIA.md`、`SEC_SAMPLE_MATRIX_2026-11-01.md` |
+| 第一阶段实施授权（G-D2） | `IMPLEMENTATION_AUTHORIZATION_2026-11-01.md` |
+| 实施前条件证据 | `INDEPENDENT_CHANNEL_AUDIT_2026-11-01.md`、`COST_QUANTIFICATION_2026-11-01.md`、`FAILURE_INJECTION_ACCEPTANCE_2026-11-01.md` |
+| 第一阶段实现与验收 | `PHASE1_SEC_COVERAGE_2026-11-01.md`、`PHASE1_EIA_QUALITY_2026-11-01.md`、`PHASE1_ISOLATION_AND_FAULTS_2026-11-01.md`、`PHASE1_SUMMARY_2026-11-01.md`、`PHASE1_CONCURRENT_RUN_2026-11-01.md`、`PHASE1_FINAL_ACCEPTANCE_2026-11-01.md` |
+| R0 发布门禁 | `R0_ACCEPTANCE_2026-11-01.md` |
+| R1 统一事件模型 | `R1_BATCH1_ACCEPTANCE_2026-11-01.md`、`R1_BATCH2_ACCEPTANCE_2026-11-01.md`、`R1_BATCH3_ACCEPTANCE_2026-11-01.md` |
+| 来源实测与缺陷修复记录 | `SOURCE_REVIEW.md` |
+
+## 2026-10-20 至 2026-10-26：早期实验
+
+| 分组 | 文件 |
+|---|---|
+| 开发检查点 | `DEV_CHECKPOINT_2026-10-23.md`、`ACCEPTANCE_2026-10-23.md`、`BUILD_STATUS_2026-10-23.txt` |
+| 影子运行与端到端 | `SHADOW_RUN_2026-10-23.md`、`SHADOW_ROUND2_DESIGN.md`、`E2E_ROUND2_RESULTS_2026-10-23.md`、`E2E_SOURCE_QUALITY_2026-10-23.md` |
+| 评分与构念实验 | `A_LANE_SCORING_REVIEW_2026-10-23.md`、`CONSTRUCT_REVIEW_2026-10-23.md`、`ACTIONABILITY_EXPERIMENT_DESIGN_2026-10-23.md`、`ACTIONABILITY_EXPERIMENT_RESULTS_2026-10-23.md` |
+| 正文抓取审计 | `FULL_TEXT_AUDIT_2026-10-23.md` |
+| 来源整合 | `SOURCE_CONSOLIDATION_PLAN.md`、`source-probe-2026-10-23.json` |
+| P0 审计 | `P0_AUDIT_2026-10-26.md` |
+| 旧版建议 | `API_CONTRACT_RECOMMENDATIONS.md`、`QA_TEST_PLAN.md`、`UI_UX_SPEC.md` |
 
 ## 仍然有效的结论
 
-- `ACTIONABILITY_EXPERIMENT_RESULTS_2026-10-23.md`：actionability 字段作为评分信号为 **FAIL**，不要再做同类字段实验。
-- `A_LANE_SCORING_REVIEW_2026-10-23.md`：importance AUC 0.782，但 `source_cap` 决定最终展示量。
-- `P0_AUDIT_2026-10-26.md`：`content_basis` 未读 `retrieval_status`、引文最小信息量、deferred 条目无跨期承载——均仍待处理。
+- **actionability 字段作为评分信号为 FAIL**（`ACTIONABILITY_EXPERIMENT_RESULTS_2026-10-23.md`），不再做同类实验。
+- **importance 排序提升不等于展示质量提升**（`A_LANE_SCORING_REVIEW_2026-10-23.md`）：配额决定读者看到什么。
+- **P0 审计的三个缺陷仍部分存在**（`P0_AUDIT_2026-10-26.md`）：`content_basis` 未读 `retrieval_status`、
+  引文最小信息量、deferred 条目无跨期承载。当前状态见 `docs/OPEN_ISSUES.md`。
+- **SEC/EIA 第一阶段的隔离与验收结论**（`PHASE1_FINAL_ACCEPTANCE_2026-11-01.md`）：独立库、独立入口、
+  故障分类与并发行为已实测；该结论是后续阶段不得越界的依据。
