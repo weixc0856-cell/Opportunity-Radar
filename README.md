@@ -117,11 +117,14 @@ python -m opportunity_radar.verify --db <库> --conflicts        # 记录到的�
 ```
 python tools/run_n1.py --limit 50
 python tools/run_n1.py --limit 600 --benchmark data/r2-shadow/benchmark.json   # 人工基准召回
+python tools/eval_numeric_tools.py      # 识别器对比，需安装 recognizers-text 的解释器
 ```
 
-N0 只处理标题与摘要（正文抓取关闭），输出与证据定位器相同的 canonical text 与偏移；
-N1 列出全部数字候选并做词法分类，不判断商业意义、不乘数量级、不产出 Claim。
-N2–N5 未实现，契约见 `docs/CLAIM_PIPELINE.md`。
+N0 处理标题与系统持有的完整 RSS 正文（正文抓取关闭），输出段落/句子 ID、全文偏移与原始 HTML 偏移；
+N1 输出原子候选（类型、原始表达、全文位置、数量级/单位/币种分离）和复合表达组
+（range / from_to / increase_decrease / comparison / temporal_comparison），
+不判断商业意义、不乘数量级、不产出 Claim。节点运行写入独立的追加式留存
+（`data/claim-pipeline/node_runs.sqlite3`），不写生产库。N2–N5 未实现，契约见 `docs/CLAIM_PIPELINE.md`。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
 百分比与百分点是否混用、比较口径是否与措辞矛盾。结果写入 `claim_verifications`（追加式），

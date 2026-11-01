@@ -56,7 +56,7 @@ class FreshRSSClient:
         if data.get('auth')==0: raise RuntimeError('FreshRSS Fever API authentication failed; verify API enablement and credentials.')
         if data.get('api') is False: raise RuntimeError('FreshRSS Fever API unavailable or disabled.')
         return data
-    def _articles(self,data):
+    def _articles(self,data,max_content=12000):
         feeds={str(x.get('id')):x.get('title','Unknown feed') for x in data.get('feeds',[])}; out=[]
         fetched=datetime.now(timezone.utc).isoformat()
         for x in data.get('items',[]):
@@ -71,7 +71,7 @@ class FreshRSSClient:
             except (TypeError,ValueError,OSError): published=''
             summary=str(x.get('html') or x.get('description') or x.get('content') or '')
             has_text=bool(summary.strip())
-            out.append(Article(str(x.get('id','')),title,url,summary[:12000],published,feeds.get(str(x.get('feed_id')),'FreshRSS feed'),str(x.get('feed_id','')),
+            out.append(Article(str(x.get('id','')),title,url,(summary if not max_content else summary[:max_content]),published,feeds.get(str(x.get('feed_id')),'FreshRSS feed'),str(x.get('feed_id','')),
                                fetched_at=fetched,content_source='rss_summary' if has_text else 'title_only',
                                retrieval_status='ok' if has_text else 'empty_content'))
         out.sort(key=lambda a:a.published,reverse=True); return out
@@ -86,20 +86,27 @@ class FreshRSSClient:
                 out.append({'id': feed_id, 'title': title, 'url': str(item.get('url', '')).strip(), 'site_url': str(item.get('site_url', '')).strip()})
         return out
 
-    def _fetch_feed(self,feed_id=None):
+    def _fetch_feed(self,feed_id=None,max_content=12000):
         # Fever caps items at 50 and sorts since_id ascending, so since_id would pin us to the
         # oldest rows once the database grows. max_id returns the newest rows, descending.
         p={'items':'','feeds':'1','max_id':str(2**63-1)}
         if feed_id is not None: p['feed_ids']=str(feed_id)
-        return self._articles(self._request(p))
-    def fetch_articles(self,limit=10,feed_ids=None):
-        if not feed_ids: return self._fetch_feed()[:limit]
+        return self._articles(self._request(p),max_content)
+    def _feed(self,feed_id=None,max_content=12000):
+        # Call the one-argument form when the cap is the default so subclasses and test doubles
+        # that only implement `_fetch_feed(feed_id)` keep working unchanged.
+        if max_content==12000: return self._fetch_feed(feed_id)
+        return self._fetch_feed(feed_id,max_content)
+    def fetch_articles(self,limit=10,feed_ids=None,max_content=12000):
+        # `max_content` keeps the production 12,000-character cap by default; offline readers
+        # that must see the whole body pass 0. The default is what the analyser has always had.
+        if not feed_ids: return self._feed(None,max_content)[:limit]
         # One high-volume feed would otherwise fill the whole window; interleave per feed.
         # First pass: every feed with a unique item contributes once before any feed gets a
         # second. Without this, one duplicate URL (the same story syndicated into two feeds)
         # could consume a slot in the first cycle and leave the last feeds unsampled for the
         # whole run.
-        queues=[self._fetch_feed(fid) for fid in feed_ids]; out=[]; seen=set()
+        queues=[self._feed(fid,max_content) for fid in feed_ids]; out=[]; seen=set()
         for q in queues:
             while q:
                 a=q.pop(0)
