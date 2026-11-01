@@ -115,7 +115,7 @@ python -m opportunity_radar.verify --db <库> --conflicts        # 记录到的�
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
 百分比与百分点是否混用、比较口径是否与措辞矛盾。结果写入 `claim_verifications`（追加式），
 并更新主张状态。`verified` 的含义是"主张与其证据一致"，不是"该事实为真"；散文骨架主张一律
-`unverifiable`；有数值但无单位的主张也按 `unverifiable` 处理。主张契约 `r2-v2` 支持
+`unverifiable`；有数值但无单位的主张也按 `unverifiable` 处理。主张契约 `r2-v4` 支持
 `advance_estimate` 等修订状态与年度区间（`1997-2024`），并把模型的原始表达保留在
 `unit_raw` / `period_raw` / `revision_raw` 里。**核验尚未在生产库运行，也未接入日报或门禁**（待 G6）。
 

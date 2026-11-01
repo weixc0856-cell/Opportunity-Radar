@@ -19,7 +19,9 @@ Facts
   {"text": "one sentence, <=200 chars", "quote": "exact excerpt", "actor": "who stated it"}
 
 Claims
+- REQUIRED field. Always return the "claims" array, even when it is empty ([]).
 - 0-8 items. A claim is one statement reduced to fields so a program can check it.
+  If the text states any figure with a unit or a period, at least one claim is expected.
   When the text states several figures, cover the ones that change a decision; do not stop at
   two because the article is long, and do not pad with statements that carry no figure.
 - Only claim what the text states. A field the text does not give stays "" (or "unknown" for the

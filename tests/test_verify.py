@@ -354,7 +354,7 @@ class ContractV2Tests(unittest.TestCase):
 
     def test_the_contract_version_is_declared(self):
         summary = claim_contract.contract_summary()
-        self.assertEqual(summary['version'], 'r2-v3')
+        self.assertEqual(summary['version'], 'r2-v4')
         self.assertIn('YYYY-YYYY', summary['period_formats'])
         self.assertIn('advance_estimate', summary['revision'])
 
@@ -411,6 +411,42 @@ class AuditBySourceTests(unittest.TestCase):
                                               'comparison': 'Monthly Rate'})
         self.assertEqual(parsed['comparison'], 'monthly_rate')
         self.assertEqual(parsed['comparison_raw'], 'monthly rate')
+
+
+
+class ScaleTests(unittest.TestCase):
+    """A magnitude is not a unit: 'million' says how much, not what is being counted."""
+
+    def test_a_bare_magnitude_becomes_a_scale_not_an_unknown_unit(self):
+        parsed, deviations = claim_contract.normalize({'subject': 'mesh', 'predicate': 'cell_count',
+                                                       'kind': 'fact', 'value_num': 3.26, 'unit': 'million'})
+        self.assertEqual(parsed['unit'], '')
+        self.assertEqual(parsed['scale'], 'million')
+        self.assertFalse([d for d in deviations if d['field'] == 'unit'])
+
+    def test_a_currency_with_a_magnitude_keeps_both_parts(self):
+        parsed, _ = claim_contract.normalize({'subject': 'income', 'predicate': 'level', 'kind': 'fact',
+                                              'value_num': 54.5, 'unit': 'USD billion'})
+        self.assertEqual((parsed['unit'], parsed['scale'], parsed['currency']), ('USD', 'billion', 'USD'))
+
+    def test_a_scaled_physical_unit_splits_the_same_way(self):
+        parsed, _ = claim_contract.normalize({'subject': 'plant', 'predicate': 'generation', 'kind': 'fact',
+                                              'value_num': 70937.4, 'unit': 'thousand megawatthours'})
+        self.assertEqual((parsed['unit'], parsed['scale']), ('megawatthours', 'thousand'))
+
+    def test_a_scaled_claim_is_verified_against_the_scaled_quote(self):
+        claim_row = claim(value=54.5, unit='USD', period='')
+        claim_row['scale'] = 'billion'
+        result = verify.check_claim(claim_row, evidence('ev-1', 'Personal income increased $54.5 billion'))
+        self.assertEqual(result['state'], 'verified')
+
+    def test_a_double_scaled_claim_is_rejected(self):
+        # value already carries the magnitude and the scale repeats it
+        claim_row = claim(value=500000000000.0, unit='USD', period='')
+        claim_row['scale'] = 'billion'
+        result = verify.check_claim(claim_row, evidence('ev-1', 'Google value plunges by $500bn'))
+        self.assertEqual(result['state'], 'rejected')
+        self.assertEqual(result['support'], 'contradiction')
 
 
 if __name__ == '__main__':
