@@ -44,16 +44,21 @@ Claims
   for money, or the physical unit as written (megawatthours, tonnes, shares).
   A percentage point is NOT a percent. Write "pp" only when the text says percentage point /
   百分点; write "%" only when the text says percent / 百分比.
+  When the text states a scale, keep it in the unit: "$54.5 billion" is value_num 54.5 with
+  unit "USD billion", not 54.5 "USD" and not 54500000000. Never drop the scale word.
 - currency: only when the text states or the unit implies a currency; otherwise "".
 - region: the country or area the statement applies to, when the text says it; otherwise "".
-- period: "YYYY", "YYYY-MM", "YYYY-MM-DD", "YYYY-Qn" or "YYYY-MM-DD/YYYY-MM-DD". If the text gives
-  no period, "" — do not use the publication date.
+- period: "YYYY", "YYYY-MM", "YYYY-MM-DD", "YYYY-Qn", "YYYY-MM-DD/YYYY-MM-DD" or an annual
+  range "YYYY-YYYY" (e.g. 1997-2024). If the text gives no period, "" — do not use the publication
+  date.
 - comparison: level|year_over_year|quarter_over_quarter|month_over_month|period_change|
   percentage_point_change|share|unknown. Use "unknown" when the text states no comparison basis;
   never guess year-over-year from the word "rose".
 - denominator: fill only when the text states what a share or rate is out of.
 - seasonality: seasonally_adjusted|not_seasonally_adjusted|unknown.
-- revision: original|revised|preliminary|unknown.
+- revision: original|revised|preliminary|advance_estimate|final|unknown. Use advance_estimate
+  when the release says "advance estimate" / "初值" and final when it says the figure is final;
+  otherwise unknown, never a guess.
 - kind: fact|source_interpretation|system_inference|hypothesis|forecast|opinion.
   A figure a company or official publishes is a fact about what they said; a forecast is a
   forecast, not a fact.

@@ -16,15 +16,17 @@ import re
 
 from . import units
 
-CONTRACT_VERSION = 'r2-v1'
+CONTRACT_VERSION = 'r2-v2'
 
 KINDS = ('fact', 'source_interpretation', 'system_inference', 'hypothesis', 'forecast',
          'opinion', 'unknown')
 COMPARISONS = ('level', 'year_over_year', 'quarter_over_quarter', 'month_over_month',
                'period_change', 'percentage_point_change', 'share', 'unknown')
 SEASONALITY = ('seasonally_adjusted', 'not_seasonally_adjusted', 'unknown')
-REVISION = ('original', 'revised', 'preliminary', 'unknown',
-            'amendment', 'subsequent_comparative')
+# r2-v2 adds the estimate stages a statistics release actually uses. The earlier four stay:
+# dropping them would invalidate every record written under r2-v1.
+REVISION = ('original', 'revised', 'preliminary', 'unknown', 'amendment', 'subsequent_comparative',
+            'advance_estimate', 'final')
 
 MAX_SUBJECT = 200
 MAX_PREDICATE = 80
@@ -37,6 +39,7 @@ PERIOD_PATTERNS = (
     re.compile(r'^\d{4}-Q[1-4]$'),
     re.compile(r'^\d{4}-\d{2}-\d{2}/\d{4}-\d{2}-\d{2}$'),
     re.compile(r'^\d{4}/\d{4}$'),
+    re.compile(r'^\d{4}-\d{4}$'),      # r2-v2: an annual range, e.g. 1997-2024
 )
 
 
@@ -86,6 +89,7 @@ def normalize(payload):
     claim['value_num'] = float(value) if isinstance(value, (int, float)) else None
     claim['value_text'] = _text(payload.get('value_text'), MAX_TEXT)
 
+    claim['unit_raw'] = _text(payload.get('unit'), 80)
     unit = units.normalize_unit(payload.get('unit'))
     if unit and units.unit_family(unit) == 'unknown':
         deviations.append(_deviation('unit', 'unknown_unit', unit))
@@ -100,6 +104,7 @@ def normalize(payload):
     claim['currency'] = currency
 
     period = str(payload.get('period') or '').strip()
+    claim['period_raw'] = period[:120]
     if period and not valid_period(period):
         deviations.append(_deviation('period', 'unrecognised_format', period))
         period = ''
@@ -108,6 +113,9 @@ def normalize(payload):
     for field, vocabulary in (('comparison', COMPARISONS), ('seasonality', SEASONALITY),
                               ('revision', REVISION)):
         value = str(payload.get(field) or 'unknown').strip().lower()
+        claim[field + '_raw'] = value[:120]
+        # 'Advance Estimate', 'advance-estimate' and 'advance_estimate' are the same term.
+        value = re.sub(r'[\s-]+', '_', value)
         if value not in vocabulary:
             deviations.append(_deviation(field, 'unknown_value', value))
             value = 'unknown'
@@ -150,7 +158,8 @@ def contract_summary():
         'comparisons': list(COMPARISONS),
         'seasonality': list(SEASONALITY),
         'revision': list(REVISION),
-        'period_formats': ['YYYY', 'YYYY-MM', 'YYYY-MM-DD', 'YYYY-Qn', 'YYYY-MM-DD/YYYY-MM-DD', 'YYYY/YYYY'],
+        'period_formats': ['YYYY', 'YYYY-MM', 'YYYY-MM-DD', 'YYYY-Qn', 'YYYY-MM-DD/YYYY-MM-DD',
+                           'YYYY/YYYY', 'YYYY-YYYY'],
         'required': ['subject', 'predicate', 'kind'],
         'degrades_to_deviation': ['value_num', 'unit', 'currency', 'period', 'comparison',
                                   'seasonality', 'revision', 'quote'],

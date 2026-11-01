@@ -65,7 +65,8 @@ def pool(settings, limit):
     client = FreshRSSClient(settings.freshrss_base_url, settings.freshrss_username,
                             settings.freshrss_api_key, settings.request_timeout)
     approved = {s.freshrss_feed_id for s in load_sources() if is_approved(s)}
-    return client.fetch_articles(max(limit * 8, 40), feed_ids=ordered_feed_ids(approved))
+    # A wide pool is needed to still find the older articles that already have a v6 analysis.
+    return client.fetch_articles(max(limit * 20, 400), feed_ids=ordered_feed_ids(approved))
 
 
 def claim_metrics(claims, article, deviations):
@@ -108,13 +109,27 @@ def main(argv=None):
     parser.add_argument('--limit', type=int, default=8)
     parser.add_argument('--db', default='data/opportunity_radar.sqlite3')
     parser.add_argument('--out', default='')
+    parser.add_argument('--sources', default='', help='comma separated source_name filter')
+    parser.add_argument('--per-source', type=int, default=0, help='at most N articles per source')
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
     version, system = load_v7_system()
     stored = stored_analyses(args.db)
     client_pool = pool(settings, args.limit)
-    candidates = [a for a in client_pool if a.url in stored][:args.limit]
+    candidates = [a for a in client_pool if a.url in stored]
+    if args.sources:
+        allowed = {name.strip() for name in args.sources.split(',') if name.strip()}
+        candidates = [a for a in candidates if a.source_name in allowed]
+    if args.per_source:
+        used, balanced = {}, []
+        for article in candidates:
+            if used.get(article.source_name, 0) >= args.per_source:
+                continue
+            used[article.source_name] = used.get(article.source_name, 0) + 1
+            balanced.append(article)
+        candidates = balanced
+    candidates = candidates[:args.limit]
     if not candidates:
         print('no article in the FreshRSS pool has a stored v6 analysis; nothing to compare', file=sys.stderr)
         return 2
@@ -124,8 +139,11 @@ def main(argv=None):
     out_dir.mkdir(parents=True, exist_ok=True)
     stream = (out_dir / 'v7.jsonl').open('w', encoding='utf-8')
 
+    # v7 answers are longer than v6 (facts + claims); the budget is raised and recorded, and
+    # the analyser's own recovery path is used rather than a second implementation of it.
+    token_budget = max(settings.llm_max_tokens, 2400)
     analyzer = LocalAnalyzer(settings.llm_base_url, settings.llm_model, settings.llm_timeout,
-                             max(settings.llm_max_tokens, 1600), api_key=settings.llm_api_key,
+                             token_budget, api_key=settings.llm_api_key,
                              connect_retries=settings.llm_connect_retries,
                              timeout_retries=settings.llm_timeout_retries,
                              backoff=parse_backoff(settings.llm_retry_backoff),
@@ -136,20 +154,25 @@ def main(argv=None):
     for index, article in enumerate(candidates, 1):
         started = time.time()
         record = {'n': index, 'url': article.url, 'title': article.title, 'source': article.source_name,
+                  'has_percent': '%' in (article.summary or '') or 'percent' in (article.summary or '').lower(),
+                  'has_digits': any(ch.isdigit() for ch in (article.summary or '')),
                   'prompt_version': version}
         try:
-            raw = analyzer._call([{'role': 'system', 'content': system},
-                                  {'role': 'user', 'content': json.dumps(
-                                      {'source_name': article.source_name, 'title': article.title[:1000],
-                                       'summary': article.summary[:7000], 'url': article.url,
-                                       'task': 'Analyze this article for potential commercial opportunity signals.'},
-                                      ensure_ascii=False)}])
-            parsed = schema.parse_model_json(raw, {'title': article.title, 'summary': article.summary,
-                                                   'url': article.url,
-                                                   'published': getattr(article, 'published', '')})
+            trace = []
+            parsed = analyzer.analyze(article.title, article.summary, article.source_name, article.url,
+                                      trace=trace, published=getattr(article, 'published', ''))
+            record['model_calls'] = len(trace)
+            record['attempts'] = analyzer.last_attempts
+            record['recovered'] = len(trace) > 1
+            try:
+                json.loads(trace[0])
+                record['first_call_parsed'] = True
+            except (ValueError, IndexError):
+                record['first_call_parsed'] = False      # truncated or malformed, recovery was used
             raw_claims = parsed.get('claims') or []
             claims, deviations = claim_contract.parse_claims({'claims': raw_claims})
-            record.update({'ok': True, 'v7_facts': len(parsed.get('facts') or []),
+            record.update({'ok': True, 'token_budget': token_budget,
+                           'v7_facts': len(parsed.get('facts') or []),
                            'v7_located': sum(1 for f in parsed.get('facts') or [] if f.get('status') == 'located'),
                            'v7_inferences': len(parsed.get('inferences') or []),
                            'claims': claim_metrics(claims, {'title': article.title, 'summary': article.summary}, deviations),
@@ -157,7 +180,9 @@ def main(argv=None):
                            'claim_items': [dict(item, quote_located=bool(schema._locate(
                                item.get('quote') or '', article.title, article.summary))) for item in claims]})
         except Exception as exc:  # a failed shadow article must not stop the run
-            record.update({'ok': False, 'error': f'{type(exc).__name__}: {exc}'[:300]})
+            record.update({'ok': False, 'token_budget': token_budget,
+                           'model_calls': len(trace), 'attempts': analyzer.last_attempts,
+                           'error': f'{type(exc).__name__}: {exc}'[:300]})
         v6 = stored.get(article.url) or {}
         analysis6 = v6.get('analysis') or {}
         record['v6'] = {'schema_version': analysis6.get('schema_version'),
@@ -211,6 +236,12 @@ def summarise(rows, version):
         'units': sorted({u for c in claims for u in c['units']}),
         'kinds': sorted({k for c in claims for k in c['kinds']}),
         'seconds_total': round(sum(r.get('seconds', 0) for r in rows), 1),
+        'recovered': sum(1 for r in rows if r.get('recovered')),
+        'first_call_unparsed': sum(1 for r in rows if r.get('ok') and not r.get('first_call_parsed', True)),
+        'token_budget': next((r.get('token_budget') for r in rows if r.get('token_budget')), None),
+        'model_calls': sum(r.get('model_calls') or 0 for r in rows),
+        'failures': [{'n': r['n'], 'title': r['title'][:60], 'error': r.get('error', '')}
+                     for r in rows if not r.get('ok')],
     }
 
 
@@ -219,6 +250,8 @@ def render(summary):
         f"# v7 影子运行（{summary['prompt_version']}）", '',
         f"- 文章：{summary['articles']} 篇，成功 {summary['analysed']}，失败 {summary['failed']}",
         f"- 耗时：{summary['seconds_total']} 秒",
+        f"- Token 预算：{summary['token_budget']}；模型调用 {summary['model_calls']} 次；"
+        f"触发重排恢复 {summary['recovered']} 篇（首次输出无法解析 {summary['first_call_unparsed']} 篇）",
         '', '## 与 v6 对照', '',
         '| 项 | v6 | v7 |', '|---|---|---|',
         f"| 事实条数 | {summary['v6_facts']} | {summary['v7_facts']} |",

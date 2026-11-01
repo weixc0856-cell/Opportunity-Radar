@@ -218,10 +218,11 @@ def verify(store, limit=None, dry_run=False):
         for claim, evidence, verdict in verdicts:
             input_hash = _input_hash(claim, evidence)
             conn.execute('INSERT OR IGNORE INTO claim_verifications(verification_id,claim_id,rules_version,'
-                         'input_hash,state,support,basis,checks_json,deviations_json,created_at) '
-                         'VALUES(?,?,?,?,?,?,?,?,?,?)',
+                         'contract_version,input_hash,state,support,basis,checks_json,deviations_json,created_at) '
+                         'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
                          (stable_id('ver-', claim['claim_id'], RULES_VERSION, input_hash),
-                          claim['claim_id'], RULES_VERSION, input_hash, verdict['state'], verdict['support'],
+                          claim['claim_id'], RULES_VERSION, claim_contract.CONTRACT_VERSION, input_hash,
+                          verdict['state'], verdict['support'],
                           verdict['basis'], json.dumps(verdict['checks'], ensure_ascii=False, sort_keys=True),
                           json.dumps(verdict['deviations'], ensure_ascii=False, sort_keys=True), now()))
             report['written'] += 1
@@ -357,19 +358,31 @@ def conflict_lines(conflicts, limit=5):
 
 
 def audit(store):
-    """Which checks ran, which passed, which were skipped. A skip is not a pass."""
+    """Which checks ran, which passed, which were skipped, and how that differs by source.
+
+    A skip is never counted as a pass; a claim whose only applicable checks were skipped is
+    unverifiable, not verified.
+    """
     per_check = {}
+    by_source = {}
     states, support = {}, {}
     missing_fields = {'value': 0, 'unit': 0, 'period': 0}
     verified_with_skip = {}
     verified_without_pass = 0
     with store.connect() as conn:
-        rows = [dict(r) for r in conn.execute('SELECT claim_id, state, support, checks_json FROM claim_verifications')]
+        rows = [dict(r) for r in conn.execute(
+            '''SELECT cv.claim_id, cv.state, cv.support, cv.checks_json, v.source_id
+               FROM claim_verifications cv
+               LEFT JOIN (SELECT claim_id, MIN(evidence_id) AS evidence_id FROM claim_evidence GROUP BY claim_id) f
+                      ON f.claim_id = cv.claim_id
+               LEFT JOIN evidences v ON v.evidence_id = f.evidence_id''')]
         claims = {r['claim_id']: dict(r) for r in conn.execute(
             'SELECT claim_id, value_num, unit, period FROM claims')}
     for row in rows:
         states[row['state']] = states.get(row['state'], 0) + 1
         support[row['support']] = support.get(row['support'], 0) + 1
+        source_bucket = by_source.setdefault(row['source_id'] or '(none)',
+                                             {'claims': 0, 'states': {}, 'skipped_checks': {}})
         try:
             checks = json.loads(row['checks_json'] or '[]')
         except ValueError:
@@ -388,6 +401,10 @@ def audit(store):
                 passed += 1
             elif result == 'skip':
                 skipped.append(name)
+        source_bucket['claims'] += 1
+        source_bucket['states'][row['state']] = source_bucket['states'].get(row['state'], 0) + 1
+        for name in skipped:
+            source_bucket['skipped_checks'][name] = source_bucket['skipped_checks'].get(name, 0) + 1
         if row['state'] == 'verified':
             if passed == 0:
                 verified_without_pass += 1
@@ -408,6 +425,7 @@ def audit(store):
         'verified_with_skipped_check': verified_with_skip,
         'verified_without_any_pass': verified_without_pass,
         'verified_with_missing_field': missing_fields,
+        'by_source': by_source,
     }
 
 

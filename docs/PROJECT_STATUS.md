@@ -41,7 +41,8 @@ independent_primary 19。
   unverifiable 与冲突记录，并提供 `--audit`（检查执行情况）与 `--conflicts`（冲突报告）。
   尚未接入生产库、日报或门禁。
 - **结构化提示词 v7（影子）**：`prompts/analyst_v7.md` 输出结构化主张，仅由 `tools/shadow_v7.py`
-  在副本上运行；生产仍是 v6。
+  在副本上运行；生产仍是 v6。主张契约 `r2-v2` 支持 `advance_estimate` 等修订状态与年度区间，
+  并保留模型的原始表达（`unit_raw` / `period_raw` / `revision_raw`）。
 - **运维**：管理后台（回环地址）、验收脚本、端到端故障注入工具。
 
 ## 未完成
