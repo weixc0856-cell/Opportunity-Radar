@@ -2,6 +2,7 @@ import hashlib, json, re, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
+from .unified import SCHEMA as UNIFIED_SCHEMA
 
 def now(): return datetime.now(timezone.utc).isoformat()
 class Store:
@@ -43,6 +44,11 @@ class Store:
                 have={r[1] for r in c.execute(f'PRAGMA table_info({table})')}
                 for name,typ in extra:
                     if name not in have: c.execute(f'ALTER TABLE {table} ADD COLUMN {name} {typ}')
+            # R1 tables live in the same database as the articles they describe. The DDL is
+            # shared with the SEC/EIA store so both sides obey one contract.
+            c.executescript(UNIFIED_SCHEMA)
+            if c.execute('PRAGMA user_version').fetchone()[0] < 1:
+                c.execute('PRAGMA user_version = 1')
             # Backfill the current analysis once so pre-upgrade results have a history entry.
             c.execute('''INSERT OR IGNORE INTO analysis_history(article_key,result_json,score,risk_flag,status,analyzed_at)
                          SELECT article_key,result_json,score,risk_flag,status,analyzed_at FROM analyses''')
