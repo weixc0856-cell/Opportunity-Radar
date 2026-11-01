@@ -103,7 +103,8 @@ def evaluate(article,analysis,weights=None,thresholds=None,model='',source=None,
           'source_content_hash':hashlib.sha256(article.summary.encode()).hexdigest(),
           'title_hash':hashlib.sha256(article.title.encode()).hexdigest(),
           'output_hash':hashlib.sha256(json.dumps(analysis,ensure_ascii=False,sort_keys=True).encode()).hexdigest()}
-    return {'title':article.title,'url':article.url,'source_name':article.source_name,'analysis':analysis,
+    return {'title':article.title,'url':article.url,'source_name':article.source_name,
+            'published':getattr(article,'published',''),'analysis':analysis,
             'score':sc['score'],'status':sc['status'],'filter_reason':sc['filter_reason'],
             'source_id':meta['source_id'],'lane':sc['lane'],'distribution':'included',
             'evidence_level':sc['evidence_level'],'evidence_state':sc['evidence_state'],
@@ -182,7 +183,7 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     txt=arch/f'{stamp}.txt'; html_path=arch/f'{stamp}.html'
     items_path=arch/f'{stamp}.items.json'; manifest_path=arch/f'{stamp}.manifest.json'
     _atomic_write(txt,text); _atomic_write(html_path,html)
-    payload_items=[{k:item.get(k) for k in ('title','url','source_name','analysis','score','status','filter_reason',
+    payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','analysis','score','status','filter_reason',
                                              'source_id','intelligence_lines','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
                                              'classification','market_validation','risk_flag','verification_note',
                                              'evidence','evidence_integrity','components','meta','scoring')} for item in (items or [])]
@@ -196,6 +197,53 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
               'storage_note':'Generated analysis snapshot and report only; full source article bodies are not archived.'}
     _atomic_write(manifest_path,json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
     return str(txt),report_hash
+
+def attach_event_context(store, items, write=True):
+    """Group this issue's items by event and attach what the R1 tables know about each.
+
+    Deliberately optional: a database without the R1 tables, or any failure inside this
+    step, leaves the digest exactly as it was. Presentation must never be able to stop a
+    run that has already produced analyses.
+    """
+    if not items:
+        return 0
+    try:
+        from .linking import event_profile
+        from .unified import ArticleRef, UnifiedStore
+        uni = UnifiedStore(store.path, read_only=not write)
+        # Two passes: file every article first, then describe the events. Otherwise the
+        # first article of an event would report a membership of one.
+        placed_events = []
+        for item in items:
+            key = Store.key(item.get('url', ''))
+            if write:
+                placed = uni.assign_article(ArticleRef(
+                    key, item.get('url', ''), item.get('title', ''), item.get('published', ''),
+                    item.get('source_id', '')))
+                event_id = placed.get('event_id', '')
+            else:
+                with uni.connect() as conn:
+                    row = conn.execute('SELECT event_id FROM event_articles WHERE article_key=?', (key,)).fetchone()
+                event_id = row['event_id'] if row else ''
+            placed_events.append((item, event_id))
+        grouped = 0
+        for item, event_id in placed_events:
+            if not event_id:
+                continue
+            profile = event_profile(uni, event_id)
+            with uni.connect() as conn:
+                members = [dict(r) for r in conn.execute(
+                    '''SELECT a.title, a.url, a.source_name FROM event_articles e
+                         JOIN articles a USING(article_key) WHERE e.event_id=?
+                         ORDER BY a.published, a.article_key''', (event_id,))]
+            profile['members'] = members
+            item['event'] = profile
+            grouped += 1
+        return grouped
+    except Exception:
+        logging.warning('Event context unavailable; the digest keeps its article view', exc_info=True)
+        return 0
+
 
 def send_decision(analyzed,updated,failed,email_on_empty):
     """Decide whether this run should send mail; keeps failure and no-new-content distinct."""
@@ -280,6 +328,7 @@ def _render_only(store,s,cfg):
                       'evidence':sc.get('evidence',[]),'evidence_integrity':sc.get('evidence_integrity',''),
                       'components':sc.get('components',{}),'meta':d.get('meta',{})})
     lane_weights,lane_thresholds=lane_display_config(cfg)
+    attach_event_context(store, items, write=False)
     caps=apply_source_caps(items,rows)
     stats={'fetched':len(items),'new':0,'updated':0,'queued':0,'analyzed':len(items),'failed':0,'skipped':0,
            'counts':{k:sum(1 for x in items if x.get('status')==k) for k in ('priority','watch','filtered')},
@@ -441,6 +490,7 @@ def main(argv=None):
                 else:
                     consecutive_transport_failures=0
         caps=apply_source_caps(items,sources)
+        attach_event_context(store, items, write=True)
         cov=publication.coverage(analyzed,queued)
         pub=publication.decide(analyzed,queued,integrity_fault=False,
                                min_coverage=s.publish_min_coverage,hold_below=s.publish_hold_below)

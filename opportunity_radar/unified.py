@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import unescape
@@ -443,20 +444,23 @@ class UnifiedStore:
         self.has_articles = self._articles_present()
 
     def _articles_present(self):
-        conn = self.connect()
-        try:
-            row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='articles'").fetchone()
-            return row is not None
-        finally:
-            conn.close()
+        with self.connect() as conn:
+            return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='articles'").fetchone() is not None
 
+    @contextmanager
     def connect(self):
+        """sqlite3's own context manager commits but never closes; Windows keeps the file
+        locked until the handle is gone. Close it here, as Store.connect does."""
         if self.read_only:
             conn = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)
         else:
             conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def init(self):
         with self.connect() as conn:

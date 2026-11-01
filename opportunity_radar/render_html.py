@@ -4,7 +4,8 @@ from html import escape
 from urllib.parse import urlparse
 from .digest import (REASON_LABEL,SOURCE_LABEL,MARKET_LABEL,WEIGHT_LABEL,
                      decision_headline,management_note,strategic_note,empty_reason,_pay_strong,_judgment,
-                     _why,_evidence_text,_market,_commercial_line,_by_lane,_lane,_state,_shown,_deferred,STATUS_LABEL)
+                     _why,_evidence_text,_market,_commercial_line,_by_lane,_lane,_state,_shown,_deferred,STATUS_LABEL,
+                     group_by_event,event_summary_lines)
 from .publication import disclosure
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL,summarize
@@ -163,12 +164,18 @@ def render_html(items,stats,date_label=None):
                  +tiles+_stat('持续观察',counts.get('watch',0))
                  +_stat('优先验证',counts.get('priority',0))+_stat('明确付费证据',strong)+'</tr></table>')
     n=1
+    representatives,_siblings=group_by_event(shown)
     for lane in LANES:
-        group=sorted(_by_lane(shown,lane),key=lambda v:v.get('score',0),reverse=True)
+        group=[x for x in representatives if _lane(x)==lane]
         parts.append(_section(f'{n:02d}',LANE_LABEL[lane]))
         parts.append(f'<div style="font-size:12px;color:{MUTED};margin:-6px 0 6px;line-height:1.6;">通道定义：{_e(LANE_PROMISE[lane])}</div>')
         if group:
-            parts += [_finding(x) for x in group]
+            for x in group:
+                parts.append(_finding(x))
+                note=event_summary_lines(x)
+                if note:
+                    parts.append(f'<div style="font-size:11.5px;color:{MUTED};line-height:1.7;margin:-8px 0 14px;">'
+                                 + '<br>'.join(_e(line.strip()) for line in note) + '</div>')
         else:
             parts.append(f'<div style="font-size:13px;color:#4b5563;">本期该通道没有条目进入观察区。</div>')
         n+=1

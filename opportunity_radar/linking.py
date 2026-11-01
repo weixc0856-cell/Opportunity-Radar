@@ -272,6 +272,9 @@ def event_profile(store, event_id):
                FROM event_articles ea JOIN evidences v USING(article_key) WHERE ea.event_id=?''', (event_id,))]
         claims = conn.execute('''SELECT COUNT(*) FROM claims c JOIN event_articles ea ON ea.article_key = c.article_key
                                  WHERE ea.event_id=?''', (event_id,)).fetchone()[0]
+        member_sources = sorted({r[0] for r in conn.execute(
+            'SELECT a.source_name FROM event_articles e JOIN articles a USING(article_key) '
+            'WHERE e.event_id=? AND a.source_name IS NOT NULL AND length(a.source_name)>0', (event_id,))})
         links = conn.execute('''SELECT COUNT(*) FROM event_links
                                 WHERE (left_kind='event' AND left_key=?) OR (right_kind='event' AND right_key=?)''',
                              (event_id, event_id)).fetchone()[0]
@@ -299,6 +302,7 @@ def event_profile(store, event_id):
         'event_id': event_id,
         'articles': articles,
         'sources': sources,
+        'member_sources': member_sources,
         'evidences': len(rows),
         'claims': claims,
         'source_families': families,

@@ -39,6 +39,54 @@ def _shown(items):
     """What this issue actually prints: worth attention AND within the source quota."""
     return [x for x in items if x.get('status') in {'priority','watch'} and x.get('distribution')!='deferred']
 
+def event_id_of(x):
+    return str((x.get('event') or {}).get('event_id') or '')
+
+
+def group_by_event(items):
+    """One card per event. The highest-scoring article represents it; the rest are listed.
+
+    Grouping happens across lanes on purpose: the same event filed once as economy and once
+    as an opportunity is still one thing that happened, and printing it twice is how a
+    reading list turns into a duplicate feed.
+    """
+    ordered = sorted(items, key=lambda v: (v.get('score', 0), v.get('title', '')), reverse=True)
+    reps, siblings = [], {}
+    for item in ordered:
+        event_id = event_id_of(item)
+        if event_id and event_id in siblings:
+            siblings[event_id].append(item)
+            continue
+        if event_id:
+            siblings[event_id] = []
+        reps.append(item)
+    return reps, siblings
+
+
+def event_summary_lines(x):
+    """What the R1 tables add: how many reports, how many families, whether they corroborate."""
+    event = x.get('event') or {}
+    if not event:
+        return []
+    members = event.get('members') or []
+    families = event.get('source_families') or []
+    others = max(0, len(members) - 1)
+    if others == 0 and len(families) <= 1 and not event.get('candidate_links'):
+        return []
+    verdict = '是' if event.get('independent_corroboration') else '否'
+    outlets = len(event.get('member_sources') or []) or len(event.get('sources') or [])
+    lines = [f"   事件结构：同事件报道 {len(members)} 篇 · 报道来源 {outlets} 个 · "
+             f"来源族 {len(families)} 个 · 独立佐证：{verdict}"]
+    if event.get('candidate_links'):
+        lines.append(f"   候选关联：{event['candidate_links']} 条（候选，未经确认）")
+    if others:
+        listed = [f"{m.get('source_name','?')}《{str(m.get('title',''))[:36]}》{m.get('url','')}"
+                  for m in members if m.get('url') and m['url'] != x.get('url')][:4]
+        if listed:
+            lines.append('   同事件其他报道：' + '；'.join(listed))
+    return lines
+
+
 def _deferred(items):
     return [x for x in items if x.get('distribution')=='deferred']
 
@@ -309,11 +357,15 @@ def render_digest(items,stats,date_label=None):
         lines.append(f"样本窗口：{window.get('since') or '(无下界)'} 至 {window.get('until') or '(无上界)'} UTC"
                      f"（池 {window.get('pool')} → 窗口内 {window.get('in_window')} → 取 {window.get('sampled')}）")
     sections=[('一、商业、科技与经济情报','A'),('二、值得验证的商业机会','B'),('三、技术观察与工程信号','C')]
+    # One card per event across all lanes; the siblings are printed under their event.
+    representatives,_siblings=group_by_event(shown)
     for title,lane in sections:
         lines+=['',title,f'   通道定义：{LANE_PROMISE[lane]}']
-        group=_by_lane(shown,lane)
+        group=[x for x in representatives if _lane(x)==lane]
         if group:
-            for i,x in enumerate(sorted(group,key=lambda v:v.get('score',0),reverse=True),1): lines+=_card(i,x)
+            for i,x in enumerate(group,1):
+                lines+=_card(i,x)
+                lines+=event_summary_lines(x)
         else:
             lines+=['   本期该通道没有条目进入观察区。']
     if not shown and not filtered:
