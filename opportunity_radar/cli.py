@@ -1,7 +1,7 @@
 from collections import Counter
 import argparse, hashlib, json, logging, os, re, sys
 from pathlib import Path
-from .config import Settings, load_scoring
+from .config import Settings, load_scoring, parse_backoff
 from .digest import render_digest, empty_reason
 from .email_sender import send_email, send_email_detailed, parse_recipients
 from .freshrss_client import FreshRSSClient, ordered_feed_ids
@@ -10,12 +10,14 @@ from .scoring import score_article, RULES_VERSION, DEFAULT_LANE_WEIGHTS, DEFAULT
 from .lanes import LANES
 from .source_policy import load_sources, is_approved
 from .store import Store
-from .analyzer import PROMPT_VERSION, PROMPT_HASH
+from .analyzer import (PROMPT_VERSION, PROMPT_HASH, CONNECT_RESET, CONNECT_REFUSED,
+                       TIMEOUT, UNKNOWN)
 from .source_audit import audit_sources
 from .sampling import parse_window, filter_articles
 from .fulltext import apply_article_bodies
-from .model_service import ensure_model
+from .model_service import ensure_model, health_ok
 from .log_util import rotate_log, RedactFilter
+from . import publication
 
 def _norm_name(value):
     """FreshRSS feed titles and registry names differ only in punctuation far more often
@@ -126,12 +128,16 @@ def sample():
 
 def _stats(items,fetched=0,new=0,queued=0,analyzed=0,failed=0,skipped=0,thresholds=None,weights=None,
            updated=0,duplicate_events=0,lane_weights=None,lane_thresholds=None,source_issues=None,
-           deferred=0,unresolved_sources=0,source_match=None):
+           deferred=0,unresolved_sources=0,source_match=None,not_attempted=0,publication_status=None,
+           coverage=None,failed_causes=None,circuit_open=False):
     counts={s:sum(1 for x in items if x.get('status')==s) for s in ('priority','watch','filtered')}
     st={'fetched':fetched,'new':new,'updated':updated,'queued':queued,'duplicate_events':duplicate_events,'analyzed':analyzed,'failed':failed,'skipped':skipped,
         'counts':counts,'rules_version':RULES_VERSION,'thresholds':thresholds or {},'weights':weights or {},
         'lane_weights':lane_weights or {},'lane_thresholds':lane_thresholds or {},'source_issues':source_issues or [],
         'deferred':deferred,'unresolved_sources':unresolved_sources,'source_match':source_match or {}}
+    if publication_status is not None:
+        st.update({'not_attempted':not_attempted,'publication_status':publication_status,
+                   'coverage':coverage,'failed_causes':failed_causes or {},'circuit_open':circuit_open})
     st['empty_reason']=empty_reason(st); return st
 
 def _validate_report(subject,body,html,items=None,stats=None):
@@ -139,6 +145,12 @@ def _validate_report(subject,body,html,items=None,stats=None):
         raise ValueError('report validation failed; keeping the previous report')
     # Every number printed in the report must come from the records it renders. Recompute
     # the status counts here rather than trusting a value passed alongside them.
+    # An incomplete run must say so in both formats. A report that prints fewer analyses
+    # than it queued without disclosing coverage reads as a quiet day, which is the failure
+    # R0 exists to prevent.
+    if stats and stats.get('coverage') is not None and stats['coverage']<1:
+        if '覆盖率' not in body or '覆盖率' not in html:
+            raise ValueError('report does not disclose analysis coverage; keeping the previous report')
     if items is not None and stats and stats.get('counts'):
         actual={s:sum(1 for x in items if x.get('status')==s) for s in ('priority','watch','filtered')}
         expected={s:stats['counts'][s] for s in actual if s in stats['counts']}
@@ -200,7 +212,26 @@ def dry_run_status(analyzed,errors):
     if analyzed==0 and errors>0: return 'analysis_failed'
     return 'partial_failed' if errors>0 else 'dry_run'
 
+# A breaker trips on connection-level breakage only. A 5xx means the server answered,
+# so it is retried per call but does not by itself justify abandoning the run.
+CIRCUIT_CAUSES=frozenset({CONNECT_RESET,CONNECT_REFUSED,TIMEOUT})
+CIRCUIT_AFTER_FAILURES=3
+
+def failure_cause(exc):
+    """A model call carries its own cause; anything else is unclassified, never guessed."""
+    return str(getattr(exc,'cause','') or UNKNOWN)
+
+def failure_attempts(exc):
+    value=getattr(exc,'attempts',None)
+    return int(value) if isinstance(value,int) and value>0 else None
+
+def hold_status(analyzed,failures):
+    """A held run still records what happened: nothing analysed is analysis_failed."""
+    return 'analysis_failed' if analyzed==0 and failures else 'partial_failed'
+
 def _alert(store,s,reason):
+    """Failure alert mail. Intentionally not called while every failure path is a HOLD:
+    the R0 decision is that a held run sends no alert either. Kept for a future non-HOLD path."""
     try: n=store.consecutive_failures()
     except Exception: n=0
     if n < s.alert_after_failures: return False
@@ -318,6 +349,12 @@ def main(argv=None):
         subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html); print(body); return 0
     ready,detail=ensure_model(s)
     if not ready:
+        # A dead model is a held run, not a missing one: the record must show what stopped
+        # the issue and that nothing was published. No subscription email and no alert mail.
+        held=store.start_run(stage='preflight')
+        store.finish_run(held,'failed',0,0,0,f'model unavailable: {detail}',exit_code=3,
+                         publication_status=publication.HOLD,coverage=0.0,
+                         failed_causes={'model_unavailable':1},not_attempted=0)
         logging.error('Local model unavailable: %s',detail)
         print(f'Local model unavailable: {detail}. Start deploy/windows/start-model.ps1 or set OR_MODEL_AUTOSTART=1.',file=sys.stderr)
         return 3
@@ -339,8 +376,14 @@ def main(argv=None):
                          s.sample_since or '(open)',s.sample_until or '(open)',len(raw),len(in_window),len(articles))
         store.update_run(rid,stage='analyzing')
         from .analyzer import LocalAnalyzer
-        model=LocalAnalyzer(s.llm_base_url,s.llm_model,s.llm_timeout,s.llm_max_tokens,api_key=s.llm_api_key)
-        queued=skipped=0
+        model=LocalAnalyzer(s.llm_base_url,s.llm_model,s.llm_timeout,s.llm_max_tokens,api_key=s.llm_api_key,
+                            connect_retries=s.llm_connect_retries,timeout_retries=s.llm_timeout_retries,
+                            backoff=parse_backoff(s.llm_retry_backoff),retry_after_max=s.llm_retry_after_max,
+                            retry_max_seconds=s.llm_retry_max_seconds)
+        queued=skipped=not_attempted=0
+        circuit_open=False
+        causes=Counter()
+        consecutive_transport_failures=0
         for a in articles:
             key=Store.key(a.url)
             was_analyzed=store.analyzed(key)
@@ -358,6 +401,14 @@ def main(argv=None):
                 logging.info('Duplicate event skipped: %s',a.title)
                 continue
             queued+=1
+            if circuit_open:
+                # The model is gone. Keep walking the list so every article it would have
+                # analysed is recorded as not attempted, instead of vanishing from the count.
+                not_attempted+=1; causes['circuit_open']+=1
+                try: store.record_analysis_failure(rid,key,a.url,'analyze','model circuit open; article not attempted',
+                                                   cause='circuit_open',attempts=0)
+                except Exception: logging.exception('Could not record unattempted article: %s',a.url)
+                continue
             try:
                 prior_sources=store.event_sources(Store.event_key(a.title),key)
                 multi_source=len(prior_sources|{a.source_name})>=2
@@ -369,15 +420,35 @@ def main(argv=None):
                 item['intelligence_lines']=getattr(source_by_feed.get(a.feed_id),'intelligence_lines','')
                 store.save_analysis(key,result,item['scoring'],item['meta'])
                 items.append(item); analyzed+=1
+                consecutive_transport_failures=0
             except Exception as exc:
                 errors+=1
-                try: store.record_analysis_failure(rid,key,a.url,'analyze',f'{type(exc).__name__}: {exc}')
+                cause=failure_cause(exc); attempts=failure_attempts(exc)
+                causes[cause]+=1
+                try: store.record_analysis_failure(rid,key,a.url,'analyze',f'{type(exc).__name__}: {exc}',
+                                                   cause=cause,attempts=attempts)
                 except Exception: logging.exception('Could not record analysis failure: %s',a.url)
                 logging.exception('Article analysis failed: %s',a.url)
+                if cause in CIRCUIT_CAUSES:
+                    consecutive_transport_failures+=1
+                    # One health probe on the first connection-level failure; repeated failures
+                    # then trip the breaker even if /health keeps answering.
+                    unhealthy=(consecutive_transport_failures==1 and not health_ok(s.llm_base_url))
+                    if not circuit_open and (unhealthy or consecutive_transport_failures>=CIRCUIT_AFTER_FAILURES):
+                        circuit_open=True
+                        logging.error('Model became unreachable (%s); %d article(s) already failed, '
+                                      'the rest will be recorded as not attempted',cause,consecutive_transport_failures)
+                else:
+                    consecutive_transport_failures=0
         caps=apply_source_caps(items,sources)
+        cov=publication.coverage(analyzed,queued)
+        pub=publication.decide(analyzed,queued,integrity_fault=False,
+                               min_coverage=s.publish_min_coverage,hold_below=s.publish_hold_below)
         stats=_stats(items,fetched,new_count,queued,analyzed,errors,skipped,updated=updated_count,duplicate_events=duplicate_events,
                      lane_weights=lane_weights,lane_thresholds=lane_thresholds,source_issues=source_issues,
-                     deferred=caps['deferred'],unresolved_sources=caps['unresolved'])
+                     deferred=caps['deferred'],unresolved_sources=caps['unresolved'],
+                     not_attempted=not_attempted,publication_status=pub,coverage=cov,
+                     failed_causes=dict(causes),circuit_open=circuit_open)
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
         if pages_fetched: stats['full_text_fetched']=pages_fetched
         if win_start or win_end:
@@ -389,23 +460,39 @@ def main(argv=None):
         out=Path(s.report_dir)/'latest-digest.txt'
         if args.dry_run:
             status=dry_run_status(analyzed,errors)
+            if pub==publication.HOLD and status=='dry_run': status=hold_status(analyzed,errors+not_attempted)
             exit_code=0 if status=='dry_run' else 1
-            message='No email sent (dry run)' if status=='dry_run' else f'Dry run with {errors} failed article(s); no email sent'
-            store.finish_run(rid,status,fetched,analyzed,errors,message,archive_path,report_hash,exit_code=exit_code)
+            message=('No email sent (dry run)' if status=='dry_run'
+                     else f'Dry run with {errors} failed and {not_attempted} unattempted article(s); no email sent')
+            store.finish_run(rid,status,fetched,analyzed,errors,message,archive_path,report_hash,exit_code=exit_code,
+                             publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             print(body)
             if status=='analysis_failed': print('No analysis succeeded; see the log. Report saved to '+str(out)+'.',file=sys.stderr)
             elif status=='partial_failed': print(f'Dry run completed with {errors} failed article(s). Report saved to {out}.',file=sys.stderr)
             else: print(f'Saved to {out} and latest-digest.html; no email sent.')
             return exit_code
+        if pub==publication.HOLD:
+            # The only place that may stop a subscription email. It must run before every
+            # other send branch, including the duplicate and no-new-content paths.
+            reason=f'分析覆盖率 {cov:.0%} 低于 {s.publish_hold_below:.0%}'
+            store.finish_run(rid,hold_status(analyzed,errors+not_attempted),fetched,analyzed,errors,
+                             f'HOLD: {reason}; subscription email skipped',archive_path,report_hash,
+                             exit_code=1,publication_status=publication.HOLD,coverage=cov,
+                             failed_causes=dict(causes),not_attempted=not_attempted)
+            logging.error('Publication held (%s); no subscription email sent. Report: %s',reason,out)
+            print(body)
+            print(f'发布暂缓 HOLD（{reason}）：本地报告已保存到 {out}，未发送订阅邮件。',file=sys.stderr)
+            return 1
         decision=send_decision(analyzed,updated_count,errors,s.email_on_empty)
         if decision=='analysis_failed':
-            store.finish_run(rid,'analysis_failed',fetched,analyzed,errors,'All attempted analyses failed; email skipped',archive_path,report_hash,exit_code=1)
+            store.finish_run(rid,'analysis_failed',fetched,analyzed,errors,'All attempted analyses failed; email skipped',
+                             archive_path,report_hash,exit_code=1,publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             logging.error('No analysis succeeded; digest not sent.')
-            _alert(store,s,f'{errors} analyses failed and none succeeded')
             print(body); print('No analysis succeeded; digest not sent. See the log.',file=sys.stderr); return 1
         if decision=='no_new_content':
             store.delivery(rid,'skipped_no_new_content','No new analyses')
-            store.finish_run(rid,'no_new_content',fetched,analyzed,errors,'No new content; email skipped',archive_path,report_hash,exit_code=0)
+            store.finish_run(rid,'no_new_content',fetched,analyzed,errors,'No new content; email skipped',
+                             archive_path,report_hash,exit_code=0,publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             logging.info('No new content; digest not sent.')
             print(body); print(f'No new content; report saved to {out} but not emailed.'); return 0
         key=hashlib.sha256(f'{subject}|{report_hash}'.encode()).hexdigest()[:32]
@@ -415,7 +502,8 @@ def main(argv=None):
         if not pending:
             store.delivery(rid,'skipped_duplicate','All recipients already sent',key)
             status=run_status(errors)
-            store.finish_run(rid,status,fetched,analyzed,errors,'Duplicate report; email skipped',archive_path,report_hash,exit_code=0 if status=='success' else 1)
+            store.finish_run(rid,status,fetched,analyzed,errors,'Duplicate report; email skipped',
+                             archive_path,report_hash,exit_code=0 if status=='success' else 1,publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             logging.info('Duplicate report; email skipped.')
             print(f'Same report already sent to all recipients; email skipped. Report saved to {out}.'); return 0 if status=='success' else 1
         store.update_run(rid,stage='sending')
@@ -427,15 +515,19 @@ def main(argv=None):
         if failed:
             msg=f"{len(results)-len(failed)}/{len(results)} pending recipient(s) sent; failed: "+', '.join(r['recipient'] for r in failed)
             logging.error(msg)
-            store.finish_run(rid,'partial_failed',fetched,analyzed,errors,msg,archive_path,report_hash,exit_code=1)
+            store.finish_run(rid,'partial_failed',fetched,analyzed,errors,msg,archive_path,report_hash,exit_code=1,publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             print(body); print(msg,file=sys.stderr); return 1
         status=run_status(errors)
-        store.finish_run(rid,status,fetched,analyzed,errors,'Some articles failed' if status!='success' else '',archive_path,report_hash,exit_code=0 if status=='success' else 1)
+        store.finish_run(rid,status,fetched,analyzed,errors,'Some articles failed' if status!='success' else '',
+                         archive_path,report_hash,exit_code=0 if status=='success' else 1,publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
         if status!='success': logging.warning('Run completed with article errors: %d',errors)
         logging.info('Digest sent: articles=%d analyzed=%d errors=%d recipients=%d',fetched,analyzed,errors,len(results))
         return 0 if status=='success' else 1
     except Exception as e:
-        store.finish_run(rid,'failed',fetched,analyzed,errors+1,str(e),exit_code=1); logging.exception('Run failed')
-        _alert(store,s,str(e))
+        store.finish_run(rid,'failed',fetched,analyzed,errors+1,str(e),exit_code=1,
+                         publication_status=publication.HOLD,coverage=locals().get('cov'),
+                         failed_causes={**locals().get('causes',{}),'integrity':1},
+                         not_attempted=locals().get('not_attempted',0))
+        logging.exception('Run failed; publication held')
         print(f'Run failed: {e}',file=sys.stderr); return 1
 if __name__=='__main__': raise SystemExit(main())

@@ -27,16 +27,19 @@ class Store:
         CREATE TABLE IF NOT EXISTS article_versions(article_key TEXT NOT NULL, summary_hash TEXT NOT NULL, content_source TEXT, fetched_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(article_key,summary_hash));
         CREATE TABLE IF NOT EXISTS analyses(article_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS analysis_history(history_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL, UNIQUE(article_key,analyzed_at));
-        CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT, stage TEXT, exit_code INTEGER, pid INTEGER);
+        CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, article_count INTEGER DEFAULT 0, analyzed_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0, message TEXT, report_path TEXT, report_hash TEXT, stage TEXT, exit_code INTEGER, pid INTEGER, publication_status TEXT, coverage REAL, failed_causes TEXT, not_attempted INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS deliveries(delivery_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, sent_at TEXT, status TEXT NOT NULL, message TEXT, idempotency_key TEXT, recipient TEXT);
-        CREATE TABLE IF NOT EXISTS analysis_failures(failure_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, article_key TEXT, url TEXT, stage TEXT, error TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS analysis_failures(failure_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, article_key TEXT, url TEXT, stage TEXT, error TEXT, created_at TEXT NOT NULL, cause TEXT, attempts INTEGER);
         CREATE TABLE IF NOT EXISTS analysis_sections(section_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, analyzed_at TEXT NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, evidence_id TEXT, meta_json TEXT, UNIQUE(article_key,analyzed_at,kind,ordinal));
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
             for name in ('fetched_at','content_source','retrieval_status','event_key'):
                 if name not in cols: c.execute(f'ALTER TABLE articles ADD COLUMN {name} TEXT')
-            for table,extra in (('runs',(('report_path','TEXT'),('report_hash','TEXT'),('stage','TEXT'),('exit_code','INTEGER'),('pid','INTEGER'))),('deliveries',(('idempotency_key','TEXT'),('recipient','TEXT')))):
+            for table,extra in (('runs',(('report_path','TEXT'),('report_hash','TEXT'),('stage','TEXT'),('exit_code','INTEGER'),('pid','INTEGER'),
+                                           ('publication_status','TEXT'),('coverage','REAL'),('failed_causes','TEXT'),('not_attempted','INTEGER'))),
+                                 ('deliveries',(('idempotency_key','TEXT'),('recipient','TEXT'))),
+                                 ('analysis_failures',(('cause','TEXT'),('attempts','INTEGER')))):
                 have={r[1] for r in c.execute(f'PRAGMA table_info({table})')}
                 for name,typ in extra:
                     if name not in have: c.execute(f'ALTER TABLE {table} ADD COLUMN {name} {typ}')
@@ -149,18 +152,22 @@ class Store:
             except ValueError: d['meta']={}
             out.append(d)
         return out
-    def record_analysis_failure(self,run_id,article_key,url,stage,error):
-        """Persist one failed article so a bad run stays diagnosable after the log rotates."""
+    def record_analysis_failure(self,run_id,article_key,url,stage,error,cause=None,attempts=None):
+        """Persist one failed article so a bad run stays diagnosable after the log rotates.
+
+        `cause` groups twenty failures into "the model went away" instead of twenty unrelated
+        errors; `attempts` records how many HTTP requests were actually made before giving up.
+        """
         with self.connect() as c:
-            c.execute('INSERT INTO analysis_failures(run_id,article_key,url,stage,error,created_at) VALUES(?,?,?,?,?,?)',
-                      (run_id,article_key,url,stage,str(error)[:1000],now()))
+            c.execute('INSERT INTO analysis_failures(run_id,article_key,url,stage,error,created_at,cause,attempts) VALUES(?,?,?,?,?,?,?,?)',
+                      (run_id,article_key,url,stage,str(error)[:1000],now(),cause,attempts))
     def analysis_failures(self,run_id=None,limit=100):
         """Failure rows for one run, or the most recent rows when no run is given."""
         with self.connect() as c:
             if run_id is None:
-                rows=c.execute('SELECT failure_id,run_id,article_key,url,stage,error,created_at FROM analysis_failures ORDER BY failure_id DESC LIMIT ?',(limit,))
+                rows=c.execute('SELECT failure_id,run_id,article_key,url,stage,error,created_at,cause,attempts FROM analysis_failures ORDER BY failure_id DESC LIMIT ?',(limit,))
             else:
-                rows=c.execute('SELECT failure_id,run_id,article_key,url,stage,error,created_at FROM analysis_failures WHERE run_id=? ORDER BY failure_id',(run_id,))
+                rows=c.execute('SELECT failure_id,run_id,article_key,url,stage,error,created_at,cause,attempts FROM analysis_failures WHERE run_id=? ORDER BY failure_id',(run_id,))
             return [dict(r) for r in rows]
     def analysis_history(self,key,limit=20):
         with self.connect() as c:
@@ -175,8 +182,19 @@ class Store:
         if not sets: return
         vals.append(rid)
         with self.connect() as c: c.execute(f"UPDATE runs SET {', '.join(sets)} WHERE run_id=?",vals)
-    def finish_run(self,rid,status,ac,an,err,msg='',report_path='',report_hash='',exit_code=None):
-        with self.connect() as c: c.execute('UPDATE runs SET finished_at=?,status=?,article_count=?,analyzed_count=?,error_count=?,message=?,report_path=?,report_hash=?,exit_code=?,stage=? WHERE run_id=?',(now(),status,ac,an,err,msg[:1000],report_path or '',report_hash or '',exit_code,'done',rid))
+    def finish_run(self,rid,status,ac,an,err,msg='',report_path='',report_hash='',exit_code=None,
+                   publication_status=None,coverage=None,failed_causes=None,not_attempted=None):
+        """Close a run. Publication fields are optional so pre-R0 callers keep working."""
+        causes=None if failed_causes is None else json.dumps(failed_causes,ensure_ascii=False,sort_keys=True)
+        with self.connect() as c:
+            c.execute('UPDATE runs SET finished_at=?,status=?,article_count=?,analyzed_count=?,error_count=?,message=?,report_path=?,report_hash=?,exit_code=?,stage=?,publication_status=COALESCE(?,publication_status),coverage=COALESCE(?,coverage),failed_causes=COALESCE(?,failed_causes),not_attempted=COALESCE(?,not_attempted) WHERE run_id=?',
+                      (now(),status,ac,an,err,msg[:1000],report_path or '',report_hash or '',exit_code,'done',publication_status,coverage,causes,not_attempted,rid))
+    @staticmethod
+    def parse_causes(run):
+        """failure reasons stored as JSON, or {} for rows written before R0."""
+        try: value=json.loads((run or {}).get('failed_causes') or '{}')
+        except (TypeError,ValueError): return {}
+        return value if isinstance(value,dict) else {}
     def latest_run(self):
         with self.connect() as c:
             r=c.execute('SELECT * FROM runs ORDER BY run_id DESC LIMIT 1').fetchone()

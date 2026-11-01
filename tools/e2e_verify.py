@@ -7,10 +7,16 @@ shapes every check: a failed analysis must never look like a quiet day with no n
 
 Two runs:
   happy  - the configured model, a few articles; must produce analyses and a report.
-  fault  - a local server that returns well-formed JSON with an invalid category
-           (ISSUE-001). By then some articles are already analysed, so the run has
-           both skipped and failed articles - the exact combination that used to print
-           "no new analysis tasks" while every attempt had failed.
+  fault  - a local server that fails in a chosen way (--fault-mode):
+             schema   well-formed JSON with an invalid category (ISSUE-001): some articles
+                      are already analysed, so the run has both skipped and failed
+                      articles - the combination that used to print "no new analysis
+                      tasks" while every attempt had failed.
+             server   every completion returns 503 with Retry-After, so the bounded retry
+                      and the coverage gate are exercised end to end.
+             reset    every completion drops the connection, so the circuit breaker trips
+                      and the rest of the articles are recorded as not attempted.
+             refuse   a closed port, i.e. the model is unavailable before the run starts.
 
 Exit codes: 0 pass, 1 verification failure, 2 preflight/environment failure,
 3 baseline packaging failure.
@@ -28,6 +34,7 @@ import json
 import os
 import shutil
 import sqlite3
+import socket
 import subprocess
 import sys
 import threading
@@ -107,7 +114,7 @@ def preflight(settings, limit):
     return checks, pool
 
 
-def run_pipeline(workdir, limit, llm_base_url=None):
+def run_pipeline(workdir, limit, llm_base_url=None, extra_env=None):
     """Run `python -m opportunity_radar.cli --dry-run` against an isolated store."""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -122,12 +129,25 @@ def run_pipeline(workdir, limit, llm_base_url=None):
     })
     if llm_base_url:
         env["OR_LLM_BASE_URL"] = llm_base_url
+    env.update(extra_env or {})
     proc = subprocess.run([sys.executable, "-m", "opportunity_radar.cli", "--dry-run"],
                           cwd=ROOT, env=env, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=3600)
     (workdir / "stdout.txt").write_text(proc.stdout, encoding="utf-8")
     (workdir / "stderr.txt").write_text(proc.stderr, encoding="utf-8")
     return proc
+
+
+def read_deliveries(workdir):
+    db = Path(workdir) / "run.sqlite3"
+    if not db.exists():
+        return []
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute("SELECT status, recipient, message FROM deliveries")]
+    finally:
+        conn.close()
 
 
 def read_run(workdir):
@@ -172,11 +192,39 @@ def load_artifacts(workdir):
     }
 
 
-def evaluate_run(run, artifacts, failures):
+PASS_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS", "HOLD"}
+
+
+def evaluate_publication(run, deliveries=None):
+    """R0 checks: the gate recorded, the arithmetic reproducible, and HOLD never sent mail."""
+    out = []
+    status = run.get("publication_status")
+    coverage = run.get("coverage")
+    out.append(_check("publication_recorded", status in PASS_STATUSES,
+                      f"publication_status={status!r}"))
+    analyzed = int(run.get("analyzed_count") or 0)
+    errors = int(run.get("error_count") or 0)
+    unattempted = int(run.get("not_attempted") or 0)
+    queued = analyzed + errors + unattempted
+    expected = 1.0 if queued == 0 else analyzed / queued
+    recorded = None if coverage is None else float(coverage)
+    out.append(_check("coverage_matches_counts",
+                      recorded is not None and abs(recorded - expected) < 1e-9,
+                      f"recorded={recorded} computed={expected:.4f} "
+                      f"(analyzed={analyzed} failed={errors} unattempted={unattempted})"))
+    if status == "HOLD":
+        sent = [d for d in (deliveries or []) if str(d.get("status")) == "sent"]
+        out.append(_check("hold_sends_nothing", not sent,
+                          f"{len(sent)} sent deliver(ies) on a held run"))
+    return out
+
+
+def evaluate_run(run, artifacts, failures, deliveries=None):
     """Pure verification of one run. `failures` is None when the table does not exist."""
     out = [_check("run_recorded", run is not None, f"run_id={run.get('run_id')}" if run else "no run row")]
     if not run:
         return out
+    out.extend(evaluate_publication(run, deliveries))
     analyzed = int(run.get("analyzed_count") or 0)
     errors = int(run.get("error_count") or 0)
     status = str(run.get("status") or "")
@@ -267,11 +315,58 @@ class _FaultModel(BaseHTTPRequestHandler):
         self._send({"choices": [{"message": {"content": FAULT_BODY}}]})
 
 
+class _QuietServer(ThreadingHTTPServer):
+    """A dropped connection is the fault we want, not a traceback in the verifier's output."""
+
+    def handle_error(self, request, client_address):
+        pass
+
+
+class _ServerFaultModel(_FaultModel):
+    """Every completion is 503 with Retry-After; /health keeps answering."""
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        body = b'{"error":"unavailable"}'
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Retry-After", "1")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class _ResetFaultModel(_FaultModel):
+    """Every completion drops the socket before a response: what a killed model looks like."""
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        self.close_connection = True
+        try:
+            self.connection.close()
+        except OSError:
+            pass
+
+
+def free_port():
+    """A port nothing is listening on, for the 'model is down' fault."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 class FakeModelServer:
-    """A local OpenAI-compatible endpoint that always fails schema validation."""
+    """A local OpenAI-compatible endpoint that fails in the requested way."""
+
+    def __init__(self, handler=_FaultModel):
+        self.handler = handler
 
     def __enter__(self):
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _FaultModel)
+        self.httpd = _QuietServer(("127.0.0.1", 0), self.handler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         return f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
@@ -353,6 +448,8 @@ def main(argv=None):
     parser.add_argument("--baseline-dir", type=Path, help="copy the run into this directory")
     parser.add_argument("--workdir", type=Path, help="reuse a working directory instead of a timestamped one")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--fault-mode", choices=("schema", "server", "reset", "refuse"), default="schema",
+                        help="how the injected-failure run should break (default: schema)")
     args = parser.parse_args(argv)
 
     limit = max(1, args.limit)
@@ -392,10 +489,43 @@ def main(argv=None):
             # Reuse the happy store so some articles are already analysed: the fault run
             # then has skipped>0 and failed>0, which is where the masking bug lived.
             shutil.copy2(happy_dir / "run.sqlite3", fault_dir / "run.sqlite3")
-        with FakeModelServer() as fault_url:
-            fault_proc = run_pipeline(fault_dir, limit + 2, llm_base_url=fault_url)
-        fault_run, fault_failures = read_run(fault_dir)
-        fault_checks = evaluate_run(fault_run, load_artifacts(fault_dir), fault_failures)
+        # A fault run must not sit through the production backoff; the retry logic itself is
+        # what is under test, not the wall clock.
+        fault_env = {"OR_LLM_RETRY_BACKOFF": "0,0,0", "OR_LLM_RETRY_AFTER_MAX": "2"}
+        handlers = {"schema": _FaultModel, "server": _ServerFaultModel, "reset": _ResetFaultModel}
+        if args.fault_mode == "refuse":
+            fault_url = f"http://127.0.0.1:{free_port()}/v1"
+            fault_proc = run_pipeline(fault_dir, limit + 2, llm_base_url=fault_url, extra_env=fault_env)
+            fault_run, fault_failures = read_run(fault_dir)
+            fault_checks = [
+                _check("refused_model_recorded", fault_run is not None),
+                _check("refused_model_is_held",
+                       bool(fault_run) and fault_run.get("publication_status") == "HOLD"
+                       and fault_run.get("status") == "failed",
+                       f"status={fault_run and fault_run.get('status')} "
+                       f"publication={fault_run and fault_run.get('publication_status')}"),
+                _check("refused_model_sends_nothing", not read_deliveries(fault_dir),
+                       f"{len(read_deliveries(fault_dir))} delivery row(s)"),
+                _check("refused_model_exit_code", fault_proc.returncode == 3,
+                       f"exit={fault_proc.returncode}"),
+            ]
+        else:
+            with FakeModelServer(handlers[args.fault_mode]) as fault_url:
+                fault_proc = run_pipeline(fault_dir, limit + 2, llm_base_url=fault_url, extra_env=fault_env)
+            fault_run, fault_failures = read_run(fault_dir)
+            fault_checks = evaluate_run(fault_run, load_artifacts(fault_dir), fault_failures,
+                                        read_deliveries(fault_dir))
+            if args.fault_mode == "server":
+                fault_checks.append(_check(
+                    "server_fault_holds",
+                    bool(fault_run) and fault_run.get("publication_status") == "HOLD",
+                    f"publication={fault_run and fault_run.get('publication_status')} "
+                    f"analyzed={fault_run and fault_run.get('analyzed_count')}"))
+            elif args.fault_mode == "reset":
+                fault_checks.append(_check(
+                    "reset_trips_breaker",
+                    bool(fault_run) and int(fault_run.get("not_attempted") or 0) > 0,
+                    f"not_attempted={fault_run and fault_run.get('not_attempted')}"))
         payload["runs"]["fault"] = {"returncode": fault_proc.returncode, "run": fault_run,
                                     "failures": fault_failures, "checks": fault_checks}
         if not args.json:

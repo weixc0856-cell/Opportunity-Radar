@@ -16,6 +16,22 @@ def load_dotenv(path='.env'):
 def bval(k, default=True):
     return os.getenv(k, str(default)).lower().strip() in {'1','true','yes','on'}
 
+def _ratio(raw, fallback=1.0):
+    """A coverage threshold in 0..1. An unparseable value must not silently widen the gate."""
+    try: value=float(raw)
+    except (TypeError,ValueError): return fallback
+    if value!=value: return fallback  # NaN
+    return max(0.0,min(1.0,value))
+
+def parse_backoff(raw, fallback=(2.0,5.0,10.0)):
+    """'2,5,10' -> (2.0,5.0,10.0); ignore junk instead of failing at startup."""
+    out=[]
+    for part in str(raw or '').split(','):
+        try: value=float(part.strip())
+        except (TypeError,ValueError): continue
+        if value>=0: out.append(value)
+    return tuple(out) or tuple(fallback)
+
 def load_scoring(path='config/scoring.toml'):
     """Read weights and thresholds from TOML so the report obeys the same rules as the score."""
     p=Path(path)
@@ -32,6 +48,11 @@ class Settings:
     smtp_security:str=''; email_on_empty:bool=False; alert_after_failures:int=3
     sample_since:str=''; sample_until:str=''
     model_autostart:bool=False; model_start_timeout:int=600
+    # R0 publication gate: retries are counted after the first attempt, so
+    # llm_connect_retries=3 means at most 4 HTTP attempts for one call.
+    llm_connect_retries:int=3; llm_timeout_retries:int=1; llm_retry_backoff:str='2,5,10'
+    llm_retry_after_max:int=30; llm_retry_max_seconds:int=120
+    publish_min_coverage:float=0.8; publish_hold_below:float=0.5
     @classmethod
     def from_env(cls):
         load_dotenv()
@@ -63,7 +84,14 @@ class Settings:
                    db_path=g('OR_DB_PATH','data/opportunity_radar.sqlite3'),log_path=g('OR_LOG_PATH','reports/opportunity-radar.log'),report_dir=g('OR_REPORT_DIR','reports'),
                    email_on_empty=bval('OR_EMAIL_ON_EMPTY',False),alert_after_failures=max(1,int(g('OR_ALERT_AFTER_FAILURES','3'))),
                    sample_since=g('OR_SAMPLE_SINCE'),sample_until=g('OR_SAMPLE_UNTIL'),
-                   model_autostart=bval('OR_MODEL_AUTOSTART',False),model_start_timeout=max(30,int(g('OR_MODEL_START_TIMEOUT','600'))))
+                   model_autostart=bval('OR_MODEL_AUTOSTART',False),model_start_timeout=max(30,int(g('OR_MODEL_START_TIMEOUT','600'))),
+                   llm_connect_retries=max(0,int(g('OR_LLM_CONNECT_RETRIES','3'))),
+                   llm_timeout_retries=max(0,int(g('OR_LLM_TIMEOUT_RETRIES','1'))),
+                   llm_retry_backoff=g('OR_LLM_RETRY_BACKOFF','2,5,10'),
+                   llm_retry_after_max=max(1,int(g('OR_LLM_RETRY_AFTER_MAX','30'))),
+                   llm_retry_max_seconds=max(0,int(g('OR_LLM_RETRY_MAX_SECONDS','120'))),
+                   publish_min_coverage=_ratio(g('OR_PUBLISH_MIN_COVERAGE','0.8')),
+                   publish_hold_below=_ratio(g('OR_PUBLISH_HOLD_BELOW','0.5')))
     def validate(self, mail=True):
         required={'OR_FRESHRSS_USERNAME':self.freshrss_username,'OR_FRESHRSS_API_KEY':self.freshrss_api_key,'OR_LLM_MODEL':self.llm_model}
         if mail: required.update({'OR_SMTP_HOST':self.smtp_host,'OR_EMAIL_FROM':self.email_from,'OR_EMAIL_TO':self.email_to})

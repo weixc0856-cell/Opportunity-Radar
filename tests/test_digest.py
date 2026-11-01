@@ -220,3 +220,18 @@ class EmptyReportTests(unittest.TestCase):
  def test_empty_briefing_states_the_evidence_distribution_as_none(self):
   _,body=render_digest([],stats(),'2026-10-20')
   self.assertIn('证据等级分布 无。',body)
+
+class CoverageDisclosureTests(unittest.TestCase):
+ def test_partial_coverage_is_named_in_the_headline_and_the_body(self):
+  _,body=render_digest([item()],stats(fetched=10,queued=10,analyzed=6,failed=4,coverage=0.6,
+        publication_status='PASS_WITH_LIMITATIONS',failed_causes={'http_5xx':4},not_attempted=0))
+  self.assertIn('未完整完成',body);self.assertIn('覆盖率 60%',body)
+  self.assertIn('运行完整性',body);self.assertIn('服务端错误 5xx 4',body)
+ def test_a_breaker_is_visible_in_the_report(self):
+  _,body=render_digest([item()],stats(fetched=10,queued=10,analyzed=9,failed=0,not_attempted=1,
+        coverage=0.9,publication_status='PASS',failed_causes={'circuit_open':1}))
+  self.assertIn('熔断后未尝试 1 篇',body)
+ def test_a_complete_run_does_not_claim_a_gap(self):
+  _,body=render_digest([item()],stats(fetched=5,queued=5,analyzed=5,coverage=1.0,publication_status='PASS'))
+  self.assertNotIn('运行完整性',body)
+

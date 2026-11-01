@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from .digest import (REASON_LABEL,SOURCE_LABEL,MARKET_LABEL,WEIGHT_LABEL,
                      decision_headline,management_note,strategic_note,empty_reason,_pay_strong,_judgment,
                      _why,_evidence_text,_market,_commercial_line,_by_lane,_lane,_state,_shown,_deferred,STATUS_LABEL)
+from .publication import disclosure
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL,summarize
 from .evidence import STATE_LABEL,STATE_MEANING,EVIDENCE_STATES
@@ -175,6 +176,10 @@ def render_html(items,stats,date_label=None):
         parts.append(f'<div style="margin-top:18px;background:#fff;border:1px solid {RULE};padding:14px 16px;font-size:13px;line-height:1.7;color:#4b5563;">{_e(reason)}</div>')
     parts.append(_section(f'{n:02d}','数据概览')); n+=1
     parts.append(_chart_block('处理漏斗（条目数）',funnel(stats)))
+    disclosed=disclosure(stats)
+    if disclosed:
+        # The HTML is what most readers actually see; it must not look complete when it is not.
+        parts.append(f'<div style="margin-top:14px;background:#fff7ed;border:1px solid #fdba74;padding:12px 14px;font-size:12.5px;line-height:1.75;color:#7c2d12;"><strong>运行完整性：</strong>{_e(disclosed)}</div>')
     parts.append(_chart_block('通道分布（分析条目）',[(LANE_LABEL[r['lane']][:8],r['items'],f"入选 {r['shown']}") for r in lane_breakdown(items)]))
     line_rows=[(INTELLIGENCE_LINE_LABEL.get(str(k),str(k))[:10],v,'来源声明') for k,v in summarize(items)]
     if line_rows: parts.append(_chart_block('情报主线（分析条目）',line_rows))

@@ -11,7 +11,9 @@ from opportunity_radar.schema import CATEGORIES  # noqa: E402
 
 def run_row(**kw):
     row = {'run_id': 1, 'status': 'dry_run', 'article_count': 2, 'analyzed_count': 2,
-           'error_count': 0, 'exit_code': 0, 'stage': 'done', 'message': ''}
+           'error_count': 0, 'exit_code': 0, 'stage': 'done', 'message': '',
+           'publication_status': 'PASS', 'coverage': 1.0, 'not_attempted': 0,
+           'failed_causes': '{}'}
     row.update(kw)
     return row
 
@@ -128,6 +130,74 @@ class FaultPayloadTests(unittest.TestCase):
         parsed = json.loads(e2e.FAULT_BODY)
         self.assertIn(parsed['category'], {'policy_change', 'political_event'})
         self.assertNotIn(parsed['category'], CATEGORIES)
+
+
+
+class PublicationGateTests(unittest.TestCase):
+    """The verifier must be able to fail a run whose gate arithmetic does not hold."""
+
+    def checks(self, run, deliveries=None):
+        return {c['code']: c['ok'] for c in e2e.evaluate_publication(run, deliveries)}
+
+    def test_a_consistent_pass_run_is_accepted(self):
+        result = self.checks(run_row(analyzed_count=4, error_count=1, not_attempted=0, coverage=0.8))
+        self.assertTrue(result['publication_recorded'])
+        self.assertTrue(result['coverage_matches_counts'])
+
+    def test_a_missing_publication_status_is_a_failure(self):
+        result = self.checks(run_row(publication_status=None))
+        self.assertFalse(result['publication_recorded'])
+
+    def test_coverage_that_does_not_add_up_is_a_failure(self):
+        result = self.checks(run_row(analyzed_count=2, error_count=0, coverage=0.9))
+        self.assertFalse(result['coverage_matches_counts'])
+
+    def test_a_held_run_that_sent_mail_is_a_failure(self):
+        run = run_row(status='partial_failed', analyzed_count=1, error_count=1, coverage=0.5,
+                      publication_status='HOLD')
+        self.assertFalse(self.checks(run, [{'status': 'sent', 'recipient': 'x@example.org'}])['hold_sends_nothing'])
+        self.assertTrue(self.checks(run, [])['hold_sends_nothing'])
+
+    def test_unattempted_articles_count_as_a_coverage_gap(self):
+        run = run_row(analyzed_count=3, error_count=0, not_attempted=1, coverage=0.75)
+        self.assertTrue(self.checks(run)['coverage_matches_counts'])
+
+
+
+
+class FaultServerTests(unittest.TestCase):
+    """The injected faults must be the failures the gate is supposed to survive."""
+
+    def post(self, base):
+        import urllib.request
+        return urllib.request.urlopen(
+            urllib.request.Request(base + '/chat/completions', data=b'{}', method='POST'), timeout=5)
+
+    def test_the_server_fault_answers_503_with_retry_after(self):
+        import urllib.error
+        with e2e.FakeModelServer(e2e._ServerFaultModel) as base:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post(base)
+            self.assertEqual(ctx.exception.code, 503)
+            self.assertEqual(ctx.exception.headers.get('Retry-After'), '1')
+
+    def test_the_server_fault_keeps_health_answering(self):
+        import urllib.request
+        with e2e.FakeModelServer(e2e._ServerFaultModel) as base:
+            with urllib.request.urlopen(base + '/health', timeout=5) as r:
+                self.assertEqual(json.loads(r.read())['status'], 'ok')
+
+    def test_the_reset_fault_drops_the_connection(self):
+        import http.client, urllib.error
+        with e2e.FakeModelServer(e2e._ResetFaultModel) as base:
+            with self.assertRaises((urllib.error.URLError, ConnectionResetError, http.client.HTTPException)):
+                self.post(base)
+
+    def test_free_port_reports_a_port_nothing_listens_on(self):
+        import socket
+        with socket.socket() as probe:
+            self.assertNotEqual(probe.connect_ex(('127.0.0.1', e2e.free_port())), 0)
+
 
 
 if __name__ == '__main__':

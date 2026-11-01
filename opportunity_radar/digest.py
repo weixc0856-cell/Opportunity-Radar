@@ -3,6 +3,7 @@ from datetime import datetime
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL, summarize
 from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES, state_of
+from .publication import disclosure, headline_notice
 from .lanes import LANES, LANE_LABEL, LANE_PROMISE, item_lane as _lane
 
 STATUS_LABEL={'priority':'优先验证','watch':'持续观察','filtered':'已过滤'}
@@ -60,7 +61,11 @@ def _market(x):
     return 'single_source' if (x.get('evidence') or []) else 'none'
 
 def decision_headline(items,stats):
+    """One line a reader can act on. An incomplete run says so before it says anything else."""
     if stats.get('sample_mode'): return '本页仅展示报告结构与评分流程，不形成真实商业判断。'
+    return headline_notice(stats)+_decision_body(items,stats)
+
+def _decision_body(items,stats):
     visible=_shown(items); pri=[x for x in visible if x.get('status')=='priority']; watch=[x for x in visible if x.get('status')=='watch']
     deferred=_deferred(items)
     if pri:
@@ -115,6 +120,8 @@ def empty_reason(stats):
     if not fetched: return '本轮没有从 FreshRSS 获取到文章。请检查来源状态与运行日志；这不代表没有商业机会。'
     if analyzed==0 and failed>0: return f'本轮分析结果为空：{failed} 篇尝试分析均未通过，请查看运行日志排查原因。'
     if analyzed==0 and skipped>0: return f'本轮没有新的分析任务：{skipped} 篇文章均已有分析结果，无需重新分析。这只说明本轮没有新内容，不代表没有机会。'
+    if stats.get('coverage') is not None and stats['coverage']<1:
+        return disclosure(stats)
     return f'本轮没有满足条件的机会：{analyzed} 篇进入分析，均未达到观察门槛或未通过硬性过滤。'
 
 def _counts(items):
@@ -295,6 +302,8 @@ def render_digest(items,stats,date_label=None):
     lines += ['',f"{'已保存分析' if stats.get('render_only') else '新增信号'}：{len(items) if stats.get('render_only') else new} | 持续观察：{counts['watch']} | 优先验证：{counts['priority']} | 明确付费证据：{strong} | 未纳入分发：{len(deferred)}"]
     lines.append(f'报告来源：基于数据库已保存的 {len(items)} 条分析重新生成（未重新调用模型）。' if stats.get('render_only')
                  else f"运行统计：获取 {fetched} | 新增 {new} | 内容更新 {stats.get('updated',0)} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped} | 重复事件 {stats.get('duplicate_events',0)}")
+    disclosed=disclosure(stats)
+    if disclosed: lines.append(f'运行完整性：{disclosed}')
     window=stats.get('sample_window')
     if window:
         lines.append(f"样本窗口：{window.get('since') or '(无下界)'} 至 {window.get('until') or '(无上界)'} UTC"
