@@ -102,8 +102,13 @@ python -m opportunity_radar.unified_main report     # 各表计数与缺口
 
 ```
 python -m opportunity_radar.verify --db <库> [--dry-run] [--limit N]
-python -m opportunity_radar.verify --db <库> --summary
+python -m opportunity_radar.verify --db <库> --summary          # 状态与支持关系分布
+python -m opportunity_radar.verify --db <库> --audit            # 哪些检查执行了、哪些跳过
+python -m opportunity_radar.verify --db <库> --conflicts        # 记录到的冲突，双方数值与依据
 ```
+
+结构化提示词 `prompts/analyst_v7.md` 已存在，但**只在影子运行中使用**（`tools/shadow_v7.py`），
+生产仍用 v6。`verify` 模块也尚未在生产库运行，未接入日报或门禁（待 G6）。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
 百分比与百分点是否混用、比较口径是否与措辞矛盾。结果写入 `claim_verifications`（追加式），

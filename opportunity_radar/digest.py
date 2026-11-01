@@ -441,6 +441,9 @@ def render_digest(items,stats,date_label=None):
         for r in src:
             detail=f"可定位引文 {r['located']}/{r['evidence']}" if r['evidence'] else '无引文'
             lines.append(f"     {r['source']}：分析 {r['items']} 条 · {detail}")
+    conflict_lines=stats.get('conflicts') or []
+    if conflict_lines:
+        lines+=['','   数据冲突（记录，不判定对错）：']+['   '+line for line in conflict_lines]
     ev=evidence_breakdown(items)
     lines.append('   证据强度：'+('，'.join(f"{STATE_LABEL.get(e['state'],e['state'])} {e['count']}" for e in ev) or '无'))
     lines.append('   '+denominator_note(stats))

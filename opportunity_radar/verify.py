@@ -148,6 +148,12 @@ def check_claim(claim, evidence):
     # A structured claim keeps its quote on the evidence, not on the claim row.
     fields['quote'] = fields.get('quote') or (evidence.get('quote') or '')
     contract, deviations = claim_contract.normalize(fields)
+    if contract['value_num'] is not None and not contract['unit']:
+        # A number without a unit cannot be checked against a number with one; calling that
+        # verified would be a guess dressed up as a check.
+        return {'state': 'unverifiable', 'support': 'unsupported', 'basis': 'value_without_unit',
+                'checks': [{'name': 'unit', 'result': 'skip', 'detail': 'claim declares no unit'}],
+                'deviations': deviations}
     support, support_reason = classify_support(contract, evidence)
     checks = [_check_value(contract, evidence, support),
               _check_unit(contract, evidence),
@@ -228,10 +234,40 @@ def verify(store, limit=None, dry_run=False):
     return report
 
 
+def _conflict_class(left, right):
+    """restatement when the two records differ in filing status, unclassified otherwise."""
+    pair = {left.get('revision') or '', right.get('revision') or ''}
+    if pair & {'original', 'amendment', 'subsequent_comparative', 'revised'} and len(pair) > 1:
+        return 'restatement'
+    return 'unclassified'
+
+
 def find_conflicts(store):
     """Same subject + measure + period + unit with different values. Revisions are noted, not hidden."""
     written = 0
     with store.connect() as conn:
+        # Same measure and period, same value, different comparison basis: the numbers agree
+        # and the statements still disagree about what they measure.
+        for subject, predicate, period, unit, _n in conn.execute(
+                '''SELECT subject, predicate, period, unit, COUNT(DISTINCT comparison)
+                   FROM claims WHERE value_num IS NOT NULL AND period<>'' AND comparison NOT IN ('','unknown')
+                   GROUP BY subject, predicate, period, unit HAVING COUNT(DISTINCT comparison)>1'''):
+            rows = [dict(r) for r in conn.execute(
+                '''SELECT claim_id, value_num, comparison, revision FROM claims
+                   WHERE subject=? AND predicate=? AND period=? AND unit=? AND comparison NOT IN ('','unknown')
+                   ORDER BY claim_id''', (subject, predicate, period, unit))]
+            for i, left in enumerate(rows):
+                for right in rows[i + 1:]:
+                    if left['comparison'] == right['comparison']:
+                        continue
+                    written += conn.execute(
+                        'INSERT OR IGNORE INTO claim_conflicts(conflict_id,claim_a,claim_b,reason,detail_json,created_at) '
+                        'VALUES(?,?,?,?,?,?)',
+                        (stable_id('con-', left['claim_id'], right['claim_id'], 'comparison_differs'),
+                         left['claim_id'], right['claim_id'], 'comparison_basis_differs',
+                         json.dumps({'subject': subject, 'predicate': predicate, 'period': period,
+                                     'unit': unit, 'a': left['comparison'], 'b': right['comparison']},
+                                    ensure_ascii=False, sort_keys=True), now())).rowcount
         groups = [tuple(r) for r in conn.execute(
             '''SELECT subject, predicate, period, unit, COUNT(DISTINCT value_num) n
                FROM claims WHERE value_num IS NOT NULL AND period<>''
@@ -252,9 +288,127 @@ def find_conflicts(store):
                          left['claim_id'], right['claim_id'], 'value_differs_same_measure',
                          json.dumps({'subject': subject, 'predicate': predicate, 'period': period,
                                      'unit': unit, 'a': left['value_num'], 'b': right['value_num'],
-                                     'revision_a': left['revision'], 'revision_b': right['revision']},
+                                     'revision_a': left['revision'], 'revision_b': right['revision'],
+                                     'class': _conflict_class(left, right)},
                                     ensure_ascii=False, sort_keys=True), now())).rowcount
     return written
+
+
+def conflicts_report(store, limit=None):
+    """Every recorded disagreement with both sides spelled out, for a reader to judge."""
+    out = []
+    with store.connect() as conn:
+        rows = [dict(r) for r in conn.execute('SELECT * FROM claim_conflicts ORDER BY created_at, conflict_id')]
+        for row in (rows[:limit] if limit else rows):
+            try:
+                detail = json.loads(row['detail_json'] or '{}')
+            except ValueError:
+                detail = {}
+            sides = []
+            for key in ('claim_a', 'claim_b'):
+                claim = conn.execute('SELECT * FROM claims WHERE claim_id=?', (row[key],)).fetchone()
+                evidence = _evidence_for(conn, row[key]) or {}
+                try:
+                    locator = json.loads(evidence.get('locator_json') or '{}')
+                except ValueError:
+                    locator = {}
+                sides.append({
+                    'claim_id': row[key],
+                    'value_num': claim['value_num'] if claim else None,
+                    'value_text': (claim['value_text'] if claim else '') or '',
+                    'unit': claim['unit'] if claim else '',
+                    'period': claim['period'] if claim else '',
+                    'revision': claim['revision'] if claim else '',
+                    'source_id': evidence.get('source_id', ''),
+                    'evidence_id': evidence.get('evidence_id', ''),
+                    'locator': locator,
+                })
+            out.append({'conflict_id': row['conflict_id'], 'reason': row['reason'],
+                        'classification': detail.get('class') or 'unclassified',
+                        'subject': detail.get('subject', ''), 'predicate': detail.get('predicate', ''),
+                        'period': detail.get('period', ''), 'unit': detail.get('unit', ''),
+                        'sides': sides})
+    return out
+
+
+def conflict_lines(conflicts, limit=5):
+    """Plain-text rendering shared by the CLI and the digest."""
+    if not conflicts:
+        return []
+    lines = ['冲突主张：%d 组（记录，不判定对错）' % len(conflicts)]
+    for item in conflicts[:limit]:
+        head = '  · %s · %s · %s' % (item['subject'], item['predicate'], item['period'] or '期间未知')
+        if item['unit']:
+            head += ' · ' + item['unit']
+        lines.append(head + '（%s）' % item['classification'])
+        for side in item['sides']:
+            value = side['value_num'] if side['value_num'] is not None else (side['value_text'] or '?')
+            locator = side['locator']
+            where = locator.get('accn') or locator.get('period') or locator.get('field') or ''
+            line = '     - %s %s · 修订状态 %s · 来源 %s · 证据 %s' % (
+                value, side['unit'], side['revision'] or 'unknown',
+                side['source_id'] or 'unknown', side['evidence_id'] or '无')
+            if where:
+                line += '（%s）' % where
+            lines.append(line)
+    if len(conflicts) > limit:
+        lines.append('  · 另有 %d 组，见完整报告' % (len(conflicts) - limit))
+    return lines
+
+
+def audit(store):
+    """Which checks ran, which passed, which were skipped. A skip is not a pass."""
+    per_check = {}
+    states, support = {}, {}
+    missing_fields = {'value': 0, 'unit': 0, 'period': 0}
+    verified_with_skip = {}
+    verified_without_pass = 0
+    with store.connect() as conn:
+        rows = [dict(r) for r in conn.execute('SELECT claim_id, state, support, checks_json FROM claim_verifications')]
+        claims = {r['claim_id']: dict(r) for r in conn.execute(
+            'SELECT claim_id, value_num, unit, period FROM claims')}
+    for row in rows:
+        states[row['state']] = states.get(row['state'], 0) + 1
+        support[row['support']] = support.get(row['support'], 0) + 1
+        try:
+            checks = json.loads(row['checks_json'] or '[]')
+        except ValueError:
+            checks = []
+        passed, skipped = 0, []
+        for check in checks:
+            name, result = check.get('name'), check.get('result')
+            if name == 'quote_support':
+                continue          # reported as a distribution, not as pass/fail
+            bucket = per_check.setdefault(name, {'pass': 0, 'fail': 0, 'skip': 0, 'other': 0})
+            if result in ('pass', 'fail', 'skip'):
+                bucket[result] += 1
+            else:
+                bucket['other'] += 1
+            if result == 'pass':
+                passed += 1
+            elif result == 'skip':
+                skipped.append(name)
+        if row['state'] == 'verified':
+            if passed == 0:
+                verified_without_pass += 1
+            for name in skipped:
+                verified_with_skip[name] = verified_with_skip.get(name, 0) + 1
+            claim = claims.get(row['claim_id']) or {}
+            if claim.get('value_num') is None:
+                missing_fields['value'] += 1
+            if not claim.get('unit'):
+                missing_fields['unit'] += 1
+            if not claim.get('period'):
+                missing_fields['period'] += 1
+    return {
+        'claims_recorded': len(rows),
+        'states': states,
+        'quote_support': support,
+        'per_check': per_check,
+        'verified_with_skipped_check': verified_with_skip,
+        'verified_without_any_pass': verified_without_pass,
+        'verified_with_missing_field': missing_fields,
+    }
 
 
 def summary(store):
@@ -281,9 +435,19 @@ def main(argv=None):
     parser.add_argument('--limit', type=int)
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--summary', action='store_true')
+    parser.add_argument('--audit', action='store_true', help='which checks ran and which were skipped')
+    parser.add_argument('--conflicts', action='store_true', help='render the recorded conflicts')
+    parser.add_argument('--limit-conflicts', type=int, default=20)
     args = parser.parse_args(argv)
     db = args.db or 'data/opportunity_radar.sqlite3'
     store = UnifiedStore(db)
+    if args.conflicts:
+        found = conflicts_report(store, limit=args.limit_conflicts)
+        print(chr(10).join(conflict_lines(found, limit=args.limit_conflicts)) or '没有记录到冲突')
+        return 0
+    if args.audit:
+        print(json.dumps(audit(store), ensure_ascii=False, indent=2, default=str))
+        return 0
     output = summary(store) if args.summary else verify(store, limit=args.limit, dry_run=args.dry_run)
     print(json.dumps(output, ensure_ascii=False, indent=2, default=str))
     return 0

@@ -238,6 +238,25 @@ def attach_event_context(store, items, write=True):
         return 0
 
 
+def attach_conflicts(store, stats, limit=5):
+    """Conflicts recorded in this database, for the report. Same-database only: the RSS
+    database has its own; the SEC/EIA database is reported separately."""
+    try:
+        from .unified import UnifiedStore
+        from .verify import conflict_lines, conflicts_report
+        uni = UnifiedStore(store.path, read_only=True)
+        with uni.connect() as conn:
+            total = conn.execute('SELECT COUNT(*) FROM claim_conflicts').fetchone()[0]
+        if not total:
+            return 0
+        stats['conflict_count'] = total
+        stats['conflicts'] = conflict_lines(conflicts_report(uni, limit=limit), limit=limit)
+        return total
+    except Exception:
+        logging.warning('Conflict section unavailable; the report omits it', exc_info=True)
+        return 0
+
+
 def send_decision(analyzed,updated,failed,email_on_empty):
     """Decide whether this run should send mail; keeps failure and no-new-content distinct."""
     if analyzed==0 and failed>0: return 'analysis_failed'
@@ -492,6 +511,7 @@ def main(argv=None):
                      deferred=caps['deferred'],unresolved_sources=caps['unresolved'],
                      not_attempted=not_attempted,publication_status=pub,coverage=cov,
                      failed_causes=dict(causes),circuit_open=circuit_open)
+        attach_conflicts(store,stats)
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
         if pages_fetched: stats['full_text_fetched']=pages_fetched
         if win_start or win_end:

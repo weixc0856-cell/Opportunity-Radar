@@ -105,7 +105,10 @@ def retry_after_seconds(exc,cap):
 class LocalAnalyzer:
     def __init__(self,base_url,model,timeout=90,max_tokens=500,api_key='',connect_retries=3,
                  timeout_retries=1,backoff=DEFAULT_BACKOFF,retry_after_max=30,retry_max_seconds=120,
-                 sleep=time.sleep):
+                 sleep=time.sleep,system=None):
+        # `system` lets a shadow run use another prompt version without changing the production
+        # one; the default is whatever prompts/analyst.md currently is.
+        self.system=system or SYSTEM
         self.url=base_url.rstrip('/')+'/chat/completions'
         self.model=model; self.timeout=timeout; self.max_tokens=max_tokens; self.api_key=api_key
         self.connect_retries=max(0,int(connect_retries))
@@ -167,14 +170,14 @@ class LocalAnalyzer:
         """
         payload={'source_name':source_name,'title':title[:1000],'summary':summary[:7000],'url':url,'task':'Analyze this article for potential commercial opportunity signals.'}
         article={'title':title,'summary':summary,'url':url,'published':published}
-        msgs=[{'role':'system','content':SYSTEM},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}]
+        msgs=[{'role':'system','content':self.system},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}]
         raw=self._call(msgs)
         prior=self.last_attempts
         if trace is not None: trace.append(raw)
         try: return parse_model_json(raw,article)
         except (ValueError,json.JSONDecodeError):
             # Retry with a larger budget and explicit brevity: long articles otherwise get cut off mid-string.
-            compact=(SYSTEM+' Return raw JSON only, no markdown fences. Escape every double quote and backslash inside string values.'
+            compact=(self.system+' Return raw JSON only, no markdown fences. Escape every double quote and backslash inside string values.'
                      ' Keep summary_zh under 120 characters; at most 6 facts, 4 inferences, 4 gaps and 3 actions,'
                      ' each text under 200 characters. Do not repeat the article text.')
             try:

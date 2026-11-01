@@ -213,5 +213,101 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(row['rules_version'], verify.RULES_VERSION)
 
 
+
+class ConflictDisplayTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='or-conflicts-'))
+        self.store = UnifiedStore(str(self.dir / 'db.sqlite3'))
+
+    def add(self, claim_id, value, revision='', comparison='unknown', period='2026-Q3', unit='%'):
+        self.store.add_evidence(evidence('ev-' + claim_id, 'value %s' % value))
+        self.store.add_claim(claim(claim_id, value=value, unit=unit, period=period,
+                                   comparison=comparison))
+        self.store.link(claim_id, 'ev-' + claim_id)
+        with self.store.connect() as conn:
+            conn.execute('UPDATE claims SET revision=? WHERE claim_id=?', (revision, claim_id))
+
+    def test_a_revision_pair_is_classified_as_a_restatement(self):
+        self.add('cl-1', 1750000000.0, revision='original', unit='USD')
+        self.add('cl-2', 1675000000.0, revision='subsequent_comparative', unit='USD')
+        verify.verify(self.store)
+        found = verify.conflicts_report(self.store)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]['classification'], 'restatement')
+        self.assertEqual({s['value_num'] for s in found[0]['sides']}, {1750000000.0, 1675000000.0})
+
+    def test_two_records_with_the_same_status_stay_unclassified(self):
+        self.add('cl-1', 1.0, revision='subsequent_comparative')
+        self.add('cl-2', 2.0, revision='subsequent_comparative')
+        verify.verify(self.store)
+        self.assertEqual(verify.conflicts_report(self.store)[0]['classification'], 'unclassified')
+
+    def test_a_comparison_basis_difference_is_recorded_even_when_values_agree(self):
+        self.add('cl-1', 5.2, comparison='year_over_year')
+        self.add('cl-2', 5.2, comparison='month_over_month')
+        verify.verify(self.store)
+        reasons = {c['reason'] for c in verify.conflicts_report(self.store)}
+        self.assertEqual(reasons, {'comparison_basis_differs'})
+
+    def test_the_report_lists_both_sides_with_source_and_locator(self):
+        self.add('cl-1', 1.0)
+        self.add('cl-2', 2.0)
+        verify.verify(self.store)
+        lines = verify.conflict_lines(verify.conflicts_report(self.store))
+        text = chr(10).join(lines)
+        self.assertIn('cl-1', text)
+        self.assertIn('来源 bbc-business', text)
+        self.assertIn('ev-cl-1', text)
+
+    def test_nothing_is_written_when_there_is_no_conflict(self):
+        self.add('cl-1', 1.0)
+        verify.verify(self.store)
+        self.assertEqual(verify.conflicts_report(self.store), [])
+
+
+class AuditTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='or-audit-'))
+        self.store = UnifiedStore(str(self.dir / 'db.sqlite3'))
+
+    def test_a_skipped_check_is_reported_as_skipped_not_passed(self):
+        self.store.add_evidence(evidence('ev-1', 'Retail sales rose 5.2%'))
+        self.store.add_claim(claim(value=5.2, period='', comparison='unknown'))
+        self.store.link('cl-1', 'ev-1')
+        verify.verify(self.store)
+        report = verify.audit(self.store)
+        self.assertEqual(report['states'], {'verified': 1})
+        self.assertEqual(report['per_check']['value_in_quote']['pass'], 1)
+        self.assertEqual(report['per_check']['period']['skip'], 1)
+        self.assertEqual(report['verified_with_skipped_check'], {'period': 1, 'comparison': 1})
+        self.assertEqual(report['verified_without_any_pass'], 0)
+
+    def test_a_verified_claim_always_has_at_least_one_passing_check(self):
+        self.store.add_evidence(evidence('ev-1', 'Retail sales rose 5.2%'))
+        self.store.add_claim(claim(value=5.2))
+        self.store.link('cl-1', 'ev-1')
+        verify.verify(self.store)
+        self.assertEqual(verify.audit(self.store)['verified_without_any_pass'], 0)
+
+    def test_a_number_without_a_unit_is_not_verified(self):
+        self.store.add_evidence(evidence('ev-1', 'Retail sales rose 5.2%'))
+        self.store.add_claim(claim(value=5.2, unit=''))     # no unit declared
+        self.store.link('cl-1', 'ev-1')
+        verify.verify(self.store)
+        report = verify.audit(self.store)
+        self.assertEqual(report['states'], {'unverifiable': 1})
+        self.assertEqual(report['verified_with_missing_field']['unit'], 0)
+
+    def test_a_skeleton_claim_never_shows_up_as_verified(self):
+        self.store.add_evidence(evidence('ev-1', 'some prose'))
+        self.store.add_claim(claim(value=None, unit='', predicate='assertion', extractor='skeleton'))
+        self.store.link('cl-1', 'ev-1')
+        verify.verify(self.store)
+        report = verify.audit(self.store)
+        self.assertEqual(report['states'], {'unverifiable': 1})
+        self.assertEqual(report['verified_with_skipped_check'], {})
+
+
+
 if __name__ == '__main__':
     unittest.main()
