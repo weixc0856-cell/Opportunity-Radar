@@ -24,8 +24,8 @@ from .semantic_common import (COVERAGE_ERROR, FAILED, INVALID_OUTPUT, PARTIAL, S
                               model_metadata, node_input_hash, prompt_hash, schema_hash)
 
 NODE = 'N2'
-NODE_VERSION = 'n2-v2'
-PROMPT_VERSION = 'n2-prompt-v2'
+NODE_VERSION = 'n2-v3'
+PROMPT_VERSION = 'n2-prompt-v3'
 SCHEMA_VERSION = 'n2-schema-v2'
 # Program validation is part of what a cached N2 result means: a rule change must not reuse
 # a result produced by the old checks.
@@ -48,6 +48,7 @@ Rules:
 - Use only the supplied context. Never use outside knowledge.
 - First decide economic_relevance. economic means the number is a business, financial, industry, market or official-statistics measure (revenue, cost, price, output, capacity, shipments, margin, profit, GDP, inflation, trade, employment, vehicle_count ...). non_economic means a software or model version, object/model id, technical parameter (opacity, resolution, grid size, timestep, FPS, coordinate, file size, benchmark time), age or death age, phone number, citation or similar. uncertain means the context does not settle it.
 - If economic_relevance is non_economic, disposition MUST be non_claim (or context_only for a date/period). If uncertain, do not force claim_value: use ambiguous with a reason. A technical value is not a commercial claim merely because a company publishes it.
+- A bounded quantity ("less than $0.1 billion", "more than 5 percent") in an economic clause with a subject and a change verb is still an economic claim value; record the bound in reason, and do not make it context_only or non_economic merely because it is a threshold. If the subject or measure is unclear, use ambiguous.
 - disposition=claim_value: the number is the value of a statement about a subject and a measure. subject and predicate are required. predicate is the measure itself: personal_income for "personal income increased $54.5 billion" and also for "personal income increased 0.2 percent"; disposable_personal_income; personal_consumption_expenditures; personal_saving; personal_saving_rate; vehicle_count for "5 million vehicles". Never write increase_amount, monthly_change, change, growth_rate, amount or any direction/relationship word in the predicate; another node decides level versus change.
 - subject must be the entity the measure belongs to, named in the same clause as the number. It is not the measure itself: "Intel reported revenue of $16.5 billion" has subject intel and predicate revenue, not subject revenue. "Google value plunges by $500bn" has subject google and predicate market_value, not subject google_value. If the clause names disposable personal income, use disposable_personal_income even when the previous sentence spoke about personal income. Do not carry a subject over from an earlier clause.
 - disposition=context_only: a date, period, comparison basis or other supporting number that does not itself state a claim. subject/predicate may be empty.
@@ -109,6 +110,62 @@ RELATIONSHIP_WORDS = {'increase', 'increased', 'decrease', 'decreased', 'rise', 
                       'monthly', 'annual', 'quarterly', 'yoy', 'mom', 'qoq'}
 GENERIC_MEASURES = {'amount', 'rate', 'value', 'level', 'total'}
 
+# Program rules are part of the node contract. They are kept switchable so Batch 15 can run
+# one-variable experiments without changing the prompt or another rule at the same time.
+SUBJECT_NORMALIZATION = True
+PREDICATE_SUBJECT_FALLBACK = True
+BOUNDED_AMOUNT_PROMOTION = True
+
+_SUBJECT_STOPWORDS = {'the', 'a', 'an', 'of', 'for', 'and', 'in', 'on', 'by', 'to'}
+_FULL_ACRONYM = re.compile(
+    r'(?P<full>[a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*){1,6})\s*'
+    r'\((?P<acronym>[a-z]{2,8})\)')
+_ACRONYM_FULL = re.compile(
+    r'(?P<acronym>[a-z]{2,8})\s*\((?P<full>[a-z][a-z0-9-]*'
+    r'(?:\s+[a-z][a-z0-9-]*){1,6})\)')
+
+
+def _acronym_expansion(full, acronym):
+    words = [word for word in full.lower().split() if word not in _SUBJECT_STOPWORDS]
+    letters = list(acronym.lower())
+    index, start, end = 0, None, None
+    for position, word in enumerate(words):
+        if index < len(letters) and word and word[0] == letters[index]:
+            if start is None:
+                start = position
+            index += 1
+            end = position
+    if index != len(letters) or start is None:
+        return ''
+    return ' '.join(words[start:end + 1])
+
+
+def _document_acronyms(document):
+    text = str(document.get('text') or '').lower()
+    mapping = {}
+    for match in _FULL_ACRONYM.finditer(text):
+        expansion = _acronym_expansion(match.group('full'), match.group('acronym'))
+        if expansion:
+            mapping[match.group('acronym').lower()] = expansion
+    for match in _ACRONYM_FULL.finditer(text):
+        expansion = _acronym_expansion(match.group('full'), match.group('acronym'))
+        if expansion:
+            mapping[match.group('acronym').lower()] = expansion
+    return mapping
+
+
+def _normalise_subject(subject, document):
+    """Strip a trailing acronym gloss and expand document-defined acronyms.
+
+    The mapping is built from the document itself. No indicator name is hard-coded, and a
+    different definition ('gross national product (gnp)') expands independently.
+    """
+    text = re.sub(r'\s*\([a-z0-9]{2,8}\)\s*$', '', subject.strip(), flags=re.I)
+    text = re.sub(r"'s\b", '', text)
+    for acronym, expansion in _document_acronyms(document).items():
+        text = re.sub(rf'\b{re.escape(acronym)}\b', expansion, text, flags=re.I)
+    return text.strip()
+
 
 def _measure_from_subject(subject):
     slug = re.sub(r'[^a-z0-9]+', '_', subject.lower()).strip('_')
@@ -138,6 +195,7 @@ def _unresolved(candidate_id, reason, deviations=None):
         'model_kind': '',
         'model_subject': '',
         'model_predicate': '',
+        'subject_raw': '',
         'disposition': 'unresolved',
         'subject': '', 'predicate': '', 'predicate_raw': '', 'predicate_source': 'none',
         'kind': 'unknown',
@@ -168,6 +226,12 @@ def _normalise(raw, candidate, document, sentence_ids):
     subject = str(raw.get('subject') or '').strip()
     predicate = str(raw.get('predicate') or '').strip()
     model_subject, model_predicate = subject, predicate
+    if SUBJECT_NORMALIZATION and subject:
+        normalised_subject = _normalise_subject(subject, document)
+        if normalised_subject != subject:
+            deviations.append({'field': 'subject', 'reason': 'normalized_acronym',
+                               'value': subject[:claim_contract.MAX_SUBJECT]})
+            subject = normalised_subject
     kind = str(raw.get('kind') or '').strip().lower()
     model_kind = kind
     if kind not in KINDS:
@@ -200,19 +264,48 @@ def _normalise(raw, candidate, document, sentence_ids):
     predicate_source = 'model'
     if disposition == 'claim_value' and subject:
         tokens = re.split(r'[^a-z0-9]+', predicate.lower())
-        if (any(token in RELATIONSHIP_WORDS for token in tokens)
-                or predicate.lower() in GENERIC_MEASURES):
-            cleaned = '_'.join(token for token in tokens
-                               if token and token not in RELATIONSHIP_WORDS)
-            fallback = (cleaned if cleaned and cleaned not in GENERIC_MEASURES
-                        else _measure_from_subject(subject))
+        generic = any(token in GENERIC_MEASURES for token in tokens)
+        relationship = any(token in RELATIONSHIP_WORDS for token in tokens)
+        if relationship or generic or predicate.lower() in GENERIC_MEASURES:
+            if generic and PREDICATE_SUBJECT_FALLBACK:
+                fallback = _measure_from_subject(subject)
+                predicate_source = 'subject_fallback'
+                reason = 'relationship_leak' if relationship else 'generic_measure'
+            else:
+                cleaned_tokens = [token for token in tokens
+                                  if token and token not in RELATIONSHIP_WORDS]
+                subject_tokens = re.split(r'[^a-z0-9]+', subject.lower())
+                # 'deficit_increase' on subject 'goods deficit' leaves a bare 'deficit',
+                # which is only part of the subject's measure. Rebuild from the subject when
+                # the remainder is a subset; do not do this for an unrelated 'price'.
+                cleaned_is_subject_part = (cleaned_tokens
+                                           and set(cleaned_tokens) <= set(subject_tokens)
+                                           and len(subject_tokens) > len(cleaned_tokens))
+                if cleaned_is_subject_part:
+                    fallback = _measure_from_subject(subject)
+                    predicate_source = 'subject_fallback'
+                else:
+                    cleaned = '_'.join(cleaned_tokens)
+                    fallback = (cleaned if cleaned and cleaned not in GENERIC_MEASURES
+                                else _measure_from_subject(subject))
+                    predicate_source = ('direction_removed'
+                                        if cleaned and cleaned not in GENERIC_MEASURES
+                                        else 'subject_fallback')
+                reason = 'relationship_leak'
             if fallback:
-                deviations.append({'field': 'predicate', 'reason': 'relationship_leak',
+                deviations.append({'field': 'predicate', 'reason': reason,
                                    'value': predicate[:80]})
                 predicate = fallback
-                predicate_source = ('direction_removed'
-                                    if cleaned and cleaned not in GENERIC_MEASURES
-                                    else 'subject_fallback')
+        elif subject:
+            predicate_tokens = [token for token in tokens if token]
+            subject_tokens = re.split(r'[^a-z0-9]+', subject.lower())
+            if (len(predicate_tokens) == 1
+                    and set(predicate_tokens) < set(subject_tokens)
+                    and len(subject_tokens) > 1):
+                deviations.append({'field': 'predicate', 'reason': 'partial_measure',
+                                   'value': predicate[:80]})
+                predicate = _measure_from_subject(subject)
+                predicate_source = 'subject_fallback'
 
     model_status = str(raw.get('status') or '').strip().lower()
     status = model_status
@@ -261,6 +354,7 @@ def _normalise(raw, candidate, document, sentence_ids):
         'model_kind': model_kind,
         'model_subject': model_subject,
         'model_predicate': model_predicate,
+        'subject_raw': model_subject,
         'disposition': disposition,
         # Long values are kept as the model wrote them and marked with a deviation; trimming
         # them here would be the silent truncation the contract forbids.
@@ -278,6 +372,83 @@ def _normalise(raw, candidate, document, sentence_ids):
         'status': status,
         'deviations': deviations,
     }, deviations)
+
+
+_BOUNDED_PHRASES = ('less than', 'more than', 'at least', 'at most', 'up to', 'under ',
+                    'below ', 'above ')
+_CHANGE_VERBS = ('increased', 'decreased', 'rose', 'fell', 'grew', 'declined', 'dropped',
+                 'gained', 'climbed', 'slid')
+
+
+def _candidate_local_text(document, candidate, radius=120):
+    sentence = next((item for item in document['sentences']
+                     if item['sentence_id'] == candidate.get('sentence_id')), None)
+    if sentence is None:
+        return ''
+    start = max(sentence['start'], candidate['start'] - radius)
+    end = min(sentence['end'], candidate['end'] + radius)
+    return document['text'][start:end].lower()
+
+
+def _promote_bounded_economic_amounts(records, candidates, document):
+    """Promote a bounded amount only when the same sentence names its economic measure.
+
+    '$0.1 billion less than ...' is a bounded change amount, not a non-economic threshold.
+    The promotion copies subject/predicate from exactly one economic claim in the same
+    sentence; multiple subjects become ambiguous, and no economic claim leaves the record
+    untouched. Nothing is inferred from the currency symbol or the amount size.
+    """
+    by_id = {candidate['candidate_id']: candidate for candidate in candidates}
+    economic_by_sentence = {}
+    for record in records:
+        candidate = by_id.get(record.get('candidate_id'))
+        if not candidate:
+            continue
+        if (record.get('disposition') == 'claim_value'
+                and record.get('economic_relevance') == 'economic'
+                and record.get('subject') and record.get('predicate')):
+            economic_by_sentence.setdefault(candidate.get('sentence_id'), []).append(record)
+    promoted = 0
+    for record in records:
+        if record.get('disposition') not in ('context_only', 'ambiguous'):
+            continue
+        if record.get('economic_relevance') not in ('non_economic', 'uncertain'):
+            continue
+        candidate = by_id.get(record.get('candidate_id'))
+        if not candidate or candidate.get('candidate_type') not in ('currency', 'percentage'):
+            continue
+        text = _candidate_local_text(document, candidate)
+        if not any(phrase in text for phrase in _BOUNDED_PHRASES):
+            continue
+        if not any(verb in text for verb in _CHANGE_VERBS):
+            continue
+        same_sentence = economic_by_sentence.get(candidate.get('sentence_id')) or []
+        subjects = {(item.get('subject'), item.get('predicate')) for item in same_sentence}
+        if len(subjects) == 1:
+            source = same_sentence[0]
+            record['disposition'] = 'claim_value'
+            record['status'] = 'resolved'
+            record['economic_relevance'] = 'economic'
+            record['subject'] = record.get('subject') or source.get('subject')
+            record['predicate'] = record.get('predicate') or source.get('predicate')
+            record['kind'] = source.get('kind') if record.get('kind') in ('unknown', '') \
+                else record.get('kind')
+            record['reason'] = (f"bounded economic amount of {source.get('subject')}"
+                                if source.get('subject') else 'bounded economic amount')
+            record['promotion_source'] = 'bounded_amount_same_sentence'
+            record.setdefault('deviations', []).append({
+                'field': 'economic_relevance', 'reason': 'bounded_economic_amount',
+                'value': record.get('relevance_raw', '')})
+            promoted += 1
+        elif subjects:
+            record['disposition'] = 'ambiguous'
+            record['status'] = 'ambiguous'
+            record['economic_relevance'] = 'uncertain'
+            record['reason'] = 'bounded amount with multiple economic subjects in the sentence'
+            record.setdefault('deviations', []).append({
+                'field': 'economic_relevance', 'reason': 'bounded_amount_multiple_subjects',
+                'value': record.get('relevance_raw', '')})
+    return promoted
 
 
 def _batch_payload(document, batch):
@@ -398,7 +569,10 @@ def run(document, n1, runner, model, max_candidates=4, max_chars=3500):
 
     order = {candidate['candidate_id']: index for index, candidate in enumerate(candidates)}
     interpretations.sort(key=lambda item: order.get(item['candidate_id'], 10 ** 6))
+    promoted_bounded = (_promote_bounded_economic_amounts(interpretations, candidates, document)
+                        if BOUNDED_AMOUNT_PROMOTION else 0)
     stats = {'input_candidate_count': len(candidates), 'batch_count': len(batches),
+             'promoted_bounded_amounts': promoted_bounded,
              'failed_batches': sum(1 for record in batch_records
                                    if record['status'] not in (SUCCESS, PARTIAL))}
     stats['claim_value_count'] = sum(1 for item in interpretations

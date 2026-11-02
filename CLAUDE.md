@@ -53,9 +53,11 @@ R1 统一事件模型已分批交付并部署（Batch 1–4）。R2 的规则与
 语义与关系，N4/N5 确定性标准化、候选完整处置与 r2-v4 影子 Claim 组装。
 七夹具与 50 篇真实 RSS 影子运行均已完成（Batch 11–12）。Batch 13 完成 N2 经济相关性、
 N3 同句/标题同月期间关联与 N5 语义去重；Batch 14 只修 N3，将 rate/change 与 period_change
-恢复到 Batch 12 参考集基线，并修复 3.8% 遗漏和 N3 输出预算。N5 仍受固定 N2 输入中的
-subject/predicate 与 `$0.1bn` context_only 影响，低于 Batch 12。影子 Claim 未接入生产 Claim 表、
-日报或核验。v7 切换仍是 **NOT READY**，**生产启用需 G6 批准**。
+恢复到 Batch 12 参考集基线，并修复 3.8% 遗漏和 N3 输出预算。Batch 15 只修 N2，修复 GDP subject、
+贸易 predicate 与 `$0.1bn` economic relevance，N2 disposition/subject/predicate/economic 达到
+21/20/19/21；N5 严格精确率/召回 18/18、17/18，但语义口径（含 relationship_type/comparison）
+为 16/18、16/18，Google/Intel title-only 与 Personal Income 0.2% DPI 仍有缺口。影子 Claim 未接入
+生产 Claim 表、日报或核验。v7 切换仍是 **NOT READY**，**生产启用需 G6 批准**。
 已关闭的门与待批准的门见 `docs/IMPLEMENTATION_PLAN.md`。
 
 ## 文档地图
