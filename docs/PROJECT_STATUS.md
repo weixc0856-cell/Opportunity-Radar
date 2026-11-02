@@ -1,7 +1,16 @@
 # 项目状态（2026-11-02）
 
-当前分支 `feat/r2-batch16-n5-semantic-assembly`（第十六批）；第七至十五批已进入 `main`。
+当前分支 `main`；Batch 16 已合并（`d48d872`），第七至十六批均已进入 `main`。
 测试：**875 项通过**；干净检出同样通过（27 项因缺少本地样本显式跳过）。
+
+## 当前阶段冻结（2026-11-02）
+
+N0–N5 影子 Claim 生成路线已完成阶段性验收并冻结，基线为 Batch 16（合并提交 `d48d872`）。
+
+- 冻结范围：N0 正文规范化、N1 数字候选、N2 语义识别、N3 关系识别、N4 数值标准化、N5 Claim 组装。
+- 当前结果仍是**影子 Claim，不是已核实事实**；不写生产 claims/analyses。
+- 不启用 v7、不申请 G6；不修改评分、日报、邮件与 R0 发布门禁；SEC/EIA 独立通道保持不变。
+- 已知限制见 `docs/OPEN_ISSUES.md` ISSUE-004；它们不阻碍当前路线冻结，不启动 Batch 17。
 
 ## 已交付
 
@@ -26,6 +35,7 @@
 | R2 Batch 14 | N3 rate/change、period_change、3.8% 遗漏、输出预算 | 10 篇人工参考集：N3 type 17→20/21、direction 17→20/21、comparison 14→18/21，回到 Batch 12 基线；period 11/18 未回退；3.8% 由模型关系或一次覆盖重试分配；1400/2400 tokens 均完成 BEA Personal Income，200 强制截断标 invalid_output；N5 18 条 Claim、严格精确率 15/18、召回 14/18，仍低于 Batch 12，原因在固定 N2 输入；866 测试通过 |
 | R2 Batch 15 | N2 subject/predicate/economic_relevance 定向修复 | 10 篇参考集：N2 disposition 20→21/21、subject 17→20/21、predicate 16→19/21、economic 20→21/21；GDP subject、贸易 `$12.8bn` predicate、`$0.1bn` 经济相关性修复；N5 18 条 Claim，严格精确率 18/18、正文严格召回 17/18（按 relationship_type+comparison 同时匹配为 16/18、16/18）；872 测试通过 |
 | R2 Batch 16 | N5 endpoint level 组装规则 | 固定 Batch 15 N0–N4，仅重跑 N5：贸易 `$105.6bn` 的终点 level 折回 change，Claim 18→17；严格精确率 18/18→17/17（100%），正文严格召回 17/18；relationship_type+comparison 精确率 16/18→16/17；重复/误合并/漏合并 1/0/0；875 测试通过 |
+| N0–N5 影子 Claim 路线 | N0–N5 离线影子生成、候选完整处置、r2-v4 影子 Claim | **阶段验收完成并冻结**；基线 Batch 16；影子 Claim 未接入生产 |
 
 ## 数据库现状
 
