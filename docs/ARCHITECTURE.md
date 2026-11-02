@@ -27,7 +27,8 @@
     for IDs, enums, coverage, evidence location and comparison wording. `n4_normalization.py` (N4)
     turns those semantics into value/unit/scale/currency/period records without re-deciding
     anything, and `n5_assembly.py` (N5) disposes every N1 candidate and assembles r2-v4 shadow
-    claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file. Nothing here
+    claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file, reuses the
+    latest usable result for the same input, and records per-batch tokens/timing. Nothing here
     writes to the production database or changes the analyzer.
 
 The order in step 6 matters. Evidence is established before scoring, so a lane can never

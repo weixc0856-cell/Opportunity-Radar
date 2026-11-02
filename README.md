@@ -135,7 +135,8 @@ N2 用本地 Qwen3-30B-A3B 判定每个候选的主体/指标/主张状态，N3 
 N4 确定性地标准化数值/单位/数量级/币种/期间/baseline；N5 检查每个 N1 候选的处置并组装
 r2-v4 影子 Claim，证据回指 N0，缺失期间/比较口径只记录不补造。
 节点运行写入独立的追加式留存（`data/claim-pipeline/node_runs.sqlite3`），不写生产库；
-影子 Claim 不进入生产 Claim 表、日报或核验。契约见 `docs/CLAIM_PIPELINE.md`。
+影子 Claim 不进入生产 Claim 表、日报或核验。七个夹具已完成 N0–N5；50 篇真实语料影子运行未完成。
+契约见 `docs/CLAIM_PIPELINE.md`。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
 百分比与百分点是否混用、比较口径是否与措辞矛盾。结果写入 `claim_verifications`（追加式），

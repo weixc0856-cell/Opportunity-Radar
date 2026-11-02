@@ -512,10 +512,18 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
                            if value in set(claim_value_ids)]
         payload = _batch_payload(document, n1, n2, batch, batch_claim_ids)
         result = runner.run(payload)
+        usage = result.get('usage') or {}
         record = {'claim_value_ids': batch_claim_ids,
                   'status': result.get('status', FAILED),
                   'attempts': result.get('attempts', 0),
-                  'seconds': round(time.time() - batch_started, 2),
+                  'seconds': result.get('seconds', round(time.time() - batch_started, 2)),
+                  'input_chars': result.get('input_chars'),
+                  'output_chars': result.get('output_chars'),
+                  'prompt_tokens': usage.get('prompt_tokens'),
+                  'completion_tokens': usage.get('completion_tokens'),
+                  'parse_retry': result.get('parse_retry', False),
+                  'context_chars': len(batch['context_text']),
+                  'claim_value_count': len(batch_claim_ids),
                   'error': result.get('error', ''),
                   'deviations': []}
         if result.get('status') != 'ok':

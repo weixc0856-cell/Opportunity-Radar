@@ -274,10 +274,18 @@ def run(document, n1, runner, model, max_candidates=4, max_chars=3500):
         batch_started = time.time()
         result = runner.run(_batch_payload(document, batch))
         expected = set(batch['candidate_ids'])
+        usage = result.get('usage') or {}
         record = {'candidate_ids': list(batch['candidate_ids']),
                   'status': result.get('status', FAILED),
                   'attempts': result.get('attempts', 0),
-                  'seconds': round(time.time() - batch_started, 2),
+                  'seconds': result.get('seconds', round(time.time() - batch_started, 2)),
+                  'input_chars': result.get('input_chars'),
+                  'output_chars': result.get('output_chars'),
+                  'prompt_tokens': usage.get('prompt_tokens'),
+                  'completion_tokens': usage.get('completion_tokens'),
+                  'parse_retry': result.get('parse_retry', False),
+                  'context_chars': len(batch['context_text']),
+                  'candidate_count': len(batch['candidate_ids']),
                   'error': result.get('error', ''),
                   'unknown_candidate_ids': [], 'duplicate_candidate_ids': [],
                   'deviations': []}

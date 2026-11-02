@@ -344,6 +344,9 @@ def assemble(document, n1, n2, n3, n4):
                                and item.get('status') == 'resolved')
     coverage = {
         'input_candidates': len(candidates),
+        'accepted_candidates': sum(1 for item in dispositions
+                                   if item['status'] == 'claim_accepted'),
+        'assembled_claims': len(claims),
         'claim_value_total': claim_value_total,
         'claim_value_resolved': claim_value_resolved,
         'context_only': sum(1 for item in interpretations.values()
@@ -358,7 +361,6 @@ def assemble(document, n1, n2, n3, n4):
                                      if 'value' in roles.get(candidate_id, set())),
         'n4_records': len(n4.get('normalized_records') or []),
         'n4_by_status': by_record_status,
-        'claims_accepted': len(claims),
         'claims_rejected': len(rejected),
         'duplicate_claims': len(duplicates),
         'disposition_counts': disposition_counts,

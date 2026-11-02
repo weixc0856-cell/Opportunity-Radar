@@ -143,7 +143,7 @@ class LocalAnalyzer:
         if cause==RATE_LIMITED and retry_after is not None: return retry_after
         return self.backoff[min(attempt-1,len(self.backoff)-1)]
 
-    def _call(self,messages,max_tokens=None,temperature=None,response_format=None):
+    def _body(self,messages,max_tokens=None,temperature=None,response_format=None):
         # Thinking-capable models (Qwen3.5 etc.) otherwise spend the whole token budget on <think>
         # and never emit JSON; triage only needs the structured answer. Servers that do not know
         # this template kwarg ignore it.
@@ -154,14 +154,32 @@ class LocalAnalyzer:
         # llama.cpp accepts an OpenAI-style response_format; passing None keeps the production
         # request byte-for-byte what it was before N2/N3 existed.
         if response_format is not None: body['response_format']=response_format
-        return self._post(json.dumps(body).encode())
+        return body
+
+    def _call(self,messages,max_tokens=None,temperature=None,response_format=None):
+        return self._post(json.dumps(self._body(messages,max_tokens,temperature,
+                                                response_format)).encode())
 
     def complete(self,messages,max_tokens=None,temperature=None,response_format=None):
         """One structured completion for an offline node; production analysis keeps using analyze()."""
         return self._call(messages,max_tokens=max_tokens,temperature=temperature,
                           response_format=response_format)
 
+    def complete_detailed(self,messages,max_tokens=None,temperature=None,
+                          response_format=None):
+        """(content, metrics) for offline nodes that record token usage and timings."""
+        started=time.time()
+        payload=self._post_response(json.dumps(self._body(messages,max_tokens,temperature,
+                                                          response_format)).encode())
+        content=payload['choices'][0]['message']['content']
+        return content, {'seconds':round(time.time()-started,2),
+                         'usage':payload.get('usage') or {},
+                         'timings':payload.get('timings') or {}}
+
     def _post(self,data):
+        return self._post_response(data)['choices'][0]['message']['content']
+
+    def _post_response(self,data):
         """One request with a bounded retry budget; never loops on the same dead endpoint."""
         attempt=0; spent=0.0
         while True:
@@ -169,7 +187,7 @@ class LocalAnalyzer:
             try:
                 req=urllib.request.Request(self.url,data=data,headers=self._headers(),method='POST')
                 with urllib.request.urlopen(req,timeout=self.timeout) as r:
-                    return json.loads(r.read().decode('utf-8','replace'))['choices'][0]['message']['content']
+                    return json.loads(r.read().decode('utf-8','replace'))
             except (urllib.error.URLError,OSError,TimeoutError) as exc:
                 cause,retryable=classify_failure(exc)
                 status=getattr(exc,'code',None)

@@ -1,7 +1,7 @@
 # 项目状态（2026-11-02）
 
-当前分支 `feat/r2-batch10-n4-n5`（第十批）；第七至九批已进入 `main`。
-测试：**832 项通过**；干净检出同样通过（27 项因缺少本地样本显式跳过）。
+当前分支 `feat/r2-batch11-fixtures`（第十一批）；第七至十批已进入 `main`。
+测试：**840 项通过**；干净检出同样通过（27 项因缺少本地样本显式跳过）。
 
 ## 已交付
 
@@ -20,12 +20,13 @@
 | R2 Batch 8 | N0/N1 契约对齐：完整正文、原子/复合表达分层、节点留存、识别器实测 | 已实现并在 567 篇真实语料上验证（人工基准 19/19，数字覆盖 9905/9905）；N2–N5 未开始 |
 | R2 Batch 9 | N2 数字候选语义 + N3 数字关系（本地 Qwen3-30B-A3B） | 已实现并通过真实模型、程序校验与固定样本；真实语料范围见 R2_BATCH9 验收记录 |
 | R2 Batch 10 | N4 数值标准化 + N5 完整性门禁与 r2-v4 影子 Claim 组装 | 已实现；两篇 BEA 真实文章端到端产生 16 条影子 Claim，18/18 候选有处置；N4/N5 partial 表示缺失期间等偏差可见；未写生产库 |
+| R2 Batch 11 | 多关系组装核查 + 五夹具 N2/N3 覆盖 + 七夹具 N4/N5 | 七夹具完成：49 个 N1 候选全部有处置，31 个接受候选、36 条影子 Claim，契约 36/36；多关系（$105.6bn）核查正确；N2/N3 批次指标与失败恢复已启用 |
 
 ## 数据库现状
 
 | 库 | 表 | `user_version` | 内容 |
 |---|---|---|---|
-| `data/opportunity_radar.sqlite3` | 23 | 3 | articles 117 / analyses 108 / runs 14 / deliveries 26；events 108 / evidences 220 / claims 220 / entities 10 / event_links 3（全部 candidate） |
+| `data/opportunity_radar.sqlite3` | 23 | 3 | articles 126 / analyses 117 / runs 15 / deliveries 29；events 117 / evidences 220 / claims 220 / entities 10 / event_links 3（全部 candidate） |
 | `data/ingest/opportunity_radar_ingest.sqlite3` | 18 | 3 | sec_facts 2,719 / eia_observations 34 / evidences 2,753 / claims 2,753 |
 
 证据按来源族：ycombinator-hn 109、openai 24、simscale 17、nyt 17、paraview 15、bbc 14、bea 8、
@@ -66,11 +67,11 @@ independent_primary 19。
 3. **转载识别**：`syndication_group` 全为空，需要正文相似度或通讯社标记。
 4. **实体消歧**：同名不同公司、母子公司会被当作同一实体；股票代码暂不参与匹配。
 5. **谱系未接入评分**：`multi_source_coverage` 证据状态仍按文章计数，尚未改为来源族计数。
-6. **R2 待启用**：N0–N5 离线链路已实现，两篇 BEA 文章产生 16 条 r2-v4 影子 Claim，
-   18/18 候选有处置；但影子 Claim 尚未接入生产 Claim 表、`verify.py`、日报或门禁。
-   v7 切换判定仍为 **NOT READY**（百分比变化类人工基准召回 68%）。剩余缺口：N2/N3 语义准确率
-   没有全量人工基准；50 篇语料影子运行未完成（本地模型吞吐）；期间/修订等字段仍可能由模型漏记，
-   程序只记录缺失、不补造。
+6. **R2 待启用**：N0–N5 离线链路已在七个夹具上完整运行，49 个 N1 候选全部有处置，
+   31 个接受候选产生 36 条 r2-v4 影子 Claim，契约 36/36；多关系组装（$105.6bn）已核查。
+   但影子 Claim 尚未接入生产 Claim 表、`verify.py`、日报或门禁。v7 切换判定仍为 **NOT READY**
+   （百分比变化类人工基准召回 68%）。剩余缺口：50 篇真实语料影子运行未完成（本地模型吞吐）；
+   N2/N3 语义准确率没有全量人工基准；期间/修订等字段仍可能由模型漏记，程序只记录缺失、不补造。
 7. **R3–R6 未开始**：编辑优先级、周报月报、经济数据引擎、回测。
 
 ## 边界

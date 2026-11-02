@@ -51,6 +51,9 @@
 - N3：只对 N2 `claim_value` 且 resolved 的候选建关系；`context_only` 可作期间/基准；
   `non_claim` 拒绝；N2 未成功 → `blocked`；每个 claim_value 必须有处置；比较口径必须原文出现
   且紧邻该数值；revision/seasonality 只在原文出现时保留。
+- 批次记录：`input_chars`、`output_chars`、`prompt_tokens`、`completion_tokens`、`seconds`、
+  `parse_retry`、`candidate_count`/`claim_value_count`、`context_chars`；工具汇总最慢批次、
+  重试次数与 token 总量，用于区分请求、生成、JSON 修复和持久化耗时。
 
 ## 6. N4 数值标准化（`n4-v1`）
 
@@ -87,7 +90,9 @@ N4 不调用模型、不补造关系。
 baseline 来自 N3，只用明确提供的信息。证据必须回到 N0 原文；标题单独证据 → 拒绝
 `title_only_evidence`；缺 subject/predicate、value 非数值、单位/币种未知、期间非法、证据缺失 → 拒绝；
 重复 Claim 只保留一条。契约校验把所有 payload 交给 `claim_contract.parse_claims`，全部通过才算有效。
-coverage_complete 要求处置数与 N1 候选数相等且唯一；Claim 数量不是成功指标。
+coverage_complete 要求处置数与 N1 候选数相等且唯一；统计中分别给出 `input_candidates`、
+`accepted_candidates` 与 `assembled_claims`，Claim 数量不是成功指标。一个候选可以参与多个
+N3 关系并产生多条 Claim，因此 assembled_claims 可以大于 accepted_candidates。
 
 `status`：N2 未成功 → `blocked`；覆盖不完整 → `failed`；所有候选为 claim_accepted/context_only/
 non_claim/used_as_context 且 N4 `success` → `success`；否则 `partial`（缺失期间/比较口径等偏差
@@ -104,6 +109,8 @@ execution_status、executed_at、params_json、tools_json、output_json。`INSER
 - N4 输入哈希含 N0–N3 稳定哈希、N4 版本、规则源码哈希、`units.py` 源码哈希。
 - N5 输入哈希含 N0–N4 稳定哈希、N5 版本、r2-v4 版本与契约源码哈希、规则源码哈希。
 - 时间/耗时/重试次数不进入稳定哈希；N3 依赖 N2 稳定哈希，N5 依赖 N4 稳定哈希。
+- 查找使用 `find_latest`：失败/超时/非法输出不阻止后续成功结果被复用；
+  仅有指标代码变化导致输入哈希不同时，可用相同 `document_id` 复用已成功结果。
 
 ## 9. Microsoft Recognizers-Text
 
@@ -127,7 +134,8 @@ execution_status、executed_at、params_json、tools_json、output_json。`INSER
 4. 修订/季节调整只接受原文明确措辞；模型漏记时保持 unknown。
 5. 标题单独证据被拒绝；固定夹具中缺少 N2 留存的文章不会产生 Claim。
 6. N2/N3 语义准确率没有全量人工基准；候选覆盖率、处置完整性与 Claim 数量都不是语义准确率。
-7. v7 与 G6 未推进。
+7. 七个夹具已完成 N0–N5；50 篇真实语料影子运行仍未完成，不能把夹具结果当作真实语料通过率。
+8. v7 与 G6 未推进。
 
 ## 12. 运行
 

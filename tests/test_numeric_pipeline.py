@@ -506,5 +506,41 @@ class PipelineStoreTests(unittest.TestCase):
             self.assertEqual(len(store.runs('a1')), 2)
 
 
+    def test_find_latest_document_matches_the_same_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = pipeline_store.PipelineStore(Path(tmp) / 'runs.sqlite3')
+            store.record(article_id='a1', document_id='d1', content_hash='h1', node_name='N2',
+                         node_version='n2-v1', input_hash='old-hash',
+                         output={'document_id': 'd1', 'status': 'success'})
+            self.assertEqual(store.find_latest_document('a1', 'N2', 'n2-v1', 'd1'),
+                             {'document_id': 'd1', 'status': 'success'})
+            self.assertIsNone(store.find_latest_document('a1', 'N2', 'n2-v1', 'd2'))
+
+    def test_find_latest_skips_a_failed_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = pipeline_store.PipelineStore(Path(tmp) / 'runs.sqlite3')
+            store.record(article_id='a1', document_id='d1', content_hash='h1', node_name='N2',
+                         node_version='n2-v1', input_hash='i1', output={'status': 'failed'},
+                         params={'attempt': 1})
+            store.record(article_id='a1', document_id='d1', content_hash='h1', node_name='N2',
+                         node_version='n2-v1', input_hash='i1', output={'status': 'success'},
+                         params={'attempt': 2})
+            self.assertEqual(store.find_latest('a1', 'N2', 'n2-v1', 'i1'),
+                             {'status': 'success'})
+            self.assertIsNone(store.find_latest('a1', 'N2', 'n2-v1', 'other'))
+
+    def test_find_latest_returns_the_newest_usable_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = pipeline_store.PipelineStore(Path(tmp) / 'runs.sqlite3')
+            store.record(article_id='a1', document_id='d1', content_hash='h1', node_name='N3',
+                         node_version='n3-v1', input_hash='i1', output={'status': 'success'},
+                         params={'attempt': 1}, executed_at='2026-11-02T00:00:00+00:00')
+            store.record(article_id='a1', document_id='d1', content_hash='h1', node_name='N3',
+                         node_version='n3-v1', input_hash='i1', output={'status': 'partial'},
+                         params={'attempt': 2}, executed_at='2026-11-02T00:01:00+00:00')
+            self.assertEqual(store.find_latest('a1', 'N3', 'n3-v1', 'i1'),
+                             {'status': 'partial'})
+
+
 if __name__ == '__main__':
     unittest.main()
