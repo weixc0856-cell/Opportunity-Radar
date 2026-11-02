@@ -1,21 +1,25 @@
 # 主张提取流水线（N0–N5）
 
-版本：4.2 · 2026-11-02
+版本：4.3 · 2026-11-02
 定位：规定"文章 → 主张"这条链路怎么拆、每个节点的输入输出契约、失败语义、留存方式与验收方式。
 现状：**N0–N5 已实现，形成离线影子链路；Claim 仍是影子 Claim，不是已核实事实。**
 Batch 13 已完成 N2 经济相关性、N3 同句/标题同月期间关联、N5 语义去重的定向修复；14 篇回归
 （含完整 10 篇人工参考集）显示期间关联从 0/18 提升到 11/18，但同时暴露 rate/comparison 与
 个别召回回退。Batch 14 只修 N3：rate/change 与 period_change 参考集指标恢复到 Batch 12 基线，
-3.8% 由模型关系或一次覆盖重试分配；N5 仍受固定 N2 输入中的 subject/predicate 与 `$0.1bn`
-context_only 影响。见 `docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md` 与
-`docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`。
+3.8% 由模型关系或一次覆盖重试分配。Batch 15 只修 N2：GDP subject、贸易 predicate 与 `$0.1bn`
+economic relevance 修复，N2 disposition/subject/predicate/economic 为 21/20/19/21；N5 严格
+精确率/召回 18/18、17/18（relationship_type+comparison 语义口径 16/18、16/18）。见
+`docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`、
+`docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md` 与
+`docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md`。
 生产提示词仍是 v6，v7 仍是影子，切换判定仍是 **NOT READY**，生产启用需 G6 批准。
 
 - N0/N1：`docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`
 - N2/N3：`docs/archive/R2_BATCH9_N2_N3_SPEC_2026-11-02.md`、`R2_BATCH9_N2_N3_ACCEPTANCE_2026-11-02.md`
 - N4/N5：`docs/archive/R2_BATCH10_N4_N5_SPEC_2026-11-02.md`、`R2_BATCH10_N4_N5_ACCEPTANCE_2026-11-02.md`
 - 质量修复：`docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`、
-  `docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`
+  `docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`、
+  `docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md`
 
 ---
 
@@ -54,12 +58,17 @@ context_only 影响。见 `docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02
 
 ## 5. N2 / N3（本地模型）
 
-- N2（`n2-v2`）：批次 = 候选所在句完整 + 相邻句（预算 3500 字符，默认 4 个候选）；每个候选
+- N2（`n2-v3`）：批次 = 候选所在句完整 + 相邻句（预算 3500 字符，默认 4 个候选）；每个候选
   恰好一个 `claim_value`/`context_only`/`non_claim`/`ambiguous`/`unresolved`；`claim_value` 必须有
   subject/predicate 与可定位逐字引文。先判定 `economic_relevance`（economic / non_economic /
   uncertain）：软件版本、对象 id、技术参数、年龄、URL/图片编号等非经济数字不得成为 claim_value；
   程序把 non_economic 的 claim_value 降为 non_claim，把 uncertain 降为 ambiguous，并保留模型原始
-  disposition。predicate 关系泄漏由程序用 subject 重建（含 plunge/surge/jump 等方向词）。
+  disposition。predicate 关系泄漏由程序用 subject 重建（含 plunge/surge/jump 等方向词）；
+  `amount/rate/value/level/total` 泛化词或仅一个 subject 词的部分 measure 也用 subject slug 重建，
+  `predicate_raw` 保留。subject 规范化从文档自身提取 `full phrase (acronym)` / `acronym (full phrase)`
+  并展开，去掉末尾括号缩写和所有格，`subject_raw` 保留。bounded amount（`less than $0.1 billion`）
+  在同句恰有一个 economic claim 时可由程序提升为 claim_value；多个 subject 则 ambiguous，没有经济
+  claim 不提升。
 - N3（`n3-v3`）：只对 N2 `claim_value` 且 resolved 的候选建关系；`context_only` 可作基准；
   `non_claim` 拒绝；N2 未成功 → `blocked`；每个 claim_value 必须有处置；比较口径必须原文出现
   且紧邻该数值；revision/seasonality 只在原文出现时保留。payload 提供文档全部日期/期间候选、

@@ -24,7 +24,9 @@
     including word quarters and month-only periods, and records ranges, from/to, direction and
     comparison statements as expression groups. `n2_semantic.py` first asks whether each atom is
     economic (`economic`/`non_economic`/`uncertain`) and then what it describes (subject, measure,
-    claim or context); the program downgrades non-economic claim values. `n3_relationships.py`
+    claim or context); the program downgrades non-economic claim values, expands document-defined
+    subject acronyms, rebuilds generic/partial predicates from the subject, and promotes a bounded
+    amount only when the same sentence has exactly one economic claim. `n3_relationships.py`
     asks what relation the text states, with program checks for IDs, enums, coverage, evidence
     location and comparison wording; it also receives every document period candidate and can
     deterministically attach a same-sentence period or a title period of the same month/quarter,

@@ -370,5 +370,180 @@ class HashTests(unittest.TestCase):
                          n2_semantic.input_hash(document, n1, MODEL))
 
 
+class SubjectAndPredicateRulesTests(unittest.TestCase):
+    def build(self, text):
+        article = article_text.build({'article_id': 'a2', 'source_id': 's1', 'title': 'T',
+                                      'content': text, 'content_format': 'text'})
+        return article.to_dict(), numeric_candidates.extract(article)
+
+    def test_a_possessive_is_not_part_of_the_subject_name(self):
+        document, n1 = self.build("Intel's shares fell 20 percent.")
+        percentage = next(candidate for candidate in n1['candidates']
+                          if candidate['candidate_type'] == 'percentage')
+
+        def respond(payload):
+            items = []
+            for candidate in payload['candidates']:
+                if candidate['candidate_id'] == percentage['candidate_id']:
+                    items.append(interpretation(candidate, subject="intel's shares",
+                                                predicate='price'))
+                else:
+                    items.append(interpretation(candidate, 'non_claim', subject='',
+                                                predicate='', kind='unknown'))
+            return {'status': 'ok', 'parsed': {'interpretations': items}, 'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == percentage['candidate_id'])
+        self.assertEqual(item['subject'], 'intel shares')
+        self.assertEqual(item['subject_raw'], "intel's shares")
+
+    def test_document_defined_acronyms_expand_in_subject(self):
+        document, n1 = self.build(
+            'Real gross domestic product (GDP) increased 3.4 percent. '
+            'In the second quarter, real GDP increased 2.2 percent.')
+        percentages = [candidate for candidate in n1['candidates']
+                       if candidate['candidate_type'] == 'percentage']
+
+        def respond(payload):
+            items = []
+            for candidate in payload['candidates']:
+                if candidate['candidate_type'] == 'percentage':
+                    subject = ('real gross domestic product (gdp)'
+                               if candidate.get('value') == 3.4 else 'real gdp')
+                    items.append(interpretation(candidate, subject=subject,
+                                                predicate='real_gross_domestic_product'))
+                else:
+                    items.append(interpretation(candidate, 'non_claim', subject='',
+                                                predicate='', kind='unknown'))
+            return {'status': 'ok', 'parsed': {'interpretations': items}, 'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        by_value = {next(c['value'] for c in percentages
+                         if c['candidate_id'] == item['candidate_id']): item
+                    for item in result['candidate_interpretations']
+                    if item['candidate_id'] in {c['candidate_id'] for c in percentages}}
+        self.assertEqual(by_value[3.4]['subject'], 'real gross domestic product')
+        self.assertEqual(by_value[2.2]['subject'], 'real gross domestic product')
+        self.assertEqual(by_value[3.4]['subject_raw'], 'real gross domestic product (gdp)')
+        self.assertTrue(any(dev['reason'] == 'normalized_acronym'
+                            for dev in by_value[3.4]['deviations']))
+
+    def test_a_generic_amount_predicate_is_rebuilt_from_the_subject(self):
+        document, n1 = self.build(
+            'The goods deficit increased $12.8 billion in August to $136.6 billion.')
+        money = next(candidate for candidate in n1['candidates']
+                     if candidate['candidate_type'] == 'currency'
+                     and candidate.get('value') == 12.8)
+
+        def respond(payload):
+            items = []
+            for candidate in payload['candidates']:
+                if candidate['candidate_id'] == money['candidate_id']:
+                    items.append(interpretation(candidate, subject='goods deficit',
+                                                predicate='deficit_amount'))
+                else:
+                    items.append(interpretation(candidate, 'non_claim', subject='',
+                                                predicate='', kind='unknown'))
+            return {'status': 'ok', 'parsed': {'interpretations': items}, 'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == money['candidate_id'])
+        self.assertEqual(item['predicate'], 'goods_deficit')
+        self.assertEqual(item['predicate_raw'], 'deficit_amount')
+        self.assertEqual(item['predicate_source'], 'subject_fallback')
+        self.assertTrue(any(dev['reason'] == 'generic_measure'
+                            for dev in item['deviations']))
+
+    def test_a_remainder_that_is_part_of_the_subject_uses_the_subject_measure(self):
+        document, n1 = self.build(
+            'The goods deficit increased $12.8 billion in August to $136.6 billion.')
+        money = next(candidate for candidate in n1['candidates']
+                     if candidate['candidate_type'] == 'currency'
+                     and candidate.get('value') == 12.8)
+
+        def respond(payload):
+            items = []
+            for candidate in payload['candidates']:
+                if candidate['candidate_id'] == money['candidate_id']:
+                    items.append(interpretation(candidate, subject='goods deficit',
+                                                predicate='deficit_increase'))
+                else:
+                    items.append(interpretation(candidate, 'non_claim', subject='',
+                                                predicate='', kind='unknown'))
+            return {'status': 'ok', 'parsed': {'interpretations': items}, 'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == money['candidate_id'])
+        self.assertEqual(item['predicate'], 'goods_deficit')
+        self.assertEqual(item['predicate_source'], 'subject_fallback')
+
+    def test_a_bare_partial_measure_is_rebuilt_from_the_subject(self):
+        document, n1 = self.build(
+            'The services surplus increased less than $0.1 billion in August '
+            'to $31.0 billion.')
+        money = next(candidate for candidate in n1['candidates']
+                     if candidate['candidate_type'] == 'currency'
+                     and candidate.get('value') == 31.0)
+
+        def respond(payload):
+            items = []
+            for candidate in payload['candidates']:
+                if candidate['candidate_id'] == money['candidate_id']:
+                    items.append(interpretation(candidate, subject='services surplus',
+                                                predicate='surplus'))
+                else:
+                    items.append(interpretation(candidate, 'non_claim', subject='',
+                                                predicate='', kind='unknown'))
+            return {'status': 'ok', 'parsed': {'interpretations': items}, 'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == money['candidate_id'])
+        self.assertEqual(item['predicate'], 'services_surplus')
+        self.assertEqual(item['predicate_source'], 'subject_fallback')
+        self.assertTrue(any(dev['reason'] == 'partial_measure'
+                            for dev in item['deviations']))
+
+    def test_a_bounded_amount_with_a_same_sentence_measure_is_economic(self):
+        document, n1 = self.build(
+            'The services surplus increased less than $0.1 billion in August '
+            'to $31.0 billion.')
+        small = next(candidate for candidate in n1['candidates']
+                     if candidate['candidate_type'] == 'currency'
+                     and candidate.get('value') == 0.1)
+        large = next(candidate for candidate in n1['candidates']
+                     if candidate['candidate_type'] == 'currency'
+                     and candidate.get('value') == 31.0)
+
+        def respond(payload):
+            items = []
+            for candidate in payload['candidates']:
+                if candidate['candidate_id'] == small['candidate_id']:
+                    items.append(interpretation(candidate, 'context_only',
+                                                economic_relevance='non_economic'))
+                elif candidate['candidate_id'] == large['candidate_id']:
+                    items.append(interpretation(candidate, subject='services surplus',
+                                                predicate='services_surplus'))
+                else:
+                    items.append(interpretation(candidate, 'non_claim', subject='',
+                                                predicate='', kind='unknown'))
+            return {'status': 'ok', 'parsed': {'interpretations': items}, 'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == small['candidate_id'])
+        self.assertEqual(item['disposition'], 'claim_value')
+        self.assertEqual(item['economic_relevance'], 'economic')
+        self.assertEqual(item['subject'], 'services surplus')
+        self.assertEqual(item['predicate'], 'services_surplus')
+        self.assertEqual(result['statistics']['promoted_bounded_amounts'], 1)
+        self.assertTrue(any(dev['reason'] == 'bounded_economic_amount'
+                            for dev in item['deviations']))
+
+
+
 if __name__ == '__main__':
     unittest.main()

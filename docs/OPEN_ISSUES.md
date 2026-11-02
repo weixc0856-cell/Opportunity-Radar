@@ -67,36 +67,40 @@
 
 ## ISSUE-004 主张流水线 N2/N3 语义回退与输出预算
 
-**状态**：部分解决（Batch 14，2026-11-02）· 影响：影子 Claim 的准确率与召回 · 优先级：中高
+**状态**：主要部分已解决（Batch 15，2026-11-02）· 影响：影子 Claim 的准确率与召回 · 优先级：中
 
-**Batch 14 已解决**：
+**已解决**：
 
-- N3 rate/change：`0.2 percent at a monthly rate` 恢复 rate/not_applicable/monthly_rate；
-  `0.5 percent` 与括号内无 rate 短语的 `0.2 percent` 恢复 change/increase/unknown；
-  `increased at an annual rate of 3.4 percent` 保持 change/annual_rate/increase。
-- N3 comparison：贸易 `$105.6bn`、`$12.8bn` 恢复 period_change；没 from/to/prior 线索的
-  `change + period_change` 归 unknown；`level + period_change` 归 level。
-- `3.8 percent`：批次候选加 `in_batch`，模型声称 assigned 但漏关系时做一次聚焦覆盖重试；
-  仍缺失则保持 unresolved。最终 10 篇参考集直接得到 rate/level，另一轮运行由重试找回。
-- 输出预算：`run_n4_n5.py` 默认 N3 tokens 改为 2400；`finish_reason=length` 或 completion
-  达到 max_tokens 时标 `invalid_output`/`token_limit_reached`；BEA Personal Income 在 1400/2400
-  下均完成，200 强制截断被明确标记。
-- 参考集 N3 type/direction/comparison 回到 Batch 12 的 20/21、20/21、18/21；period 11/18 未回退。
+- N2 GDP subject：文档内缩写展开，`real gross domestic product (gdp)` / `real gdp` 都规范化为
+  `real gross domestic product`；`subject_raw` 保留。非 GDP 定义（`gross national product (gnp)`）
+  独立展开，没有硬编码。
+- N2 贸易 predicate：泛化 `amount/rate/...` 与单 token 部分 measure（`deficit`/`surplus`）用
+  subject slug 重建；`deficit_amount`/`deficit_increase` → `goods_deficit`，保留 `predicate_raw`。
+- N2 `$0.1bn`：提示词明确 bounded amount 仍是 economic claim；程序仅在“同句恰有一个 economic
+  claim”时提升，多个 subject → ambiguous，没有经济 claim 不提升。最终运行模型直接判 economic。
+- N3 rate/change 与 period_change 已在 Batch 14 修复；输出预算默认 2400，截断标 invalid_output。
+- Batch 15 N2：disposition 21/21、subject 20/21、predicate 19/21、economic 21/21；
+  N5 严格精确率 18/18、正文严格召回 17/18。
 
 **仍未解决**：
 
-- N5 严格精确率 15/18、召回 14/18，低于 Batch 12 的 18/21（去重后 18/19）与 17/18。
-  原因在固定 N2 输入：GDP `3.4%`/`2.2%` 的 subject、贸易 `$12.8bn` 的 predicate、
-  `$0.1bn` 被判 context_only/non_economic。N3 不修改 N2；N5 只做结构校验。
-- `2.2%` 的 annual_rate 未跨句延续；BBC `$1tn` 的 comparison 为 level（参考 unknown）。
-- 覆盖重试依赖模型，仍可能两次都遗漏；没有程序默认补关系。
-- N3/N5 语义准确率仍只有 10 篇人工参考，不能外推到 50 篇；temperature=0 也不保证跨运行稳定。
+- Google `$500bn` predicate 为 `google`（参考 `market_value`）；Intel `20%` subject `intel`
+  （参考 `intel shares`）、predicate `stock_price`（参考 `share_price`）。两者都是 title-only，
+  N5 以 `title_only_evidence` 拒绝，不影响 Claim。
+- N5 严格指标不惩罚 relationship/comparison 差异：贸易 `$105.6bn` 同时有 change（period_change）
+  与 level 两条 Claim；按 relationship_type+comparison 同时匹配，Batch 15 语义精确率/召回为
+  16/18、16/18，而不是 18/18、17/18。
+- BEA Personal Income 的 `0.2%`（DPI）仍缺 N3 关系，N5 标 `relationship_unassigned`；这是 N3
+  遗漏，不在 N2 批次范围。
+- GDP `2.2%` comparison 仍为 unknown（参考 annual_rate），annual_rate 未跨句延续。
+- N2/N3 语义准确率仍只有 10 篇人工参考，不能外推到 50 篇；temperature=0 也不保证跨运行稳定。
 
-**下一步**：单独评审 N2 subject/predicate 修复（GDP 的 `(gdp)`/`real gdp`、`deficit_amount`）；
-评估可选的 N5 语义复核；任何修改单独版本化并重跑参考集。
+**下一步**：单独评审 N5 的语义去重/关系类型口径；评估 N3 对 0.2% DPI 的遗漏；title-only 的
+Google/Intel 语义问题不通过硬编码修复。
 
-**跟踪指标**：参考集 N2 disposition、N3 type/direction/comparison、N5 唯一 Claim 精确率/召回；
-必须同时报告分母与是否使用人工参考，不得外推到 50 篇。
+**跟踪指标**：参考集 N2 disposition/subject/predicate/economic_relevance、N3 type/direction/
+comparison、N5 严格与 relationship_type+comparison 语义口径；必须同时报告分母与是否使用人工
+参考，不得外推到 50 篇。
 
 ## 记录约定
 
