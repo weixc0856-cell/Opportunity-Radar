@@ -220,6 +220,10 @@ def summarise(records, seconds):
             'evidence_located': evidence_located,
             'evidence_located_rate': (round(evidence_located / n3_relationships_total, 3)
                                       if n3_relationships_total else None),
+            'period_linked': sum(statistics.get('period_linked_relationships', 0)
+                                 for statistics in n3_stats),
+            'period_attached_by_program': sum(
+                statistics.get('period_attached_by_program', 0) for statistics in n3_stats),
             'failed_articles': sum(1 for output in n3_records
                                    if output.get('status') not in ('success', 'partial',
                                                                    'blocked')),
@@ -263,6 +267,8 @@ def render(summary):
         f"| assigned / ambiguous / unresolved | {n3['assigned']} / {n3['ambiguous']} / "
         f"{n3['unresolved']} |",
         f"| 证据定位通过率 | {n3['evidence_located_rate']} |",
+        f"| 关联期间 / 程序补期间 | {n3['period_linked']} / "
+        f"{n3['period_attached_by_program']} |",
         f"| 失败文章 | {n3['failed_articles']} |",
         f"| 缓存复用 | {n3['reused']} |",
         f"| 模型调用次数 | {n3['model_calls']} |",

@@ -7,7 +7,8 @@ references the wrong atom, an unstated comparison, or a non-claim as a value.
 import unittest
 from unittest.mock import patch
 
-from opportunity_radar import article_text, n3_relationships, numeric_candidates
+from opportunity_radar import (article_text, n3_relationships, n4_normalization,
+                               numeric_candidates)
 
 TEXT = ('Personal income increased $54.5 billion (0.2 percent at a monthly rate) in '
         'September. Personal saving was $911.1 billion.')
@@ -401,6 +402,89 @@ class HashTests(unittest.TestCase):
         second = n3_relationships.run(document, n1, n2, Runner(respond_one_level), MODEL)
         self.assertEqual([item['relationship_id'] for item in first['relationships']],
                          [item['relationship_id'] for item in second['relationships']])
+
+
+class PeriodAssociationTests(unittest.TestCase):
+    def build(self, text, title):
+        article = article_text.build({'article_id': 'a1', 'source_id': 's1', 'title': title,
+                                      'content': text, 'content_format': 'text'})
+        return article.to_dict(), numeric_candidates.extract(article)
+
+    def test_a_title_period_gives_the_year_to_a_same_month_sentence(self):
+        document, n1 = self.build('Personal income increased $54.5 billion in September.',
+                                  'Personal Income and Outlays, September 2026')
+        n2 = make_n2(document, n1)
+        result = n3_relationships.run(document, n1, n2, Runner(respond_one_level), MODEL)
+        relationship = result['relationships'][0]
+        self.assertEqual(relationship['period_raw'], 'september 2026')
+        self.assertEqual(relationship['period_source'], 'program')
+        self.assertEqual(relationship['period_rule'], 'title_same_month')
+        self.assertEqual(relationship['period_evidence_field'], 'title')
+        self.assertEqual(result['statistics']['period_attached_by_program'], 1)
+        n4 = n4_normalization.normalize(document, n1, n2, result)
+        record = n4['normalized_records'][0]
+        self.assertEqual((record['period'], record['period_raw']), ('2026-09', 'september 2026'))
+        self.assertEqual(record['period_evidence_quote'], 'september 2026')
+        self.assertEqual(record['period_source'], 'program')
+
+    def test_a_month_without_a_year_keeps_raw_text_but_no_normalized_period(self):
+        document, n1 = self.build('The deficit increased $12.8 billion in July.',
+                                  'U.S. International Trade, August 2026')
+        n2 = make_n2(document, n1)
+
+        def respond(payload):
+            candidate = next(item for item in payload['candidates']
+                             if item['candidate_id'] in payload['claim_value_ids'])
+            return {'status': 'ok', 'parsed': {
+                'relationships': [relationship(candidate, 'change', 'unknown', 'increase')],
+                'candidate_dispositions': [{'candidate_id': candidate['candidate_id'],
+                                            'status': 'assigned',
+                                            'relationship_indexes': [0], 'reason': ''}]},
+                'attempts': 1}
+
+        result = n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
+        rel = result['relationships'][0]
+        self.assertEqual(rel['period_raw'], 'july')
+        self.assertEqual(rel['period_rule'], 'same_sentence')
+        n4 = n4_normalization.normalize(document, n1, n2, result)
+        record = n4['normalized_records'][0]
+        self.assertEqual((record['period'], record['period_raw']), ('', 'july'))
+        self.assertEqual(record['period_evidence_quote'], 'july')
+        self.assertIn('period_missing',
+                      [deviation['reason'] for deviation in record['deviations']])
+
+    def test_a_period_is_not_moved_from_another_sentence(self):
+        document, n1 = self.build('Revenue was $5 billion. The deficit increased in September.',
+                                  'T')
+        n2 = make_n2(document, n1)
+        result = n3_relationships.run(document, n1, n2, Runner(respond_one_level), MODEL)
+        relationship = result['relationships'][0]
+        self.assertEqual(relationship['period_candidate_ids'], [])
+        self.assertEqual(relationship['period_raw'], '')
+
+    def test_two_values_in_different_periods_do_not_share_one_period(self):
+        document, n1 = self.build('Exports were $10 billion in July and $20 billion in August.',
+                                  'T')
+        n2 = make_n2(document, n1)
+
+        def respond(payload):
+            values = [item for item in payload['candidates']
+                      if item['candidate_id'] in payload['claim_value_ids']]
+            item = relationship(values[0])
+            item['value_candidate_ids'] = [candidate['candidate_id'] for candidate in values]
+            item['evidence_quote'] = ' '.join(candidate['raw_text'] for candidate in values)
+            return {'status': 'ok', 'parsed': {
+                'relationships': [item],
+                'candidate_dispositions': [
+                    {'candidate_id': candidate['candidate_id'], 'status': 'assigned',
+                     'relationship_indexes': [0], 'reason': ''} for candidate in values]},
+                'attempts': 1}
+
+        result = n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
+        rel = result['relationships'][0]
+        self.assertEqual(rel['period_candidate_ids'], [])
+        self.assertEqual(rel['period_raw'], '')
+
 
 
 if __name__ == '__main__':

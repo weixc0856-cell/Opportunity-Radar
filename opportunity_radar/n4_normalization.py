@@ -19,7 +19,7 @@ from pathlib import Path
 from . import claim_contract, units
 
 NODE = 'N4'
-NODE_VERSION = 'n4-v1'
+NODE_VERSION = 'n4-v2'
 RULESET = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()[:16]
 UNITS_VERSION = hashlib.sha256(Path(units.__file__).resolve().read_bytes()).hexdigest()[:16]
 
@@ -57,7 +57,7 @@ def _period_value(temporal):
     kind = temporal.get('kind')
     if kind == 'year':
         return f"{temporal['year']:04d}"
-    if kind == 'month':
+    if kind == 'month' and temporal.get('year'):
         return f"{temporal['year']:04d}-{temporal['month']:02d}"
     if kind == 'day':
         return f"{temporal['year']:04d}-{temporal['month']:02d}-{temporal['day']:02d}"
@@ -70,18 +70,36 @@ def _period_value(temporal):
     return ''
 
 
-def _period_from(ids, candidates, relationship_raw=''):
+def _period_from(ids, candidates, relationship):
+    """(period, period_raw, candidate_id, evidence).
+
+    A period candidate without a year (for example "september" or "second quarter") keeps its
+    raw text and locator but has an empty normalized period. The program does not infer the
+    year. A later candidate with a year for the same slot wins over the year-less one.
+    """
+    fallback = None
     for candidate_id in ids or []:
         candidate = candidates.get(candidate_id)
         if not candidate:
             continue
+        raw_text = candidate.get('raw_text') or ''
+        evidence = {'quote': raw_text, 'start': candidate.get('start'),
+                    'end': candidate.get('end'), 'field': candidate.get('field') or ''}
         value = _period_value(candidate.get('temporal'))
         if value:
-            return value, candidate.get('raw_text') or '', candidate_id
-    raw = str(relationship_raw or '').strip()
-    if raw and claim_contract.valid_period(raw):
-        return raw, raw, ''
-    return '', '', ''
+            return value, raw_text, candidate_id, evidence
+        if fallback is None:
+            fallback = ('', raw_text, candidate_id, evidence)
+    if fallback is not None:
+        return fallback
+    raw = str(relationship.get('period_raw') or '').strip()
+    if raw:
+        evidence = {'quote': relationship.get('period_evidence_quote') or '',
+                    'start': relationship.get('period_evidence_start'),
+                    'end': relationship.get('period_evidence_end'),
+                    'field': relationship.get('period_evidence_field') or ''}
+        return (raw if claim_contract.valid_period(raw) else ''), raw, '', evidence
+    return '', '', '', {'quote': '', 'start': None, 'end': None, 'field': ''}
 
 
 def _baseline(ids, candidates):
@@ -153,8 +171,8 @@ def _record(candidate, interpretation, relationship, period_ids, baseline_ids,
         deviations.append({'field': 'value', 'reason': 'scientific_notation',
                            'value': candidate.get('raw_text')})
 
-    period, period_raw, period_id = _period_from(period_ids, candidates,
-                                                 relationship.get('period_raw'))
+    period, period_raw, period_id, period_evidence = _period_from(
+        period_ids, candidates, relationship)
     if not period and relationship.get('relationship_type') in PERIOD_NEEDED:
         deviations.append({'field': 'period', 'reason': 'period_missing', 'value': ''})
         if status == 'normalized':
@@ -207,6 +225,13 @@ def _record(candidate, interpretation, relationship, period_ids, baseline_ids,
         'period': period,
         'period_raw': period_raw,
         'period_candidate_ids': list(period_ids or []),
+        'period_evidence_quote': period_evidence['quote'],
+        'period_evidence_start': period_evidence['start'],
+        'period_evidence_end': period_evidence['end'],
+        'period_evidence_field': period_evidence['field'],
+        'period_source': relationship.get('period_source') or (
+            'n3_period_candidate' if period_id else 'n3_period_raw' if period_raw else ''),
+        'period_rule': relationship.get('period_rule') or '',
         'baseline': baseline,
         'baseline_candidate_ids': list(baseline_ids or []),
         'denominator': denominator,
@@ -247,7 +272,10 @@ def _missing(candidate, interpretation, reason, input_hash_value):
         'raw_unit': candidate.get('unit') or '', 'raw_scale': candidate.get('scale') or '',
         'comparison': 'unknown', 'seasonality': 'unknown', 'revision': 'unknown',
         'direction': 'unknown', 'period': '', 'period_raw': '',
-        'period_candidate_ids': [], 'baseline': [], 'baseline_candidate_ids': [],
+        'period_candidate_ids': [], 'period_evidence_quote': '',
+        'period_evidence_start': None, 'period_evidence_end': None,
+        'period_evidence_field': '', 'period_source': '', 'period_rule': '',
+        'baseline': [], 'baseline_candidate_ids': [],
         'denominator': '', 'denominator_candidate_ids': [],
         'source_candidate_ids': [candidate['candidate_id']],
         'source_relationship_ids': [],

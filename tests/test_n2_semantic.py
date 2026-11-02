@@ -38,6 +38,7 @@ class Runner:
 def interpretation(candidate, disposition='claim_value', quote=None, status='resolved', **extra):
     item = {
         'candidate_id': candidate['candidate_id'],
+        'economic_relevance': extra.pop('economic_relevance', 'economic'),
         'disposition': disposition,
         'subject': 'personal income' if disposition == 'claim_value' else '',
         'predicate': 'personal_income' if disposition == 'claim_value' else '',
@@ -99,7 +100,7 @@ class CoverageTests(unittest.TestCase):
 
         def respond(payload):
             items = default_respond(payload)['parsed']['interpretations']
-            items = items + [dict(items[0]), dict(items[1], candidate_id='c-not-in-input')]
+            items = items + [dict(items[0]), dict(items[0], candidate_id='c-not-in-input')]
             return {'status': 'ok', 'parsed': {'interpretations': items}, 'attempts': 1}
 
         result = n2_semantic.run(document, n1, Runner(respond), MODEL)
@@ -190,6 +191,44 @@ class EnumAndFieldTests(unittest.TestCase):
         self.assertEqual(item['status'], 'unresolved')
         self.assertTrue(any(dev['reason'] == 'not_located' for dev in item['deviations']))
 
+    def test_a_non_economic_claim_value_is_downgraded_to_non_claim(self):
+        document, n1 = setup()
+        candidate = n1['candidates'][0]
+
+        def respond(payload):
+            item = interpretation(candidate, economic_relevance='non_economic')
+            return {'status': 'ok', 'parsed': {'interpretations': [
+                item] + [interpretation(other) for other in payload['candidates']
+                         if other['candidate_id'] != candidate['candidate_id']]},
+                'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == candidate['candidate_id'])
+        self.assertEqual(item['disposition'], 'non_claim')
+        self.assertEqual(item['model_disposition'], 'claim_value')
+        self.assertEqual(item['economic_relevance'], 'non_economic')
+        self.assertEqual(item['kind'], 'unknown')
+        self.assertTrue(any(dev['reason'] == 'non_economic_claim_value'
+                            for dev in item['deviations']))
+
+    def test_uncertain_economic_relevance_becomes_ambiguous(self):
+        document, n1 = setup()
+        candidate = n1['candidates'][0]
+
+        def respond(payload):
+            item = interpretation(candidate, economic_relevance='uncertain')
+            return {'status': 'ok', 'parsed': {'interpretations': [
+                item] + [interpretation(other) for other in payload['candidates']
+                         if other['candidate_id'] != candidate['candidate_id']]},
+                'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == candidate['candidate_id'])
+        self.assertEqual(item['disposition'], 'ambiguous')
+        self.assertEqual(item['status'], 'ambiguous')
+
     def test_a_relationship_word_in_the_predicate_is_rebuilt_from_subject(self):
         document, n1 = setup()
         candidate = n1['candidates'][0]
@@ -208,6 +247,24 @@ class EnumAndFieldTests(unittest.TestCase):
         self.assertEqual(item['predicate_raw'], 'increase_amount')
         self.assertEqual(item['predicate_source'], 'subject_fallback')
         self.assertTrue(any(dev['reason'] == 'relationship_leak' for dev in item['deviations']))
+
+    def test_a_direction_word_inside_a_measure_is_removed(self):
+        document, n1 = setup()
+        candidate = n1['candidates'][0]
+
+        def respond(payload):
+            item = interpretation(candidate, predicate='plunge_rate')
+            return {'status': 'ok', 'parsed': {'interpretations': [
+                item] + [interpretation(other) for other in payload['candidates']
+                         if other['candidate_id'] != candidate['candidate_id']]},
+                'attempts': 1}
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        item = next(value for value in result['candidate_interpretations']
+                    if value['candidate_id'] == candidate['candidate_id'])
+        self.assertEqual(item['predicate'], 'personal_income')
+        self.assertEqual(item['predicate_raw'], 'plunge_rate')
+        self.assertEqual(item['predicate_source'], 'subject_fallback')
 
     def test_a_long_field_is_kept_and_marked_not_truncated(self):
         document, n1 = setup()

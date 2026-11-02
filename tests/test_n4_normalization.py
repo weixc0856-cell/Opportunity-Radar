@@ -258,5 +258,61 @@ class DeterminismTests(unittest.TestCase):
                             second['normalized_records'][0]['record_id'])
 
 
+class PeriodEvidenceTests(unittest.TestCase):
+    def test_a_full_period_keeps_its_source_locator(self):
+        document, n1 = setup('Revenue was $5 billion in 2026.')
+        money, period = find(n1, 'currency'), find(n1, 'period')
+        n2 = n2_output(document, n1)
+        n3 = n3_output(document, [relationship(document, n1, [money],
+                                               periods=[period['candidate_id']])])
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        record = record_for(n4, money)
+        self.assertEqual(record['period'], '2026')
+        self.assertEqual(record['period_evidence_quote'], '2026')
+        self.assertEqual((record['period_evidence_start'], record['period_evidence_end']),
+                         (period['start'], period['end']))
+        self.assertEqual(record['period_evidence_field'], period['field'])
+        self.assertEqual(record['period_source'], 'n3_period_candidate')
+
+    def test_a_month_without_a_year_keeps_raw_text_and_locator(self):
+        document, n1 = setup('Revenue was $5 billion in September.')
+        money, period = find(n1, 'currency'), find(n1, 'period')
+        n2 = n2_output(document, n1)
+        n3 = n3_output(document, [relationship(
+            document, n1, [money], 'change', periods=[period['candidate_id']])])
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        record = record_for(n4, money)
+        self.assertEqual((record['period'], record['period_raw']), ('', 'september'))
+        self.assertEqual(record['period_candidate_ids'], [period['candidate_id']])
+        self.assertEqual(record['period_evidence_quote'], 'september')
+        self.assertEqual(record['period_evidence_start'], period['start'])
+        self.assertEqual(record['period_evidence_field'], 'body')
+        self.assertIn('period_missing',
+                      [deviation['reason'] for deviation in record['deviations']])
+        self.assertEqual(record['status'], 'partially_normalized')
+
+    def test_a_relationship_period_without_a_candidate_keeps_raw_text(self):
+        document, n1 = setup('Revenue was $5 billion in September.')
+        money = find(n1, 'currency')
+        n2 = n2_output(document, n1)
+        item = relationship(document, n1, [money], 'change')
+        item['period_raw'] = 'september'
+        item['period_evidence_quote'] = 'september'
+        item['period_evidence_start'] = money['start']
+        item['period_evidence_end'] = money['end']
+        item['period_evidence_field'] = 'body'
+        item['period_source'] = 'model'
+        n3 = n3_output(document, [item])
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        record = record_for(n4, money)
+        self.assertEqual((record['period'], record['period_raw']), ('', 'september'))
+        self.assertEqual(record['period_candidate_ids'], [])
+        self.assertEqual(record['period_evidence_quote'], 'september')
+        self.assertEqual(record['period_source'], 'model')
+        self.assertIn('period_missing',
+                      [deviation['reason'] for deviation in record['deviations']])
+
+
+
 if __name__ == '__main__':
     unittest.main()

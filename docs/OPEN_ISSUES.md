@@ -65,6 +65,37 @@
 
 事件级重复不再"完全没有识别"，但也不是彻底解决。
 
+## ISSUE-004 主张流水线 N2/N3 语义回退与输出预算
+
+**状态**：Open（Batch 13 测量）· 影响：影子 Claim 的准确率与召回 · 优先级：中高
+
+**证据**（10 篇人工参考集，Batch 13）：
+
+- `0.2 percent at a monthly rate` 被 N3 判为 change/increase/unknown，参考为 rate/not_applicable/
+  monthly_rate；`0.5 percent` 被判为 rate，参考为 change；贸易 `$105.6bn`、`$12.8bn` 的
+  comparison 为 unknown，参考为 period_change。
+- `$0.1 billion` 被 N2 以 “less than 是 threshold” 判为 context_only/non_economic；`3.8 percent`
+  没有 N3 关系，N5 标为 relationship_unassigned。
+- GDP `3.4%` subject 含 `(gdp)`、`2.2%` 缩写为 `real gdp`；贸易 `$12.8bn` predicate 为
+  `deficit_amount`；Intel `20%` subject 为 `intel's shares`。这些字段通过 r2-v4 结构校验，
+  N5 无法拦截语义错误。
+- BEA 个人收入 9 个 claim_value 在 `--n3-tokens 1400` 下两个 N3 批次 JSON 截断（invalid_output），
+  用 2400 重跑才得到完整 12 条关系。
+
+**为什么不能直接放宽或补造**：这些是模型分类/抽取错误；程序强行改 rate/comparison 或补关系会
+引入未声明的推断。N3 的期间规则已经只做原文明确支持的同句/标题同月关联。
+
+**下一步**：
+
+1. 用固定 10 篇参考集分别测 N3 rate/comparison 的提示词变体，改动单独版本化并全量重跑；
+2. 给 N3 输出预算设下限或按 claim_value 数量自适应，低于阈值直接报错而不是截断；
+3. 评估 subject 的括号缩写清理与 predicate 的 `_amount` 规则，需先证明不会误改
+   `personal income` 等指标名；
+4. 在 N5 之前增加可选的语义复核，不把契约结构校验当作语义正确。
+
+**跟踪指标**：参考集 N2 disposition、N3 type/direction/comparison、N5 唯一 Claim 精确率/召回；
+必须同时报告分母与是否使用人工参考，不得外推到 50 篇。
+
 ## 记录约定
 
 - 每个问题单独验证、单独合并；不把多个变量放进同一轮实验。

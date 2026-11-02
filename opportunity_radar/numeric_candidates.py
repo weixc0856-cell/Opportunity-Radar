@@ -30,7 +30,7 @@ from pathlib import Path
 
 from . import units
 
-VERSION = 'n1-v1'
+VERSION = 'n1-v2'
 # The source hash is recorded with every run so a rule change cannot reuse a
 # result produced by different rules under the same node version.
 RULESET = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()[:16]
@@ -96,11 +96,27 @@ _DAY_MONTH = re.compile(
     r'(?<!\d)(?P<day>\d{1,2})\s+(?P<month>' + _MONTH_ALT + r')(?![a-z])'
     r'(?:,?\s+(?P<y>\d{4}))?', re.I)
 
+# A month without a year is still a period expression ('in September'); the contract period
+# stays empty until a year is explicit, but N3 can reference the candidate and keep period_raw.
+_MONTH_ONLY = re.compile(
+    r'(?<![a-z])(?P<month>' + _MONTH_ALT + r')(?![a-z])', re.I)
+# 'may' is also a modal verb ('may be higher'). It only counts as a month when a temporal cue
+# precedes it; the other month names do not have an equally common non-temporal reading.
+_MAY_ONLY = re.compile(
+    r'(?<![a-z])(?:in|during|for|since|through|by|of)\s+(?P<month>may)(?![a-z])', re.I)
 _YEAR_MONTH = re.compile(r'(?<!\d)(?P<y>\d{4})-(?P<m>0[1-9]|1[0-2])(?!\d)')
 _YEAR_QUARTER = re.compile(r'(?<!\d)(?P<y>\d{4})\s*-\s*[qQ](?P<q>[1-4])(?![a-z0-9])')
 _QUARTER_YEAR = re.compile(r'(?<![a-z0-9])[qQ](?P<q>[1-4])\s*[- ]\s*(?P<y>\d{4})(?!\d)')
 _ORDINAL_QUARTER = re.compile(
     r'(?<!\d)(?P<n>\d{1,2})(?:st|nd|rd|th)\s+quarter(?:\s+of)?\s+(?P<y>\d{4})(?!\d)', re.I)
+# 'third quarter of 2026' is as explicit as '3rd quarter 2026'; the scanner missed it because
+# the ordinal is a word. Without this candidate N3 has no period to attach for GDP releases.
+_WORD_QUARTER = re.compile(
+    r'(?<![a-z])(?P<word>first|second|third|fourth)\s+quarter(?:\s+of)?\s+'
+    r'(?P<y>(?:19|20)\d{2})(?!\d)', re.I)
+_WORD_QUARTER_ONLY = re.compile(
+    r'(?<![a-z])(?P<word>first|second|third|fourth)\s+quarter(?![a-z])', re.I)
+_WORD_QUARTER_NUMBER = {'first': 1, 'second': 2, 'third': 3, 'fourth': 4}
 _YEAR_RANGE = re.compile(r'(?<!\d)(?P<a>(?:19|20)\d{2})\s*[-–—]\s*(?P<b>\d{4})(?!\d)')
 _YEAR_RANGE_TO = re.compile(
     r'(?<!\d)(?P<a>(?:19|20)\d{2})\s+to\s+(?P<b>(?:19|20)\d{2})(?!\d)')
@@ -205,6 +221,17 @@ def _periods(text):
             'number_raw': match.group(0),
             'temporal': _temporal('range', start_year=int(match.group('a')),
                                   end_year=int(match.group('b')))})
+    for match in _MONTH_ONLY.finditer(text):
+        if match.group('month').lower() == 'may':
+            continue
+        yield (match.start(), match.end(), 'period', {
+            'number_raw': match.group(0),
+            'temporal': _temporal('month',
+                                  month=_MONTH_NUMBER[match.group('month').lower()])})
+    for match in _MAY_ONLY.finditer(text):
+        yield (match.start('month'), match.end('month'), 'period', {
+            'number_raw': match.group('month'),
+            'temporal': _temporal('month', month=_MONTH_NUMBER['may'])})
     for match in _YEAR_MONTH.finditer(text):
         yield (match.start(), match.end(), 'period', {
             'number_raw': match.group(0),
@@ -216,6 +243,16 @@ def _periods(text):
                 'number_raw': match.group(0),
                 'temporal': _temporal('quarter', year=int(match.group('y')),
                                       quarter=int(match.group('q')))})
+    for match in _WORD_QUARTER.finditer(text):
+        yield (match.start(), match.end(), 'period', {
+            'number_raw': match.group(0),
+            'temporal': _temporal('quarter', year=int(match.group('y')),
+                                  quarter=_WORD_QUARTER_NUMBER[match.group('word').lower()])})
+    for match in _WORD_QUARTER_ONLY.finditer(text):
+        yield (match.start(), match.end(), 'period', {
+            'number_raw': match.group(0),
+            'temporal': _temporal('quarter',
+                                  quarter=_WORD_QUARTER_NUMBER[match.group('word').lower()])})
     for match in _ORDINAL_QUARTER.finditer(text):
         yield (match.start(), match.end(), 'period', {
             'number_raw': match.group(0),
@@ -531,12 +568,15 @@ def _cue_groups(text, atoms, sentence, base):
     for match in _DIRECTION.finditer(sentence_text):
         cue_start, cue_end = offset + match.start(), offset + match.end()
         following = [atom for atom in atoms
-                     if cue_end <= atom['field_start'] <= cue_end + 40]
+                     if cue_end <= atom['field_start'] <= cue_end + 40
+                     and atom.get('value') is not None]
         if following:
             atom = following[0]
             groups.append(_group('increase_decrease', text[cue_start:atom['field_end']],
                                  cue_start, atom['field_end'], [atom], sentence, base))
     for atom in atoms:
+        if atom.get('value') is None:
+            continue
         tail = text[atom['field_end']:min(sentence['field_end'], atom['field_end'] + 20)]
         match = _DIRECTION.search(tail)
         if match and not any(atom['field_end'] < other['field_start']
