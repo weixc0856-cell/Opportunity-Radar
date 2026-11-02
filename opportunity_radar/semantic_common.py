@@ -146,6 +146,7 @@ class JsonRunner:
                 return {'status': 'ok', 'parsed': parsed, 'raw': raw, 'attempts': attempt,
                         'seconds': round(total_seconds, 2), 'input_chars': input_chars,
                         'output_chars': len(raw), 'usage': usage,
+                        'finish_reason': detail.get('finish_reason', ''),
                         'parse_retry': attempt > 1, 'attempts_metrics': attempts_metrics,
                         'timings': detail.get('timings') or {}}
             except (ValueError, json.JSONDecodeError) as exc:

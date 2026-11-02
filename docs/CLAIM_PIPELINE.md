@@ -1,17 +1,21 @@
 # 主张提取流水线（N0–N5）
 
-版本：4.1 · 2026-11-02
+版本：4.2 · 2026-11-02
 定位：规定"文章 → 主张"这条链路怎么拆、每个节点的输入输出契约、失败语义、留存方式与验收方式。
 现状：**N0–N5 已实现，形成离线影子链路；Claim 仍是影子 Claim，不是已核实事实。**
 Batch 13 已完成 N2 经济相关性、N3 同句/标题同月期间关联、N5 语义去重的定向修复；14 篇回归
 （含完整 10 篇人工参考集）显示期间关联从 0/18 提升到 11/18，但同时暴露 rate/comparison 与
-个别召回回退，见 `docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`。
+个别召回回退。Batch 14 只修 N3：rate/change 与 period_change 参考集指标恢复到 Batch 12 基线，
+3.8% 由模型关系或一次覆盖重试分配；N5 仍受固定 N2 输入中的 subject/predicate 与 `$0.1bn`
+context_only 影响。见 `docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md` 与
+`docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`。
 生产提示词仍是 v6，v7 仍是影子，切换判定仍是 **NOT READY**，生产启用需 G6 批准。
 
 - N0/N1：`docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`
 - N2/N3：`docs/archive/R2_BATCH9_N2_N3_SPEC_2026-11-02.md`、`R2_BATCH9_N2_N3_ACCEPTANCE_2026-11-02.md`
 - N4/N5：`docs/archive/R2_BATCH10_N4_N5_SPEC_2026-11-02.md`、`R2_BATCH10_N4_N5_ACCEPTANCE_2026-11-02.md`
-- 质量修复：`docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`
+- 质量修复：`docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`、
+  `docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`
 
 ---
 
@@ -56,16 +60,22 @@ Batch 13 已完成 N2 经济相关性、N3 同句/标题同月期间关联、N5 
   uncertain）：软件版本、对象 id、技术参数、年龄、URL/图片编号等非经济数字不得成为 claim_value；
   程序把 non_economic 的 claim_value 降为 non_claim，把 uncertain 降为 ambiguous，并保留模型原始
   disposition。predicate 关系泄漏由程序用 subject 重建（含 plunge/surge/jump 等方向词）。
-- N3（`n3-v2`）：只对 N2 `claim_value` 且 resolved 的候选建关系；`context_only` 可作基准；
+- N3（`n3-v3`）：只对 N2 `claim_value` 且 resolved 的候选建关系；`context_only` 可作基准；
   `non_claim` 拒绝；N2 未成功 → `blocked`；每个 claim_value 必须有处置；比较口径必须原文出现
-  且紧邻该数值；revision/seasonality 只在原文出现时保留。payload 提供文档全部日期/期间候选和
-  每个数值的 `period_hints`（同句、标题同月/季度）。程序确定性补期间仅限同句明确期间；无年份的
-  月/季度保留 `period_raw`、不补年份；标题同月/季度可提供年份；跨句不搬期间，多个不同期间不共享。
-  关系保留 `period_evidence_quote/start/end/field` 与 `period_source`（model / program /
-  model_rejected）。
+  且紧邻该数值；revision/seasonality 只在原文出现时保留。payload 提供文档全部日期/期间候选、
+  `period_hints`（同句、标题同月/季度）和每个候选的 `in_batch`；只有 `in_batch=true` 的候选属于
+  当前批。程序确定性补期间仅限同句明确期间；无年份的月/季度保留 `period_raw`、不补年份；标题
+  同月/季度可提供年份；跨句不搬期间，多个不同期间不共享。rate/change 与 comparison 的措辞规则
+  外加确定性纠正：金额括号后的显式 rate、命名 rate、无 rate 短语的百分比变化分别处理；
+  `level + period_change` 归 level，无期间线索的 `change + period_change` 归 unknown；revision
+  无 baseline → unresolved。模型声称 assigned 但未给关系时，只对缺失候选做一次模型覆盖重试，
+  仍缺失则保持 unresolved；程序不补造关系。关系保留
+  `period_evidence_quote/start/end/field` 与 `period_source`（model / program / model_rejected）。
 - 批次记录：`input_chars`、`output_chars`、`prompt_tokens`、`completion_tokens`、`seconds`、
-  `parse_retry`、`candidate_count`/`claim_value_count`、`context_chars`；工具汇总最慢批次、
-  重试次数与 token 总量，用于区分请求、生成、JSON 修复和持久化耗时。
+  `parse_retry`、`finish_reason`、`token_limit_reached`、`candidate_count`/`claim_value_count`、
+  `context_chars`；工具汇总最慢批次、重试次数与 token 总量，用于区分请求、生成、JSON 修复和
+  持久化耗时。N3 在 finish_reason=length 或 completion 达到 max_tokens 时标为 `invalid_output`；
+  默认 `--n3-tokens=2400`（`run_n2_n3.py` 与 `run_n4_n5.py` 一致）。
 
 ## 6. N4 数值标准化（`n4-v2`）
 
@@ -148,7 +158,7 @@ execution_status、executed_at、params_json、tools_json、output_json。`INSER
 
 1. 输入是标题 + RSS 正文，不是全文。
 2. N2/N3 是模型判断；程序只保证引用、枚举、覆盖、比较口径与单位结构的确定性守卫。
-3. N3 的期间关联由 `n3-v2` 的提示词与确定性同句/标题同月规则补齐；无年份的月份/季度保留
+3. N3 的期间关联由 `n3-v3` 的提示词与确定性同句/标题同月规则补齐；无年份的月份/季度保留
    `period_raw`、不补年份，因此 N4 可能仍为 `period_missing`。跨句不搬期间。
 4. 修订/季节调整只接受原文明确措辞；模型漏记时保持 unknown。
 5. 标题单独证据被拒绝；固定夹具中缺少 N2 留存的文章不会产生 Claim。

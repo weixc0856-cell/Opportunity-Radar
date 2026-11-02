@@ -174,6 +174,7 @@ class LocalAnalyzer:
         content=payload['choices'][0]['message']['content']
         return content, {'seconds':round(time.time()-started,2),
                          'usage':payload.get('usage') or {},
+                         'finish_reason':payload['choices'][0].get('finish_reason',''),
                          'timings':payload.get('timings') or {}}
 
     def _post(self,data):

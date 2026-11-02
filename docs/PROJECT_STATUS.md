@@ -1,7 +1,7 @@
 # 项目状态（2026-11-02）
 
-当前分支 `feat/r2-batch13-quality`（第十三批）；第七至十二批已进入 `main`。
-测试：**854 项通过**；干净检出同样通过（27 项因缺少本地样本显式跳过）。
+当前分支 `feat/r2-batch14-n3-semantic-regression`（第十四批）；第七至十三批已进入 `main`。
+测试：**866 项通过**；干净检出同样通过（27 项因缺少本地样本显式跳过）。
 
 ## 已交付
 
@@ -23,6 +23,7 @@
 | R2 Batch 11 | 多关系组装核查 + 五夹具 N2/N3 覆盖 + 七夹具 N4/N5 | 七夹具完成：49 个 N1 候选全部有处置，31 个接受候选、36 条影子 Claim，契约 36/36；多关系（$105.6bn）核查正确；N2/N3 批次指标与失败恢复已启用 |
 | R2 Batch 12 | 50 篇真实 RSS 影子运行 + 10 篇人工基准 | 50 篇完成 N0–N5：257 候选、51 claim_value、42 条影子 Claim，257/257 有处置，契约 50/50；人工参考 N1 21/21、N2 disposition 21/21、N5 正文召回 17/18；N3 period 0/18、3 组语义重复 Claim |
 | R2 Batch 13 | N2 经济相关性、N3 期间关联、N5 语义去重 + N1/N4 期间证据 | 14 篇回归（10 篇受影响 + 4 篇补齐参考集）：N2 claim_value 32→20、non_claim 9→27；pySMESH/GUI/Cyril/NVIDIA/SimScale 不再生成 Claim，Google/Intel 语义修复；N3 period 0→15 条关系，参考集正文 Claim 11/18 关联；N5 22→17 条唯一 Claim、5 条语义重复合并；854 测试通过。参考集 N2/N3 部分语义指标回退，见验收记录 |
+| R2 Batch 14 | N3 rate/change、period_change、3.8% 遗漏、输出预算 | 10 篇人工参考集：N3 type 17→20/21、direction 17→20/21、comparison 14→18/21，回到 Batch 12 基线；period 11/18 未回退；3.8% 由模型关系或一次覆盖重试分配；1400/2400 tokens 均完成 BEA Personal Income，200 强制截断标 invalid_output；N5 18 条 Claim、严格精确率 15/18、召回 14/18，仍低于 Batch 12，原因在固定 N2 输入；866 测试通过 |
 
 ## 数据库现状
 
@@ -70,12 +71,12 @@ independent_primary 19。
 3. **转载识别**：`syndication_group` 全为空，需要正文相似度或通讯社标记。
 4. **实体消歧**：同名不同公司、母子公司会被当作同一实体；股票代码暂不参与匹配。
 5. **谱系未接入评分**：`multi_source_coverage` 证据状态仍按文章计数，尚未改为来源族计数。
-6. **R2 待启用**：50 篇真实 RSS 样本已完成 N0–N5；Batch 13 已修复 N2 经济相关性
-   （版本号/年龄/技术参数不再成为 Claim）、N3 期间关联（参考集 0→11/18）与 N5 语义去重
-   （22→17 条唯一 Claim）。但参考集仍出现 N3 rate/comparison 回退、`$0.1bn`/`3.8%` 召回缺口、
-   GDP/Intel 个别 subject 错误；影子 Claim 尚未接入生产 Claim 表、`verify.py`、日报或门禁。
-   v7 切换判定仍为 **NOT READY**（百分比变化类人工基准召回 68%）。N2/N3 语义准确率仅
-   10 篇人工参考，不外推；程序只记录缺失、不补造。
+6. **R2 待启用**：50 篇真实 RSS 样本已完成 N0–N5；Batch 13 修复 N2 经济相关性、N3 期间关联
+   与 N5 语义去重；Batch 14 将 N3 rate/change、period_change 恢复到 Batch 12 基线，并修复 3.8%
+   遗漏与 N3 输出预算。N5 仍低于 Batch 12，原因是固定 N2 输入中的 GDP subject、贸易
+   `$12.8bn` predicate 与 `$0.1bn` context_only；影子 Claim 尚未接入生产 Claim 表、`verify.py`、
+   日报或门禁。v7 切换判定仍为 **NOT READY**。N2/N3 语义准确率仅 10 篇人工参考，不外推；
+   程序只记录缺失、不补造。
 7. **R3–R6 未开始**：编辑优先级、周报月报、经济数据引擎、回测。
 
 ## 边界
