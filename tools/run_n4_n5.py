@@ -172,7 +172,7 @@ def main(argv=None):
     parser.add_argument('--no-store', action='store_true')
     parser.add_argument('--no-reuse', action='store_true')
     parser.add_argument('--n2-tokens', type=int, default=1600)
-    parser.add_argument('--n3-tokens', type=int, default=1400)
+    parser.add_argument('--n3-tokens', type=int, default=2400)
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()

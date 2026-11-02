@@ -15,13 +15,14 @@ import time
 from pathlib import Path
 
 from . import claim_contract
-from .semantic_common import (FAILED, PARTIAL, SCHEMA_ERROR, SUCCESS, hash_json, locate_quote,
+from .semantic_common import (FAILED, INVALID_OUTPUT, PARTIAL, SCHEMA_ERROR, SUCCESS, hash_json,
+                              locate_quote,
                               make_batches, model_metadata, node_input_hash, prompt_hash,
                               schema_hash)
 
 NODE = 'N3'
-NODE_VERSION = 'n3-v2'
-PROMPT_VERSION = 'n3-prompt-v2'
+NODE_VERSION = 'n3-v3'
+PROMPT_VERSION = 'n3-prompt-v3'
 SCHEMA_VERSION = 'n3-schema-v2'
 # Program validation is part of what a cached N3 result means: a rule change must not reuse
 # a result produced by the old checks.
@@ -78,12 +79,18 @@ Return only JSON with this shape:
 {"relationships": [{"relationship_type": "level|change|comparison|range|revision|share|rate|unknown", "value_candidate_ids": ["..."], "baseline_candidate_ids": [], "period_candidate_ids": [], "comparison_period_candidate_ids": [], "denominator_candidate_ids": [], "related_expression_ids": [], "direction": "increase|decrease|unchanged|not_applicable|unknown", "comparison": "level|year_over_year|quarter_over_quarter|month_over_month|period_change|percentage_point_change|share|monthly_rate|quarterly_rate|annual_rate|unknown", "seasonality": "seasonally_adjusted|not_seasonally_adjusted|unknown", "revision": "original|revised|preliminary|unknown|amendment|subsequent_comparative|advance_estimate|final", "period_raw": "...", "evidence_sentence_ids": ["s0001"], "evidence_quote": "...", "status": "resolved|ambiguous|unresolved", "reason": "..."}], "candidate_dispositions": [{"candidate_id": "...", "status": "assigned|ambiguous|unresolved", "relationship_indexes": [0], "reason": "..."}]}
 
 Rules:
-- Every supplied claim_value candidate must be assigned to at least one relationship, or listed in candidate_dispositions as ambiguous or unresolved. Never drop one.
-- value_candidate_ids may contain only supplied claim_value candidates. context_only candidates may appear only as period, comparison-period, baseline or denominator context. non_claim candidates may never be referenced.
+- Every supplied claim_value candidate with in_batch=true must be assigned to at least one relationship, or listed in candidate_dispositions as ambiguous or unresolved. Never drop one.
+- Only candidates with in_batch=true are this batch's claim_value candidates. A candidate with in_batch=false is context even if its n2 disposition says claim_value: do not put it in value_candidate_ids, though it may be baseline, period, comparison-period or denominator context. non_claim candidates may never be referenced.
 - Never change what N2 said the number measures; if the relation cannot be stated without changing it, mark it unresolved.
 - relationship_type=level for a stated level; change for an increase/decrease; comparison when two values or periods are compared; range for an interval; share for a part of a whole; rate for a stated rate; revision when a revised figure is compared with the earlier one.
+- Use comparison=period_change when the text compares a value with an earlier period: "from $92.8 billion in July to $105.6 billion in August", "up from ... last month", "compared with the previous quarter", or a change amount stated for the current period followed by "to <new level>" ("increased $12.8 billion in August to $136.6 billion"). Do not infer period_change merely because two numbers appear in the same article. Use month_over_month only when the text explicitly says month over month / month-on-month / MoM.
+- A single change amount with no earlier value, no "from", and no "to <new level>" is comparison=unknown, not period_change.
 - "grew to $30 trillion" makes the $30 trillion a level, not a growth amount.
-- A currency amount and a percentage in the same clause are different values. The amount is the change amount; the percentage is the rate. When a rate phrase follows the percentage ("0.2 percent at a monthly rate"), give monthly_rate/annual_rate to the percentage, not to the currency amount. A parenthetical percentage directly after an amount states the rate for the same change; keep both values and their own relationships. Do not mark that percentage ambiguous merely because its comparison basis is unstated: use relationship_type=change and comparison=unknown.
+- A currency amount and a percentage in the same clause are different values. The amount is the change amount; the percentage is the rate of that change. Classify the percentage by its own clause; a rate word elsewhere in the window does not apply. Keep both values and their own relationships.
+  - Exact rate phrase in the clause ("0.2 percent at a monthly rate", "at an annual rate", "quarterly rate"): relationship_type=rate, comparison=monthly_rate|annual_rate|quarterly_rate, direction=not_applicable.
+  - No rate phrase in the clause ("increased $113.1 billion (0.5 percent)", "increased $52.7 billion (0.2 percent)"): relationship_type=change, comparison=unknown, direction=increase|decrease. A percent sign alone never makes a rate.
+  - Named rate or ratio in the clause ("the personal saving rate was 3.8 percent", "the unemployment rate", "share of GDP"): relationship_type=rate (share for a part of a whole), comparison=level when no comparison basis is stated, direction=not_applicable. Do not omit a candidate merely because it is a rate definition; give it its own level relationship.
+  Do not mark a percentage ambiguous only because its comparison basis is unstated.
 - Do not copy one candidate's comparison or direction onto another candidate when the text attaches it to only one of them.
 - comparison=level for a stated level with no comparison basis; comparison=unknown when the text implies a comparison but does not state the basis. monthly_rate is not month_over_month. annual_rate is not year_over_year. percentage_point_change is not a percent change. A range is not a change.
 - direction describes the movement for a change (increase/decrease/unchanged); use not_applicable for a level, range or share.
@@ -266,9 +273,10 @@ def _period_hints(n1, value_candidate):
     return hints
 
 
-def _candidate_payload(candidate, interpretation, period_hints=None):
+def _candidate_payload(candidate, interpretation, period_hints=None, in_batch=False):
     payload = {
         'candidate_id': candidate['candidate_id'],
+        'in_batch': bool(in_batch),
         'candidate_type': candidate['candidate_type'],
         'raw_text': candidate['raw_text'],
         'value': candidate.get('value'),
@@ -315,7 +323,8 @@ def _batch_payload(document, n1, n2, batch, claim_value_ids):
                                         for candidate in _period_candidates(n1)],
         'candidates': [_candidate_payload(candidate,
                                           interpretations.get(candidate['candidate_id']),
-                                          _period_hints(n1, candidate))
+                                          _period_hints(n1, candidate),
+                                          candidate['candidate_id'] in claim_value_ids)
                        for candidate in window],
         'expression_groups': [
             {'expression_id': group.get('expression_id'),
@@ -502,6 +511,10 @@ def _normalise_relationship(raw, document, sentence_ids, batch_values, window_id
         status = 'unresolved'
     if status == 'resolved' and locator is None:
         status = 'unresolved'
+    if relationship_type == 'revision' and not baselines:
+        deviations.append({'field': 'baseline_candidate_ids',
+                           'reason': 'revision_without_baseline', 'value': ''})
+        status = 'unresolved'
     reason = str(raw.get('reason') or '').strip()
     return {
         'expression_id': '',
@@ -533,6 +546,155 @@ def _normalise_relationship(raw, document, sentence_ids, batch_values, window_id
         'reason': reason,
         'deviations': deviations,
     }, deviations
+
+
+RATE_COMPARISONS = (
+    ('monthly_rate', ('at a monthly rate', 'monthly rate')),
+    ('annual_rate', ('at an annual rate', 'annual rate', 'annualized', 'annualised')),
+    ('quarterly_rate', ('at a quarterly rate', 'quarterly rate')),
+)
+RATE_WORDS = (' rate', 'rate ', ' ratio', 'share of', 'percent of', 'percentage of')
+INCREASE_WORDS = ('increased', 'increase ', 'rose', ' rise', 'grew', 'grow', 'gained',
+                  'gain ', 'up from')
+DECREASE_WORDS = ('decreased', 'decrease ', 'fell', ' fall', 'declined', 'decline ',
+                  'dropped', 'drop ', 'down from')
+
+
+def _local_text(document, candidate, radius=110):
+    sentence = next((item for item in document['sentences']
+                     if item['sentence_id'] == candidate.get('sentence_id')), None)
+    if sentence is None:
+        return ''
+    start = max(sentence['start'], candidate['start'] - radius)
+    end = min(sentence['end'], candidate['end'] + radius)
+    return document['text'][start:end].lower()
+
+
+def _direction_in(text):
+    if any(word in text for word in INCREASE_WORDS):
+        return 'increase'
+    if any(word in text for word in DECREASE_WORDS):
+        return 'decrease'
+    return 'unknown'
+
+
+def _parenthetical_after_amount(text, candidate_text):
+    """True for '$54.5 billion (0.2 percent at a monthly rate)' style wording."""
+    if '(' not in text or ')' not in text:
+        return False
+    start = text.find('(')
+    end = text.find(')', start)
+    if start < 0 or end < 0 or candidate_text not in text[start:end + 1]:
+        return False
+    before = text[max(0, start - 80):start]
+    return '$' in before or 'usd' in before
+
+
+def _apply_comparison_rules(relationship, document, n1):
+    """Keep period_change only when the clause compares periods, and level out levels."""
+    if relationship.get('status') != 'resolved':
+        return None
+    candidates = {candidate['candidate_id']: candidate
+                  for candidate in n1.get('candidates') or []}
+    value_id = (relationship.get('value_candidate_ids') or [''])[0]
+    candidate = candidates.get(value_id)
+    if not candidate:
+        return None
+    text = _local_text(document, candidate, radius=160).lower()
+    comparison = relationship.get('comparison')
+    if relationship.get('relationship_type') == 'level' and comparison == 'period_change':
+        relationship['comparison'] = 'level'
+        return {'field': 'comparison', 'reason': 'level_cannot_be_period_change',
+                'value': value_id, 'before': ['level', 'period_change'],
+                'after': ['level', 'level']}
+    if relationship.get('relationship_type') == 'change' and comparison == 'period_change':
+        has_baseline = bool(relationship.get('baseline_candidate_ids'))
+        cues = ('from ', 'to ', 'previous', 'last ', 'compared with', 'prior')
+        if not has_baseline and not any(cue in text for cue in cues):
+            relationship['comparison'] = 'unknown'
+            return {'field': 'comparison', 'reason': 'period_change_without_period_cue',
+                    'value': value_id, 'before': ['change', 'period_change'],
+                    'after': ['change', 'unknown']}
+    return None
+
+
+def _apply_rate_rules(relationship, document, n1):
+    """Correct rate/change classification when the wording is explicit.
+
+    This never creates a relationship for an omitted value. It only reclassifies a relationship
+    the model already emitted, using the value's own clause. An explicit parenthetical rate
+    after an amount is a rate; a named rate/ratio with no movement is a rate; a bare percent in
+    an increase/decrease is a change. The parenthetical test keeps 'increased at an annual rate
+    of 3.4 percent' as a change.
+    """
+    if relationship.get('status') != 'resolved':
+        return None
+    candidates = {candidate['candidate_id']: candidate
+                  for candidate in n1.get('candidates') or []}
+    for value_id in relationship.get('value_candidate_ids') or []:
+        candidate = candidates.get(value_id)
+        if not candidate or candidate.get('candidate_type') != 'percentage':
+            continue
+        text = _local_text(document, candidate)
+        explicit = next(((name, phrase) for name, phrases in RATE_COMPARISONS
+                         for phrase in phrases if phrase in text), None)
+        if explicit and _parenthetical_after_amount(text, candidate.get('raw_text', '').lower()):
+            name = explicit[0]
+            if (relationship.get('relationship_type'), relationship.get('comparison'),
+                    relationship.get('direction')) == ('rate', name, 'not_applicable'):
+                return None
+            before = (relationship.get('relationship_type'), relationship.get('comparison'),
+                      relationship.get('direction'))
+            relationship['relationship_type'] = 'rate'
+            relationship['comparison'] = name
+            relationship['direction'] = 'not_applicable'
+            return {'field': 'relationship_type', 'reason': 'explicit_parenthetical_rate',
+                    'value': value_id, 'before': list(before),
+                    'after': ['rate', name, 'not_applicable']}
+        named_rate = any(word in text for word in RATE_WORDS)
+        direction = _direction_in(text)
+        if (explicit and not _parenthetical_after_amount(text, candidate.get('raw_text', '').lower())
+                and relationship.get('relationship_type') == 'rate'
+                and direction in ('increase', 'decrease')):
+            before = (relationship.get('relationship_type'), relationship.get('comparison'),
+                      relationship.get('direction'))
+            relationship['relationship_type'] = 'change'
+            relationship['comparison'] = explicit[0]
+            relationship['direction'] = direction
+            return {'field': 'relationship_type', 'reason': 'rate_phrase_with_movement',
+                    'value': value_id, 'before': list(before),
+                    'after': ['change', explicit[0], direction]}
+        if relationship.get('relationship_type') == 'rate':
+            if named_rate:
+                if relationship.get('comparison') == 'unknown':
+                    before = (relationship.get('relationship_type'),
+                              relationship.get('comparison'),
+                              relationship.get('direction'))
+                    relationship['comparison'] = 'level'
+                    relationship['direction'] = 'not_applicable'
+                    return {'field': 'comparison', 'reason': 'named_rate_level',
+                            'value': value_id, 'before': list(before),
+                            'after': ['rate', 'level', 'not_applicable']}
+                return None
+            before = (relationship.get('relationship_type'), relationship.get('comparison'),
+                      relationship.get('direction'))
+            relationship['relationship_type'] = 'change'
+            relationship['comparison'] = 'unknown'
+            relationship['direction'] = direction
+            return {'field': 'relationship_type', 'reason': 'rate_without_rate_phrase',
+                    'value': value_id, 'before': list(before),
+                    'after': ['change', 'unknown', direction]}
+        if (relationship.get('relationship_type') == 'change' and named_rate
+                and direction == 'unknown' and not explicit):
+            before = (relationship.get('relationship_type'), relationship.get('comparison'),
+                      relationship.get('direction'))
+            relationship['relationship_type'] = 'rate'
+            relationship['comparison'] = 'level'
+            relationship['direction'] = 'not_applicable'
+            return {'field': 'relationship_type', 'reason': 'named_rate_without_movement',
+                    'value': value_id, 'before': list(before),
+                    'after': ['rate', 'level', 'not_applicable']}
+    return None
 
 
 def _resolve_period(relationship, n1):
@@ -637,6 +799,45 @@ def _disposition_records(raw_items, claim_value_ids):
     return by_id, unknown, deviations
 
 
+def _accept_raw_relationships(raw_relationships, batch, batch_claim_ids, record, document,
+                               n1, sentence_ids, expression_ids, document_period_ids,
+                               period_candidates, rate_adjustments, comparison_adjustments,
+                               relationship_deviations):
+    """Validate raw model relationships for one batch and apply program corrections."""
+    context_text = batch['context_text']
+    batch_values = set(batch_claim_ids)
+    window_candidates = _window_candidates(n1, batch['context_start'], batch['context_end'])
+    window_ids = {candidate['candidate_id'] for candidate in window_candidates}
+    window_positions = [(candidate['candidate_id'],
+                         candidate['start'] - batch['context_start'],
+                         candidate['end'] - batch['context_start'])
+                        for candidate in window_candidates]
+    accepted = []
+    for raw in raw_relationships:
+        if not isinstance(raw, dict):
+            record['deviations'].append({'field': '*', 'reason': 'not_an_object', 'value': ''})
+            continue
+        relationship, deviations = _normalise_relationship(
+            raw, document, sentence_ids, batch_values, window_ids, document_period_ids,
+            window_positions, expression_ids, context_text, period_candidates)
+        if not relationship['value_candidate_ids']:
+            record['deviations'].extend(deviations or [])
+            record['deviations'].append({'field': 'value_candidate_ids',
+                                         'reason': 'not_in_batch', 'value': ''})
+            continue
+        record['deviations'].extend(deviations)
+        relationship_deviations.extend(deviations)
+        _resolve_period(relationship, n1)
+        adjustment = _apply_rate_rules(relationship, document, n1)
+        if adjustment:
+            rate_adjustments.append((relationship, adjustment))
+        adjustment = _apply_comparison_rules(relationship, document, n1)
+        if adjustment:
+            comparison_adjustments.append((relationship, adjustment))
+        accepted.append(relationship)
+    return accepted
+
+
 def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
     """N3 for one document. Never runs the model when N2 did not succeed."""
     if not isinstance(document, dict) or not isinstance(n1, dict) or not isinstance(n2, dict):
@@ -685,7 +886,8 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
                          for candidate in _period_candidates(n1)}
     document_period_ids = set(period_candidates)
     relationships, relationship_deviations, batch_records = [], [], []
-    program_adjustments = []
+    rate_adjustments = []
+    comparison_adjustments = []
     disposition_raw, disposition_unknown, disposition_deviations = [], [], []
     for batch in batches:
         batch_started = time.time()
@@ -703,11 +905,32 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
                   'prompt_tokens': usage.get('prompt_tokens'),
                   'completion_tokens': usage.get('completion_tokens'),
                   'parse_retry': result.get('parse_retry', False),
+                  'finish_reason': result.get('finish_reason', ''),
+                  'token_limit_reached': False,
                   'context_chars': len(batch['context_text']),
                   'claim_value_count': len(batch_claim_ids),
                   'error': result.get('error', ''),
                   'deviations': []}
         if result.get('status') != 'ok':
+            completion_tokens = (result.get('usage') or {}).get('completion_tokens')
+            max_tokens = int(getattr(runner, 'max_tokens', 0) or 0)
+            if (result.get('finish_reason') == 'length'
+                    or (completion_tokens is not None and max_tokens
+                        and int(completion_tokens) >= max_tokens)):
+                record['token_limit_reached'] = True
+            batch_records.append(record)
+            continue
+        completion_tokens = (result.get('usage') or {}).get('completion_tokens')
+        finish_reason = result.get('finish_reason') or ''
+        max_tokens = int(getattr(runner, 'max_tokens', 0) or 0)
+        truncated = (finish_reason == 'length'
+                     or (not finish_reason and completion_tokens is not None
+                         and max_tokens and int(completion_tokens) >= max_tokens))
+        if truncated:
+            record['status'] = INVALID_OUTPUT
+            record['token_limit_reached'] = True
+            record['error'] = 'output_token_limit_reached'
+            record['completion_tokens'] = completion_tokens
             batch_records.append(record)
             continue
         parsed = result['parsed']
@@ -726,25 +949,11 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
                              candidate['start'] - batch['context_start'],
                              candidate['end'] - batch['context_start'])
                             for candidate in window_candidates]
-        batch_relationships = []
-        for raw in raw_relationships:
-            if not isinstance(raw, dict):
-                record['deviations'].append({'field': '*', 'reason': 'not_an_object',
-                                             'value': ''})
-                continue
-            relationship, deviations = _normalise_relationship(
-                raw, document, sentence_ids, batch_values, window_ids, document_period_ids,
-                window_positions, expression_ids, context_text, period_candidates)
-            if not relationship['value_candidate_ids']:
-                record['deviations'].extend(deviations or [])
-                record['deviations'].append({'field': 'value_candidate_ids',
-                                             'reason': 'not_in_batch', 'value': ''})
-                continue
-            relationship_deviations.extend(deviations)
-            record['deviations'].extend(deviations)
-            _resolve_period(relationship, n1)
-            relationships.append(relationship)
-            batch_relationships.append(relationship)
+        batch_relationships = _accept_raw_relationships(
+            raw_relationships, batch, batch_claim_ids, record, document, n1, sentence_ids,
+            expression_ids, document_period_ids, period_candidates, rate_adjustments,
+            comparison_adjustments, relationship_deviations)
+        relationships.extend(batch_relationships)
         # A disposition may only describe a candidate that was in this batch's payload;
         # one naming another batch is a cross-batch reference and is not accepted.
         for item in raw_dispositions:
@@ -760,6 +969,92 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
         record['status'] = (PARTIAL if (record['deviations'] or any(
             item.get('status') != 'resolved' for item in batch_relationships)) else SUCCESS)
         batch_records.append(record)
+    # Coverage retry: a model can say 'assigned' and still omit the relationship. One focused
+    # retry for just the missing candidates is model-based, not a program default.
+    assigned_ids = {candidate_id for relationship in relationships
+                    if relationship.get('status') == 'resolved'
+                    for candidate_id in relationship.get('value_candidate_ids') or []}
+    noted = {item.get('candidate_id') for item in disposition_raw
+             if item.get('status') in ('ambiguous', 'unresolved')}
+    missing = [candidate_id for candidate_id in claim_value_ids
+               if candidate_id not in assigned_ids and candidate_id not in noted]
+    retry_records = []
+    if missing:
+        missing_candidates = [candidate for candidate in candidates
+                              if candidate['candidate_id'] in set(missing)]
+        for retry_batch in make_batches(document, missing_candidates,
+                                        max_candidates=max_candidates, max_chars=max_chars):
+            retry_ids = [value for value in retry_batch['candidate_ids']]
+            payload = _batch_payload(document, n1, n2, retry_batch, retry_ids)
+            batch_started = time.time()
+            result = runner.run(payload)
+            usage = result.get('usage') or {}
+            record = {'claim_value_ids': retry_ids,
+                      'status': result.get('status', FAILED),
+                      'attempts': result.get('attempts', 0),
+                      'seconds': result.get('seconds', round(time.time() - batch_started, 2)),
+                      'input_chars': result.get('input_chars'),
+                      'output_chars': result.get('output_chars'),
+                      'prompt_tokens': usage.get('prompt_tokens'),
+                      'completion_tokens': usage.get('completion_tokens'),
+                      'parse_retry': result.get('parse_retry', False),
+                      'finish_reason': result.get('finish_reason', ''),
+                      'token_limit_reached': False,
+                      'context_chars': len(retry_batch['context_text']),
+                      'claim_value_count': len(retry_ids),
+                      'error': result.get('error', ''),
+                      'retry_for': 'coverage_missing',
+                      'deviations': []}
+            if result.get('status') != 'ok':
+                completion_tokens = (result.get('usage') or {}).get('completion_tokens')
+                max_tokens = int(getattr(runner, 'max_tokens', 0) or 0)
+                if (result.get('finish_reason') == 'length'
+                        or (completion_tokens is not None and max_tokens
+                            and int(completion_tokens) >= max_tokens)):
+                    record['token_limit_reached'] = True
+                batch_records.append(record)
+                retry_records.append(record)
+                continue
+            completion_tokens = usage.get('completion_tokens')
+            finish_reason = result.get('finish_reason') or ''
+            max_tokens = int(getattr(runner, 'max_tokens', 0) or 0)
+            if (finish_reason == 'length'
+                    or (not finish_reason and completion_tokens is not None
+                        and max_tokens and int(completion_tokens) >= max_tokens)):
+                record['status'] = INVALID_OUTPUT
+                record['token_limit_reached'] = True
+                record['error'] = 'output_token_limit_reached'
+                record['completion_tokens'] = completion_tokens
+                batch_records.append(record)
+                retry_records.append(record)
+                continue
+            parsed = result['parsed']
+            raw_relationships = parsed.get('relationships')
+            raw_dispositions = parsed.get('candidate_dispositions')
+            if not isinstance(raw_relationships, list) or not isinstance(raw_dispositions, list):
+                record['status'] = SCHEMA_ERROR
+                record['error'] = 'relationships or candidate_dispositions is not a list'
+                batch_records.append(record)
+                retry_records.append(record)
+                continue
+            retry_relationships = _accept_raw_relationships(
+                raw_relationships, retry_batch, retry_ids, record, document, n1, sentence_ids,
+                expression_ids, document_period_ids, period_candidates, rate_adjustments,
+                comparison_adjustments, relationship_deviations)
+            relationships.extend(retry_relationships)
+            for item in raw_dispositions:
+                if isinstance(item, dict) and item.get('candidate_id') in set(retry_ids):
+                    disposition_raw.append(item)
+                else:
+                    record['deviations'].append({
+                        'field': 'candidate_id', 'reason': 'not_in_batch',
+                        'value': str(item.get('candidate_id') if isinstance(item, dict)
+                                     else item)[:80]})
+            record['status'] = (PARTIAL if (record['deviations'] or any(
+                item.get('status') != 'resolved' for item in retry_relationships))
+                else SUCCESS)
+            batch_records.append(record)
+            retry_records.append(record)
     for index, relationship in enumerate(relationships):
         material = '\x00'.join((str(base['n2_output_hash']), str(relationship['relationship_type']),
                                 ','.join(sorted(relationship['value_candidate_ids'])),
@@ -770,7 +1065,7 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
     relationships.sort(key=lambda item: (item.get('evidence_start') if item.get('evidence_start')
                                          is not None else 10 ** 12,
                                          item['relationship_type']))
-    program_adjustments = [{
+    period_adjustments = [{
         'relationship_id': relationship['relationship_id'],
         'value_candidate_ids': list(relationship['value_candidate_ids']),
         'field': 'period_candidate_ids',
@@ -779,6 +1074,10 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
         'period_raw': relationship['period_raw'],
         'rule': relationship['period_rule'],
     } for relationship in relationships if relationship.get('period_source') == 'program']
+    program_adjustments = period_adjustments + [
+        dict(adjustment, relationship_id=relationship['relationship_id'],
+             value_candidate_ids=list(relationship['value_candidate_ids']))
+        for relationship, adjustment in rate_adjustments + comparison_adjustments]
     # model dispositions are interpreted against the final relationship order
     model_dispositions, unknown_dispositions, disposition_deviations = _disposition_records(
         disposition_raw, set(claim_value_ids))
@@ -844,7 +1143,15 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
         'period_linked_relationships': sum(1 for item in relationships
                                            if item.get('period_candidate_ids')
                                            or item.get('period_raw')),
-        'period_attached_by_program': len(program_adjustments),
+        'period_attached_by_program': len(period_adjustments),
+        'rate_adjusted_by_program': len(rate_adjustments),
+        'comparison_adjusted_by_program': len(comparison_adjustments),
+        'coverage_retries': len(retry_records),
+        'coverage_recovered': sum(
+            1 for candidate_id in missing
+            if any(relationship.get('status') == 'resolved'
+                   and candidate_id in (relationship.get('value_candidate_ids') or [])
+                   for relationship in relationships)),
         'coverage_complete': len(dispositions) == len(claim_value_ids)
         and len({item['candidate_id'] for item in dispositions}) == len(claim_value_ids),
         'batch_count': len(batches),

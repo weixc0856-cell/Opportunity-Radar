@@ -294,7 +294,10 @@ class ComparisonGuardTests(unittest.TestCase):
 
         result = n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
         item = result['relationships'][0]
-        self.assertEqual(item['comparison'], 'level')
+        # The model's annual_rate is unstated and is rejected; the text explicitly says
+        # 'at a monthly rate', so the program classifies it as a monthly rate instead.
+        self.assertEqual((item['relationship_type'], item['comparison'], item['direction']),
+                         ('rate', 'monthly_rate', 'not_applicable'))
         self.assertTrue(any(dev['reason'] == 'not_stated' for dev in item['deviations']))
 
     def test_revision_and_seasonality_are_kept_only_when_stated(self):
@@ -484,6 +487,187 @@ class PeriodAssociationTests(unittest.TestCase):
         rel = result['relationships'][0]
         self.assertEqual(rel['period_candidate_ids'], [])
         self.assertEqual(rel['period_raw'], '')
+
+
+
+class OutputBudgetTests(unittest.TestCase):
+    def test_an_invalid_output_at_the_token_cap_is_marked(self):
+        document, n1 = setup()
+        n2 = make_n2(document, n1)
+        runner = Runner(lambda payload: {
+            'status': 'invalid_output', 'attempts': 2, 'error': 'JSONDecodeError',
+            'usage': {'completion_tokens': 1400}})
+        runner.max_tokens = 1400
+        result = n3_relationships.run(document, n1, n2, runner, MODEL)
+        self.assertEqual(result['batches'][0]['status'], 'invalid_output')
+        self.assertTrue(result['batches'][0]['token_limit_reached'])
+
+    def test_a_length_finish_is_invalid_output_not_success(self):
+        document, n1 = setup()
+        n2 = make_n2(document, n1)
+        percentage = next(candidate for candidate in n1['candidates']
+                          if candidate['candidate_type'] == 'percentage')
+
+        def respond(payload):
+            item = relationship(percentage)
+            return {'status': 'ok', 'parsed': {
+                'relationships': [item],
+                'candidate_dispositions': [{'candidate_id': percentage['candidate_id'],
+                                            'status': 'assigned',
+                                            'relationship_indexes': [0], 'reason': ''}]},
+                'attempts': 1, 'finish_reason': 'length',
+                'usage': {'completion_tokens': 1400}}
+
+        result = n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
+        self.assertEqual(result['batches'][0]['status'], 'invalid_output')
+        self.assertTrue(result['batches'][0]['token_limit_reached'])
+        self.assertEqual(result['relationships'], [])
+        disposition = next(item for item in result['candidate_dispositions']
+                           if item['candidate_id'] == percentage['candidate_id'])
+        self.assertEqual(disposition['status'], 'unresolved')
+
+
+class CoverageRetryTests(unittest.TestCase):
+    def test_an_omitted_candidate_gets_one_focused_model_retry(self):
+        document, n1 = setup('Revenue was $5 billion and cost was $2 billion.')
+        n2 = make_n2(document, n1)
+        calls = []
+
+        def respond(payload):
+            calls.append(payload['claim_value_ids'])
+            target = payload['claim_value_ids'][0] if len(payload['claim_value_ids']) == 1                 else payload['claim_value_ids'][0]
+            if len(calls) > 1:
+                target = payload['claim_value_ids'][-1]
+            candidate = next(item for item in payload['candidates']
+                             if item['candidate_id'] == target)
+            item = relationship(candidate)
+            return {'status': 'ok', 'parsed': {
+                'relationships': [item],
+                'candidate_dispositions': [{'candidate_id': target, 'status': 'assigned',
+                                            'relationship_indexes': [0], 'reason': ''}]},
+                'attempts': 1}
+
+        result = n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result['statistics']['coverage_retries'], 1)
+        self.assertEqual(result['statistics']['coverage_recovered'], 1)
+        self.assertTrue(all(item['status'] == 'assigned'
+                            for item in result['candidate_dispositions']))
+
+
+class RevisionGuardTests(unittest.TestCase):
+    def test_a_revision_without_a_baseline_is_unresolved(self):
+        document, n1 = setup()
+        n2 = make_n2(document, n1)
+        percentage = next(candidate for candidate in n1['candidates']
+                          if candidate['candidate_type'] == 'percentage')
+
+        def respond(payload):
+            item = relationship(percentage, 'revision', 'unknown', 'not_applicable')
+            return {'status': 'ok', 'parsed': {
+                'relationships': [item],
+                'candidate_dispositions': []}, 'attempts': 1}
+
+        result = n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
+        item = result['relationships'][0]
+        self.assertEqual(item['status'], 'unresolved')
+        self.assertTrue(any(dev['reason'] == 'revision_without_baseline'
+                            for dev in item['deviations']))
+
+
+class RateRuleTests(unittest.TestCase):
+    def run_case(self, text, relationship_type, comparison, direction):
+        document, n1 = setup(text)
+        n2 = make_n2(document, n1)
+        percentage = next(candidate for candidate in n1['candidates']
+                          if candidate['candidate_type'] == 'percentage')
+
+        def respond(payload):
+            item = relationship(percentage, relationship_type, comparison, direction)
+            return {'status': 'ok', 'parsed': {
+                'relationships': [item],
+                'candidate_dispositions': [{'candidate_id': percentage['candidate_id'],
+                                            'status': 'assigned',
+                                            'relationship_indexes': [0], 'reason': ''}]},
+                'attempts': 1}
+
+        return n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
+
+    def test_an_explicit_parenthetical_monthly_rate_is_a_rate(self):
+        result = self.run_case(
+            'Personal income increased $54.5 billion (0.2 percent at a monthly rate) '
+            'in September.', 'change', 'unknown', 'increase')
+        item = result['relationships'][0]
+        self.assertEqual((item['relationship_type'], item['comparison'], item['direction']),
+                         ('rate', 'monthly_rate', 'not_applicable'))
+        self.assertTrue(any(adj['reason'] == 'explicit_parenthetical_rate'
+                            for adj in result['program_adjustments']))
+        self.assertEqual(result['statistics']['rate_adjusted_by_program'], 1)
+
+    def test_a_bare_percent_in_an_increase_is_a_change(self):
+        result = self.run_case('PCE increased $113.1 billion (0.5 percent).',
+                               'rate', 'level', 'not_applicable')
+        item = result['relationships'][0]
+        self.assertEqual((item['relationship_type'], item['comparison'], item['direction']),
+                         ('change', 'unknown', 'increase'))
+        self.assertTrue(any(adj['reason'] == 'rate_without_rate_phrase'
+                            for adj in result['program_adjustments']))
+
+    def test_a_named_rate_without_movement_is_a_rate(self):
+        result = self.run_case('The personal saving rate was 3.8 percent.',
+                               'change', 'unknown', 'unknown')
+        item = result['relationships'][0]
+        self.assertEqual((item['relationship_type'], item['comparison'], item['direction']),
+                         ('rate', 'level', 'not_applicable'))
+        self.assertTrue(any(adj['reason'] == 'named_rate_without_movement'
+                            for adj in result['program_adjustments']))
+
+    def test_an_annual_growth_rate_stays_a_change(self):
+        result = self.run_case('GDP increased at an annual rate of 3.4 percent.',
+                               'change', 'annual_rate', 'increase')
+        item = result['relationships'][0]
+        self.assertEqual((item['relationship_type'], item['comparison'], item['direction']),
+                         ('change', 'annual_rate', 'increase'))
+
+    def test_a_rate_word_with_movement_is_corrected_to_change(self):
+        result = self.run_case('GDP increased at an annual rate of 3.4 percent.',
+                               'rate', 'annual_rate', 'not_applicable')
+        item = result['relationships'][0]
+        self.assertEqual((item['relationship_type'], item['comparison'], item['direction']),
+                         ('change', 'annual_rate', 'increase'))
+        self.assertTrue(any(adj['reason'] == 'rate_phrase_with_movement'
+                            for adj in result['program_adjustments']))
+
+    def test_a_level_cannot_keep_period_change(self):
+        result = self.run_case('The value was 4.0 percent.', 'level', 'period_change',
+                               'not_applicable')
+        item = result['relationships'][0]
+        self.assertEqual((item['relationship_type'], item['comparison']),
+                         ('level', 'level'))
+
+    def test_period_change_with_a_to_level_is_kept(self):
+        document, n1 = setup('The deficit increased $12.8 billion in August to $136.6 billion.')
+        n2 = make_n2(document, n1)
+        value = next(candidate for candidate in n1['candidates']
+                     if candidate['candidate_type'] == 'currency'
+                     and candidate.get('value') == 12.8)
+
+        def respond(payload):
+            item = relationship(value, 'change', 'period_change', 'increase')
+            return {'status': 'ok', 'parsed': {
+                'relationships': [item],
+                'candidate_dispositions': []}, 'attempts': 1}
+
+        result = n3_relationships.run(document, n1, n2, Runner(respond), MODEL)
+        self.assertEqual(result['relationships'][0]['comparison'], 'period_change')
+
+    def test_period_change_without_a_period_cue_becomes_unknown(self):
+        result = self.run_case('GDP increased 2.2 percent.', 'change', 'period_change',
+                               'increase')
+        item = result['relationships'][0]
+        self.assertEqual(item['comparison'], 'unknown')
+        self.assertTrue(any(adj['reason'] == 'period_change_without_period_cue'
+                            for adj in result['program_adjustments']))
 
 
 

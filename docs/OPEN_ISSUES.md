@@ -67,31 +67,33 @@
 
 ## ISSUE-004 主张流水线 N2/N3 语义回退与输出预算
 
-**状态**：Open（Batch 13 测量）· 影响：影子 Claim 的准确率与召回 · 优先级：中高
+**状态**：部分解决（Batch 14，2026-11-02）· 影响：影子 Claim 的准确率与召回 · 优先级：中高
 
-**证据**（10 篇人工参考集，Batch 13）：
+**Batch 14 已解决**：
 
-- `0.2 percent at a monthly rate` 被 N3 判为 change/increase/unknown，参考为 rate/not_applicable/
-  monthly_rate；`0.5 percent` 被判为 rate，参考为 change；贸易 `$105.6bn`、`$12.8bn` 的
-  comparison 为 unknown，参考为 period_change。
-- `$0.1 billion` 被 N2 以 “less than 是 threshold” 判为 context_only/non_economic；`3.8 percent`
-  没有 N3 关系，N5 标为 relationship_unassigned。
-- GDP `3.4%` subject 含 `(gdp)`、`2.2%` 缩写为 `real gdp`；贸易 `$12.8bn` predicate 为
-  `deficit_amount`；Intel `20%` subject 为 `intel's shares`。这些字段通过 r2-v4 结构校验，
-  N5 无法拦截语义错误。
-- BEA 个人收入 9 个 claim_value 在 `--n3-tokens 1400` 下两个 N3 批次 JSON 截断（invalid_output），
-  用 2400 重跑才得到完整 12 条关系。
+- N3 rate/change：`0.2 percent at a monthly rate` 恢复 rate/not_applicable/monthly_rate；
+  `0.5 percent` 与括号内无 rate 短语的 `0.2 percent` 恢复 change/increase/unknown；
+  `increased at an annual rate of 3.4 percent` 保持 change/annual_rate/increase。
+- N3 comparison：贸易 `$105.6bn`、`$12.8bn` 恢复 period_change；没 from/to/prior 线索的
+  `change + period_change` 归 unknown；`level + period_change` 归 level。
+- `3.8 percent`：批次候选加 `in_batch`，模型声称 assigned 但漏关系时做一次聚焦覆盖重试；
+  仍缺失则保持 unresolved。最终 10 篇参考集直接得到 rate/level，另一轮运行由重试找回。
+- 输出预算：`run_n4_n5.py` 默认 N3 tokens 改为 2400；`finish_reason=length` 或 completion
+  达到 max_tokens 时标 `invalid_output`/`token_limit_reached`；BEA Personal Income 在 1400/2400
+  下均完成，200 强制截断被明确标记。
+- 参考集 N3 type/direction/comparison 回到 Batch 12 的 20/21、20/21、18/21；period 11/18 未回退。
 
-**为什么不能直接放宽或补造**：这些是模型分类/抽取错误；程序强行改 rate/comparison 或补关系会
-引入未声明的推断。N3 的期间规则已经只做原文明确支持的同句/标题同月关联。
+**仍未解决**：
 
-**下一步**：
+- N5 严格精确率 15/18、召回 14/18，低于 Batch 12 的 18/21（去重后 18/19）与 17/18。
+  原因在固定 N2 输入：GDP `3.4%`/`2.2%` 的 subject、贸易 `$12.8bn` 的 predicate、
+  `$0.1bn` 被判 context_only/non_economic。N3 不修改 N2；N5 只做结构校验。
+- `2.2%` 的 annual_rate 未跨句延续；BBC `$1tn` 的 comparison 为 level（参考 unknown）。
+- 覆盖重试依赖模型，仍可能两次都遗漏；没有程序默认补关系。
+- N3/N5 语义准确率仍只有 10 篇人工参考，不能外推到 50 篇；temperature=0 也不保证跨运行稳定。
 
-1. 用固定 10 篇参考集分别测 N3 rate/comparison 的提示词变体，改动单独版本化并全量重跑；
-2. 给 N3 输出预算设下限或按 claim_value 数量自适应，低于阈值直接报错而不是截断；
-3. 评估 subject 的括号缩写清理与 predicate 的 `_amount` 规则，需先证明不会误改
-   `personal income` 等指标名；
-4. 在 N5 之前增加可选的语义复核，不把契约结构校验当作语义正确。
+**下一步**：单独评审 N2 subject/predicate 修复（GDP 的 `(gdp)`/`real gdp`、`deficit_amount`）；
+评估可选的 N5 语义复核；任何修改单独版本化并重跑参考集。
 
 **跟踪指标**：参考集 N2 disposition、N3 type/direction/comparison、N5 唯一 Claim 精确率/召回；
 必须同时报告分母与是否使用人工参考，不得外推到 50 篇。

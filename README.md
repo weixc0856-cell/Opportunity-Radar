@@ -132,13 +132,15 @@ N1 输出原子候选（类型、原始表达、全文位置、数量级/单位/
 （range / from_to / increase_decrease / comparison / temporal_comparison）。
 N2 用本地 Qwen3-30B-A3B 先判定候选的经济相关性（economic / non_economic / uncertain），
 再判定主体/指标/主张状态；N3 判定水平/变化/比较/区间等关系并对每个 claim_value 给出处置，
-期间可由同句或标题同月确定性补齐。两者输出都经过程序校验（ID、枚举、覆盖、证据定位、比较口径守卫）。
+期间可由同句或标题同月确定性补齐；rate/change、period_change 与缺失候选有提示词、程序纠正和
+一次覆盖重试。两者输出都经过程序校验（ID、枚举、覆盖、证据定位、比较口径守卫、输出预算）。
 N4 确定性地标准化数值/单位/数量级/币种/期间/baseline，并保留期间原文与定位；N5 检查每个 N1
 候选的处置，按 r2-v4 语义字段合并重复 Claim 后组装影子 Claim，证据回指 N0，缺失期间/比较口径
 只记录不补造。
 节点运行写入独立的追加式留存（`data/claim-pipeline/node_runs.sqlite3`），不写生产库；
 影子 Claim 不进入生产 Claim 表、日报或核验。七夹具与 50 篇真实 RSS 影子运行已完成（Batch 12）；
-Batch 13 完成 N2 经济相关性、N3 期间关联与 N5 语义去重的定向修复（14 篇回归），影子 Claim 仍非已核实事实。
+Batch 13 完成 N2 经济相关性、N3 期间关联与 N5 语义去重（14 篇回归）；Batch 14 修复 N3
+rate/change、period_change、3.8% 遗漏与输出预算（10 篇参考集），影子 Claim 仍非已核实事实。
 契约见 `docs/CLAIM_PIPELINE.md`。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、

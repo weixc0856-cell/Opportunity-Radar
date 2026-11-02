@@ -28,7 +28,9 @@
     asks what relation the text states, with program checks for IDs, enums, coverage, evidence
     location and comparison wording; it also receives every document period candidate and can
     deterministically attach a same-sentence period or a title period of the same month/quarter,
-    without inventing a year. `n4_normalization.py` (N4) turns those semantics into
+    without inventing a year. It labels each candidate in_batch, performs one focused model
+    retry for omitted candidates, and applies deterministic rate/change and period-comparison
+    corrections only to relationships the model already emitted. `n4_normalization.py` (N4) turns those semantics into
     value/unit/scale/currency/period records, preserving period raw text and locator, without
     re-deciding anything. `n5_assembly.py` (N5) disposes every N1 candidate, merges semantically
     identical r2-v4 claims while preserving all relationship/evidence lineage, and assembles shadow
