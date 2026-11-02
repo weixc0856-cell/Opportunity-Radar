@@ -282,7 +282,7 @@ class RelationTests(unittest.TestCase):
                 '0.3 percent increase in august.')
         result = scan(text)
         self.assertEqual([atom['raw_text'] for atom in atoms(result)],
-                         ['0.4 percent', '0.3 percent'])
+                         ['0.4 percent', 'september', '0.3 percent', 'august'])
         self.assertEqual(len(groups(result, 'increase_decrease')), 2)
 
 
@@ -298,6 +298,18 @@ class DatePeriodTests(unittest.TestCase):
                          {'kind': 'day', 'year': 2026, 'month': 11, 'day': 1})
         self.assertEqual(atoms(scan('1997-2024'), 'period')[0]['temporal'],
                          {'kind': 'range', 'start_year': 1997, 'end_year': 2024})
+        self.assertEqual(atoms(scan('third quarter of 2026'), 'period')[0]['temporal'],
+                         {'kind': 'quarter', 'year': 2026, 'quarter': 3})
+        self.assertEqual(atoms(scan('second quarter'), 'period')[0]['temporal'],
+                         {'kind': 'quarter', 'quarter': 2})
+        self.assertEqual(atoms(scan('in September'), 'period')[0]['temporal'],
+                         {'kind': 'month', 'month': 9})
+
+    def test_may_as_a_modal_verb_is_not_a_period(self):
+        self.assertEqual(atoms(scan('The price may be higher.'), 'period'), [])
+        self.assertEqual(atoms(scan('It may take 5 days.'), 'period'), [])
+        self.assertEqual(atoms(scan('in May'), 'period')[0]['temporal'],
+                         {'kind': 'month', 'month': 5})
 
     def test_a_year_alone_is_a_period_not_a_quantity(self):
         atom = atoms(scan('The data cover 2026.'))[0]

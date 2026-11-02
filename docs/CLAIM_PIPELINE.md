@@ -1,13 +1,17 @@
 # 主张提取流水线（N0–N5）
 
-版本：4.0 · 2026-11-02
+版本：4.1 · 2026-11-02
 定位：规定"文章 → 主张"这条链路怎么拆、每个节点的输入输出契约、失败语义、留存方式与验收方式。
 现状：**N0–N5 已实现，形成离线影子链路；Claim 仍是影子 Claim，不是已核实事实。**
+Batch 13 已完成 N2 经济相关性、N3 同句/标题同月期间关联、N5 语义去重的定向修复；14 篇回归
+（含完整 10 篇人工参考集）显示期间关联从 0/18 提升到 11/18，但同时暴露 rate/comparison 与
+个别召回回退，见 `docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`。
 生产提示词仍是 v6，v7 仍是影子，切换判定仍是 **NOT READY**，生产启用需 G6 批准。
 
 - N0/N1：`docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`
 - N2/N3：`docs/archive/R2_BATCH9_N2_N3_SPEC_2026-11-02.md`、`R2_BATCH9_N2_N3_ACCEPTANCE_2026-11-02.md`
 - N4/N5：`docs/archive/R2_BATCH10_N4_N5_SPEC_2026-11-02.md`、`R2_BATCH10_N4_N5_ACCEPTANCE_2026-11-02.md`
+- 质量修复：`docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`
 
 ---
 
@@ -38,41 +42,50 @@
 - N0：`document_id`、`content_hash`、`text`（标题+正文）、`paragraphs`/`sentences`（稳定 ID、
   全文与原始偏移）、`offset_unit=unicode_codepoint`、`offset_convention=half_open`；不截断、
   不改写数字。
-- N1：原子类型 `percentage`、`percentage_point`、`currency`、`quantity`、`scalar`、`date`、
-  `period`、`ratio`、`unclassified_numeric`（另有 `magnitude`/`time`/`ordinal`/`identifier`）；
-  复合表达 `range`/`from_to`/`increase_decrease`/`comparison`/`temporal_comparison`；
+- N1（`n1-v2`）：原子类型 `percentage`、`percentage_point`、`currency`、`quantity`、`scalar`、
+  `date`、`period`、`ratio`、`unclassified_numeric`（另有 `magnitude`/`time`/`ordinal`/`identifier`）；
+  期间覆盖 `September 2026`、`Q3 2026`、`third quarter of 2026`、`second quarter`、`in September`
+  等表达；复合表达 `range`/`from_to`/`increase_decrease`/`comparison`/`temporal_comparison`；
   每个十进制数字字符恰好属于一个原子；不计算最终数值。
 
 ## 5. N2 / N3（本地模型）
 
-- N2：批次 = 候选所在句完整 + 相邻句（预算 3500 字符，默认 4 个候选）；每个候选恰好一个
-  `claim_value`/`context_only`/`non_claim`/`ambiguous`/`unresolved`；`claim_value` 必须有
-  subject/predicate 与可定位逐字引文；predicate 关系泄漏由程序用 subject 重建。
-- N3：只对 N2 `claim_value` 且 resolved 的候选建关系；`context_only` 可作期间/基准；
+- N2（`n2-v2`）：批次 = 候选所在句完整 + 相邻句（预算 3500 字符，默认 4 个候选）；每个候选
+  恰好一个 `claim_value`/`context_only`/`non_claim`/`ambiguous`/`unresolved`；`claim_value` 必须有
+  subject/predicate 与可定位逐字引文。先判定 `economic_relevance`（economic / non_economic /
+  uncertain）：软件版本、对象 id、技术参数、年龄、URL/图片编号等非经济数字不得成为 claim_value；
+  程序把 non_economic 的 claim_value 降为 non_claim，把 uncertain 降为 ambiguous，并保留模型原始
+  disposition。predicate 关系泄漏由程序用 subject 重建（含 plunge/surge/jump 等方向词）。
+- N3（`n3-v2`）：只对 N2 `claim_value` 且 resolved 的候选建关系；`context_only` 可作基准；
   `non_claim` 拒绝；N2 未成功 → `blocked`；每个 claim_value 必须有处置；比较口径必须原文出现
-  且紧邻该数值；revision/seasonality 只在原文出现时保留。
+  且紧邻该数值；revision/seasonality 只在原文出现时保留。payload 提供文档全部日期/期间候选和
+  每个数值的 `period_hints`（同句、标题同月/季度）。程序确定性补期间仅限同句明确期间；无年份的
+  月/季度保留 `period_raw`、不补年份；标题同月/季度可提供年份；跨句不搬期间，多个不同期间不共享。
+  关系保留 `period_evidence_quote/start/end/field` 与 `period_source`（model / program /
+  model_rejected）。
 - 批次记录：`input_chars`、`output_chars`、`prompt_tokens`、`completion_tokens`、`seconds`、
   `parse_retry`、`candidate_count`/`claim_value_count`、`context_chars`；工具汇总最慢批次、
   重试次数与 token 总量，用于区分请求、生成、JSON 修复和持久化耗时。
 
-## 6. N4 数值标准化（`n4-v1`）
+## 6. N4 数值标准化（`n4-v2`）
 
 输入 N0/N1/N2/N3。输出 `normalized_records[]`：
 
 - `value`（原文数值，不乘数量级）、`unit`（基单位）、`scale`（billion/million/…）、
   `currency`、`unit_string`（供 r2-v4，如 `USD billion`、`million vehicles`）、`unit_family`；
 - `raw_value`/`raw_unit`/`raw_scale`；`comparison`/`seasonality`/`revision`/`direction`；
-- `period`/`period_raw`/`period_candidate_ids`；`baseline`/`baseline_candidate_ids`；
+- `period`/`period_raw`/`period_candidate_ids`/`period_evidence_quote`/`period_evidence_start`/
+  `period_evidence_end`/`period_evidence_field`/`period_source`；`baseline`/`baseline_candidate_ids`；
   `denominator`；`source_candidate_ids`/`source_relationship_ids`；证据与 N2 解释引文；
 - `status`：`normalized` / `partially_normalized` / `unsupported_unit` / `ambiguous_numeric` /
   `missing_semantics` / `invalid_relationship` / `unresolved`。
 
 规则：数量级与币种不重复乘入；`%` 与 `pp` 不同；无单位不赋予经济单位；未知单位明确标记；
 括号数字不擅自取负（记 `parenthesized_sign_not_inferred`）；`range`/`unknown` 关系不可组装；
-缺失 period/baseline 保持空并记录；每个 claim_value 必须有记录（无关系 → `missing_semantics`）。
-N4 不调用模型、不补造关系。
+缺失 period/baseline 保持空并记录；无年份的月/季度保留 `period_raw` 与定位，但 `period` 为空，
+不推断年份；每个 claim_value 必须有记录（无关系 → `missing_semantics`）。N4 不调用模型、不补造关系。
 
-## 7. N5 完整性门禁与 Claim 组装（`n5-v1`）
+## 7. N5 完整性门禁与 Claim 组装（`n5-v2`）
 
 输入 N0–N4。输出：
 
@@ -88,11 +101,16 @@ N4 不调用模型、不补造关系。
 
 组装规则：subject/predicate/kind 来自 N2；数值/单位/数量级/币种来自 N4；关系/方向/比较/期间/
 baseline 来自 N3，只用明确提供的信息。证据必须回到 N0 原文；标题单独证据 → 拒绝
-`title_only_evidence`；缺 subject/predicate、value 非数值、单位/币种未知、期间非法、证据缺失 → 拒绝；
-重复 Claim 只保留一条。契约校验把所有 payload 交给 `claim_contract.parse_claims`，全部通过才算有效。
+`title_only_evidence`；缺 subject/predicate、value 非数值、单位/币种未知、期间非法、证据缺失 → 拒绝。
+**语义去重**：按 r2-v4 语义字段（subject/predicate/kind/value/unit/scale/currency/period/
+comparison/seasonality/revision/region/denominator）合并，`relationship_type` 与 id 只进入 trace；
+方向相同或一方为 not_applicable/unknown 时合并并保留具体方向，两个具体方向相反则不合并并记录
+`direction_conflict`。合并保留全部 `relationship_ids`、`n4_record_ids`、`period_candidate_ids`、
+baseline 与 `evidence_items`；被合并项写入 `duplicates[]`，不混入 `rejected_items[]`。
+契约校验把所有 payload 交给 `claim_contract.parse_claims`，全部通过才算有效。
 coverage_complete 要求处置数与 N1 候选数相等且唯一；统计中分别给出 `input_candidates`、
-`accepted_candidates` 与 `assembled_claims`，Claim 数量不是成功指标。一个候选可以参与多个
-N3 关系并产生多条 Claim，因此 assembled_claims 可以大于 accepted_candidates。
+`accepted_candidates`、`raw_assembled_claims`、`assembled_claims`、`duplicate_claims` 与
+`direction_conflicts`，Claim 数量不是成功指标。
 
 `status`：N2 未成功 → `blocked`；覆盖不完整 → `failed`；所有候选为 claim_accepted/context_only/
 non_claim/used_as_context 且 N4 `success` → `success`；否则 `partial`（缺失期间/比较口径等偏差
@@ -130,11 +148,13 @@ execution_status、executed_at、params_json、tools_json、output_json。`INSER
 
 1. 输入是标题 + RSS 正文，不是全文。
 2. N2/N3 是模型判断；程序只保证引用、枚举、覆盖、比较口径与单位结构的确定性守卫。
-3. 已处理的 BEA 文章 N3 没有关联期间，N4/N5 保持 `period_missing`，没有补造；因此 N4/N5 为 partial。
+3. N3 的期间关联由 `n3-v2` 的提示词与确定性同句/标题同月规则补齐；无年份的月份/季度保留
+   `period_raw`、不补年份，因此 N4 可能仍为 `period_missing`。跨句不搬期间。
 4. 修订/季节调整只接受原文明确措辞；模型漏记时保持 unknown。
 5. 标题单独证据被拒绝；固定夹具中缺少 N2 留存的文章不会产生 Claim。
 6. N2/N3 语义准确率没有全量人工基准；候选覆盖率、处置完整性与 Claim 数量都不是语义准确率。
-7. 七个夹具已完成 N0–N5；50 篇真实语料影子运行仍未完成，不能把夹具结果当作真实语料通过率。
+7. 七个夹具与 50 篇真实语料影子运行均已完成（Batch 12）；Batch 13 只对受影响文章做回归，
+   没有重跑 50 篇，不能把回归结果当作新的全量通过率。
 8. v7 与 G6 未推进。
 
 ## 12. 运行

@@ -20,13 +20,18 @@
     never write to the RSS database.
 13. The claim pipeline (`docs/CLAIM_PIPELINE.md`) has six offline nodes. `article_text.py` (N0)
     normalises the title and body into text with paragraph and sentence IDs, document offsets and
-    raw-HTML spans; `numeric_candidates.py` (N1) lists every numeric expression as an atom and
-    records ranges, from/to, direction and comparison statements as expression groups.
-    `n2_semantic.py` asks the local model what each atom describes (subject, measure, claim or
-    context) and `n3_relationships.py` asks it what relation the text states, with program checks
-    for IDs, enums, coverage, evidence location and comparison wording. `n4_normalization.py` (N4)
-    turns those semantics into value/unit/scale/currency/period records without re-deciding
-    anything, and `n5_assembly.py` (N5) disposes every N1 candidate and assembles r2-v4 shadow
+    raw-HTML spans; `numeric_candidates.py` (N1) lists every numeric expression as an atom,
+    including word quarters and month-only periods, and records ranges, from/to, direction and
+    comparison statements as expression groups. `n2_semantic.py` first asks whether each atom is
+    economic (`economic`/`non_economic`/`uncertain`) and then what it describes (subject, measure,
+    claim or context); the program downgrades non-economic claim values. `n3_relationships.py`
+    asks what relation the text states, with program checks for IDs, enums, coverage, evidence
+    location and comparison wording; it also receives every document period candidate and can
+    deterministically attach a same-sentence period or a title period of the same month/quarter,
+    without inventing a year. `n4_normalization.py` (N4) turns those semantics into
+    value/unit/scale/currency/period records, preserving period raw text and locator, without
+    re-deciding anything. `n5_assembly.py` (N5) disposes every N1 candidate, merges semantically
+    identical r2-v4 claims while preserving all relationship/evidence lineage, and assembles shadow
     claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file, reuses the
     latest usable result for the same input, and records per-batch tokens/timing. Nothing here
     writes to the production database or changes the analyzer.

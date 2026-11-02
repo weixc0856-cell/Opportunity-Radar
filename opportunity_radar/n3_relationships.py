@@ -20,9 +20,9 @@ from .semantic_common import (FAILED, PARTIAL, SCHEMA_ERROR, SUCCESS, hash_json,
                               schema_hash)
 
 NODE = 'N3'
-NODE_VERSION = 'n3-v1'
-PROMPT_VERSION = 'n3-prompt-v1'
-SCHEMA_VERSION = 'n3-schema-v1'
+NODE_VERSION = 'n3-v2'
+PROMPT_VERSION = 'n3-prompt-v2'
+SCHEMA_VERSION = 'n3-schema-v2'
 # Program validation is part of what a cached N3 result means: a rule change must not reuse
 # a result produced by the old checks.
 RULESET = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()[:16]
@@ -90,7 +90,10 @@ Rules:
 - Only set revision or seasonality when the text says so. Do not infer a revision from the publisher, and do not infer seasonal adjustment from the indicator.
 - When a comparison basis is not stated, keep the relationship and use comparison=level for a level or comparison=unknown for a change; do not invent a baseline number.
 - Omit empty arrays and omit any optional field that is unknown or not applicable; the program fills defaults. Include period_raw only when the text states the period, and copy it exactly (for example "september", "2026-09", "q3 2026"), not the whole sentence.
-- When the context states the period of a relationship (for example "in september"), reference the supplied context_only period candidate in period_candidate_ids and copy its exact text into period_raw. Do not leave the period empty when the sentence states one.
+- The payload lists every date/period candidate in the document under document_period_candidates, and each candidate's period_hints list the period candidates near it. "same_sentence" means the period candidate is in the same sentence as the value; "title_same_month" means the title states the same month with a year.
+- When the sentence states the period of a relationship (for example "in september", "in august 2026", "in the third quarter of 2026"), reference that exact candidate in period_candidate_ids and copy its raw_text into period_raw. Use period_hints for the value candidate; do not leave the period empty when the sentence states one.
+- A month or quarter in the sentence inherits the year from a title period of the same month/quarter (for example title "September 2026", sentence "in September"). Reference the full candidate when one is supplied. Never infer a year from the publication date or from a different period.
+- Do not move a period from one sentence to another, and do not give one period to every number in the article. If two different periods apply and the text does not say which belongs to the value, leave period_candidate_ids empty and mark the relationship ambiguous.
 - When the context states a baseline ("from $95 billion", "compared with 3.2%"), reference that candidate in baseline_candidate_ids; do not invent one when the text gives none.
 - reason must be one short sentence, at most 20 words.
 - evidence_quote must be the shortest exact contiguous excerpt copied from the supplied context that shows this relation. Do not paraphrase or join separate excerpts. evidence_sentence_ids are the sentences that contain it.
@@ -190,7 +193,80 @@ def _window_groups(n1, start, end):
             if group.get('start', -1) < end and start < group.get('end', -1)]
 
 
-def _candidate_payload(candidate, interpretation):
+def _period_candidates(n1):
+    return [candidate for candidate in n1.get('candidates') or []
+            if candidate.get('candidate_type') in ('date', 'period')
+            and isinstance(candidate.get('temporal'), dict)]
+
+
+def _period_payload(candidate, relation='', distance=None):
+    payload = {
+        'candidate_id': candidate['candidate_id'],
+        'raw_text': candidate['raw_text'],
+        'temporal': candidate.get('temporal'),
+        'field': candidate.get('field'),
+        'sentence_id': candidate.get('sentence_id'),
+        'start': candidate.get('start'),
+        'end': candidate.get('end'),
+    }
+    if relation:
+        payload['relation'] = relation
+    if distance is not None:
+        payload['distance'] = distance
+    return payload
+
+
+def _temporal_slot(candidate):
+    temporal = candidate.get('temporal') or {}
+    kind = temporal.get('kind')
+    if kind == 'month':
+        return ('month', temporal.get('month'))
+    if kind == 'quarter':
+        return ('quarter', temporal.get('quarter'))
+    return None
+
+
+def _has_year(candidate):
+    return bool((candidate.get('temporal') or {}).get('year'))
+
+
+def _period_distance(value_candidate, period_candidate):
+    if period_candidate['end'] <= value_candidate['start']:
+        return value_candidate['start'] - period_candidate['end']
+    return period_candidate['start'] - value_candidate['end']
+
+
+def _period_hints(n1, value_candidate):
+    """Period candidates the text puts next to this value.
+
+    The same sentence is the primary evidence. A month/quarter without a year may also use a
+    title candidate for the same month/quarter; that is the only cross-sentence promotion and
+    it never invents a year. Everything else stays unassociated.
+    """
+    periods = _period_candidates(n1)
+    same_sentence = [candidate for candidate in periods
+                     if candidate.get('sentence_id') == value_candidate.get('sentence_id')]
+    hints = []
+    for candidate in same_sentence:
+        hints.append(_period_payload(candidate, 'same_sentence',
+                                     _period_distance(value_candidate, candidate)))
+    slots = {_temporal_slot(candidate) for candidate in same_sentence
+             if _temporal_slot(candidate) and not _has_year(candidate)}
+    if not slots:
+        return hints
+    for candidate in periods:
+        if candidate in same_sentence or not _has_year(candidate):
+            continue
+        if _temporal_slot(candidate) not in slots:
+            continue
+        if candidate.get('field') == 'title':
+            hints.append(_period_payload(candidate, 'title_same_month'))
+        elif candidate.get('paragraph_id') == value_candidate.get('paragraph_id'):
+            hints.append(_period_payload(candidate, 'same_paragraph_same_month'))
+    return hints
+
+
+def _candidate_payload(candidate, interpretation, period_hints=None):
     payload = {
         'candidate_id': candidate['candidate_id'],
         'candidate_type': candidate['candidate_type'],
@@ -207,6 +283,8 @@ def _candidate_payload(candidate, interpretation):
                        for cue in (candidate.get('cues') or [])
                        if abs(cue.get('start', 0) - candidate.get('start', 0)) <= 60],
     }
+    if period_hints:
+        payload['period_hints'] = period_hints
     if interpretation:
         payload['n2'] = {
             'disposition': interpretation.get('disposition'),
@@ -233,7 +311,11 @@ def _batch_payload(document, n1, n2, batch, claim_value_ids):
         'context': {'field': batch['field'], 'sentences': batch['sentences']},
         'claim_value_ids': list(claim_value_ids),
         'context_only_ids': context_only,
-        'candidates': [_candidate_payload(candidate, interpretations.get(candidate['candidate_id']))
+        'document_period_candidates': [_period_payload(candidate)
+                                        for candidate in _period_candidates(n1)],
+        'candidates': [_candidate_payload(candidate,
+                                          interpretations.get(candidate['candidate_id']),
+                                          _period_hints(n1, candidate))
                        for candidate in window],
         'expression_groups': [
             {'expression_id': group.get('expression_id'),
@@ -296,7 +378,8 @@ def _phrase_attachment(comparison, context_text, window_positions, value_ids):
 
 
 def _normalise_relationship(raw, document, sentence_ids, batch_values, window_ids,
-                            window_positions, expression_ids, context_text):
+                            document_period_ids, window_positions, expression_ids,
+                            context_text, period_candidates):
     deviations = []
     relationship_type = str(raw.get('relationship_type') or '').strip().lower()
     if relationship_type not in RELATIONSHIP_TYPES:
@@ -307,10 +390,13 @@ def _normalise_relationship(raw, document, sentence_ids, batch_values, window_id
     if unknown_values:
         deviations.append({'field': 'value_candidate_ids', 'reason': 'not_a_claim_value',
                            'value': ','.join(unknown_values)[:120]})
-    # Context ids are limited to the window the model actually saw; a period from another
-    # batch is not evidence the model could have read.
+    # Baselines/denominators are limited to the window the model actually saw. Periods are
+    # different: a title period outside the window may be the only place the year is stated.
     baselines, unknown_baselines = _ids(raw.get('baseline_candidate_ids'), window_ids)
-    periods, unknown_periods = _ids(raw.get('period_candidate_ids'), window_ids)
+    # Periods may be named anywhere in the document: a title period is often the only place
+    # the year is stated. Other context (baselines, denominators) must still come from the
+    # window the model saw.
+    periods, unknown_periods = _ids(raw.get('period_candidate_ids'), document_period_ids)
     comparison_periods, unknown_comparison_periods = _ids(
         raw.get('comparison_period_candidate_ids'), window_ids)
     denominators, unknown_denominators = _ids(raw.get('denominator_candidate_ids'), window_ids)
@@ -371,10 +457,26 @@ def _normalise_relationship(raw, document, sentence_ids, batch_values, window_id
         deviations.append({'field': 'revision', 'reason': 'not_stated', 'value': revision})
         revision = 'unknown'
     period_raw = str(raw.get('period_raw') or '').strip()
-    if period_raw and period_raw.lower() not in context_text.lower():
-        deviations.append({'field': 'period_raw', 'reason': 'not_in_context',
-                           'value': period_raw[:120]})
-        period_raw = ''
+    period_attempted = bool(period_raw or raw.get('period_candidate_ids'))
+    period_rejected = bool(unknown_periods)
+    period_evidence = {'quote': '', 'start': None, 'end': None, 'field': ''}
+    if periods:
+        period_candidate = period_candidates.get(periods[0]) or {}
+        period_raw = str(period_candidate.get('raw_text') or period_raw).strip()
+        period_evidence = {
+            'quote': period_candidate.get('raw_text') or '',
+            'start': period_candidate.get('start'),
+            'end': period_candidate.get('end'),
+            'field': period_candidate.get('field') or '',
+        }
+    elif period_raw:
+        candidate_raws = {str(candidate.get('raw_text') or '').lower()
+                          for candidate in period_candidates.values()}
+        if period_raw.lower() not in context_text.lower() and period_raw.lower() not in candidate_raws:
+            deviations.append({'field': 'period_raw', 'reason': 'not_in_context',
+                               'value': period_raw[:120]})
+            period_raw = ''
+            period_rejected = True
 
     ids = raw.get('evidence_sentence_ids')
     ids = [value for value in ids if isinstance(value, str)] if isinstance(ids, list) else []
@@ -415,6 +517,13 @@ def _normalise_relationship(raw, document, sentence_ids, batch_values, window_id
         'seasonality': seasonality,
         'revision': revision,
         'period_raw': period_raw,
+        'period_evidence_quote': period_evidence['quote'],
+        'period_evidence_start': period_evidence['start'],
+        'period_evidence_end': period_evidence['end'],
+        'period_evidence_field': period_evidence['field'],
+        'period_source': ('model' if (periods or period_raw)
+                          else 'model_rejected' if (period_attempted or period_rejected) else ''),
+        'period_rule': '',
         'evidence_sentence_ids': valid_ids,
         'evidence_quote': quote,
         'evidence_start': locator[0] if locator else None,
@@ -424,6 +533,74 @@ def _normalise_relationship(raw, document, sentence_ids, batch_values, window_id
         'reason': reason,
         'deviations': deviations,
     }, deviations
+
+
+def _resolve_period(relationship, n1):
+    """Attach a period only when the same sentence states one for this value.
+
+    This is the deterministic fallback for a model that omitted an explicit period. It never
+    takes a period from another sentence, never shares one period across values in different
+    periods, and never invents a year. A month/quarter without a year is kept as raw text with
+    an empty normalized period unless a title/paragraph candidate supplies the same slot.
+    """
+    if (relationship.get('period_candidate_ids') or relationship.get('period_raw')
+            or relationship.get('period_source') == 'model_rejected'):
+        return None
+    if relationship.get('status') != 'resolved':
+        return None
+    candidates = {candidate['candidate_id']: candidate
+                  for candidate in n1.get('candidates') or []}
+    chosen = []
+    for value_id in relationship.get('value_candidate_ids') or []:
+        value = candidates.get(value_id)
+        if not value:
+            continue
+        hints = _period_hints(n1, value)
+        same_sentence = [hint for hint in hints if hint.get('relation') == 'same_sentence']
+        if not same_sentence:
+            continue
+        best = min(same_sentence, key=lambda hint: hint.get('distance', 10 ** 9))
+        if not _has_year(best):
+            upgrades = [hint for hint in hints
+                        if hint.get('relation') in ('title_same_month',
+                                                    'same_paragraph_same_month')
+                        and _temporal_slot(hint) == _temporal_slot(best)]
+            if upgrades:
+                upgrades.sort(key=lambda hint: (0 if hint.get('relation') == 'title_same_month'
+                                                else 1, hint.get('start') or 0))
+                best = upgrades[0]
+        chosen.append(best)
+    if not chosen:
+        return None
+    unique = {hint['candidate_id']: hint for hint in chosen}
+    if len(unique) > 1:
+        if len({_temporal_slot(hint) for hint in unique.values()}) > 1:
+            return None
+        with_year = {candidate_id: hint for candidate_id, hint in unique.items()
+                     if _has_year(hint)}
+        if with_year:
+            if len({(hint.get('temporal') or {}).get('year')
+                    for hint in with_year.values()}) > 1:
+                return None
+            unique = with_year
+        if len(unique) > 1:
+            # The same slot can be stated in the title and in the sentence. They are the same
+            # period; keep the title one, otherwise the earliest candidate.
+            best = sorted(unique.values(), key=lambda hint: (
+                0 if hint.get('field') == 'title' else 1, hint.get('start') or 0))[0]
+        else:
+            best = next(iter(unique.values()))
+    else:
+        best = next(iter(unique.values()))
+    relationship['period_candidate_ids'] = [best['candidate_id']]
+    relationship['period_raw'] = best.get('raw_text') or ''
+    relationship['period_evidence_quote'] = best.get('raw_text') or ''
+    relationship['period_evidence_start'] = best.get('start')
+    relationship['period_evidence_end'] = best.get('end')
+    relationship['period_evidence_field'] = best.get('field') or ''
+    relationship['period_source'] = 'program'
+    relationship['period_rule'] = best.get('relation') or 'same_sentence'
+    return best
 
 
 def _disposition_records(raw_items, claim_value_ids):
@@ -504,7 +681,11 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
     batches = make_batches(document, claims, max_candidates=max_candidates, max_chars=max_chars)
     sentence_ids = {item['sentence_id'] for item in document['sentences']}
     expression_ids = {group['expression_id'] for group in n1.get('expression_groups') or []}
+    period_candidates = {candidate['candidate_id']: candidate
+                         for candidate in _period_candidates(n1)}
+    document_period_ids = set(period_candidates)
     relationships, relationship_deviations, batch_records = [], [], []
+    program_adjustments = []
     disposition_raw, disposition_unknown, disposition_deviations = [], [], []
     for batch in batches:
         batch_started = time.time()
@@ -552,8 +733,8 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
                                              'value': ''})
                 continue
             relationship, deviations = _normalise_relationship(
-                raw, document, sentence_ids, batch_values, window_ids, window_positions,
-                expression_ids, context_text)
+                raw, document, sentence_ids, batch_values, window_ids, document_period_ids,
+                window_positions, expression_ids, context_text, period_candidates)
             if not relationship['value_candidate_ids']:
                 record['deviations'].extend(deviations or [])
                 record['deviations'].append({'field': 'value_candidate_ids',
@@ -561,6 +742,7 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
                 continue
             relationship_deviations.extend(deviations)
             record['deviations'].extend(deviations)
+            _resolve_period(relationship, n1)
             relationships.append(relationship)
             batch_relationships.append(relationship)
         # A disposition may only describe a candidate that was in this batch's payload;
@@ -588,6 +770,15 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
     relationships.sort(key=lambda item: (item.get('evidence_start') if item.get('evidence_start')
                                          is not None else 10 ** 12,
                                          item['relationship_type']))
+    program_adjustments = [{
+        'relationship_id': relationship['relationship_id'],
+        'value_candidate_ids': list(relationship['value_candidate_ids']),
+        'field': 'period_candidate_ids',
+        'reason': 'period_attached_by_program',
+        'period_candidate_id': relationship['period_candidate_ids'][0],
+        'period_raw': relationship['period_raw'],
+        'rule': relationship['period_rule'],
+    } for relationship in relationships if relationship.get('period_source') == 'program']
     # model dispositions are interpreted against the final relationship order
     model_dispositions, unknown_dispositions, disposition_deviations = _disposition_records(
         disposition_raw, set(claim_value_ids))
@@ -650,6 +841,10 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
         'unresolved_count': unresolved_count,
         'evidence_located_relationships': sum(1 for item in relationships
                                               if item.get('evidence_start') is not None),
+        'period_linked_relationships': sum(1 for item in relationships
+                                           if item.get('period_candidate_ids')
+                                           or item.get('period_raw')),
+        'period_attached_by_program': len(program_adjustments),
         'coverage_complete': len(dispositions) == len(claim_value_ids)
         and len({item['candidate_id'] for item in dispositions}) == len(claim_value_ids),
         'batch_count': len(batches),
@@ -669,4 +864,5 @@ def run(document, n1, n2, runner, model, max_candidates=4, max_chars=3500):
     return dict(base, status=status, relationships=relationships,
                 candidate_dispositions=dispositions, batches=batch_records,
                 statistics=statistics, deviations=relationship_deviations + disposition_deviations,
+                program_adjustments=program_adjustments,
                 seconds=round(time.time() - started, 2))

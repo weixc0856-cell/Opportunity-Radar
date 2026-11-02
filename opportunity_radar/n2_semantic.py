@@ -24,9 +24,9 @@ from .semantic_common import (COVERAGE_ERROR, FAILED, INVALID_OUTPUT, PARTIAL, S
                               model_metadata, node_input_hash, prompt_hash, schema_hash)
 
 NODE = 'N2'
-NODE_VERSION = 'n2-v1'
-PROMPT_VERSION = 'n2-prompt-v1'
-SCHEMA_VERSION = 'n2-schema-v1'
+NODE_VERSION = 'n2-v2'
+PROMPT_VERSION = 'n2-prompt-v2'
+SCHEMA_VERSION = 'n2-schema-v2'
 # Program validation is part of what a cached N2 result means: a rule change must not reuse
 # a result produced by the old checks.
 RULESET = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()[:16]
@@ -36,17 +36,20 @@ DISPOSITIONS = ('claim_value', 'context_only', 'non_claim', 'ambiguous', 'unreso
 # statement the source makes.
 KINDS = tuple(kind for kind in claim_contract.KINDS if kind != 'system_inference')
 STATUSES = ('resolved', 'ambiguous', 'unresolved')
+ECONOMIC_RELEVANCE = ('economic', 'non_economic', 'uncertain')
 
 SYSTEM_PROMPT = """You are a deterministic information-extraction component. You receive a context window from one article and the numeric candidates that a scanner already found in it. For each candidate, decide what the number describes.
 
 Return only JSON with this shape:
-{"interpretations": [{"candidate_id": "...", "disposition": "claim_value|context_only|non_claim|ambiguous|unresolved", "subject": "...", "predicate": "...", "kind": "fact|source_interpretation|hypothesis|forecast|opinion|unknown", "reason": "...", "evidence_sentence_ids": ["s0001"], "evidence_quote": "...", "status": "resolved|ambiguous|unresolved"}]}
+{"interpretations": [{"candidate_id": "...", "economic_relevance": "economic|non_economic|uncertain", "disposition": "claim_value|context_only|non_claim|ambiguous|unresolved", "subject": "...", "predicate": "...", "kind": "fact|source_interpretation|hypothesis|forecast|opinion|unknown", "reason": "...", "evidence_sentence_ids": ["s0001"], "evidence_quote": "...", "status": "resolved|ambiguous|unresolved"}]}
 
 Rules:
 - Return exactly one object for every supplied candidate_id. Never omit, duplicate or invent a candidate.
 - Use only the supplied context. Never use outside knowledge.
+- First decide economic_relevance. economic means the number is a business, financial, industry, market or official-statistics measure (revenue, cost, price, output, capacity, shipments, margin, profit, GDP, inflation, trade, employment, vehicle_count ...). non_economic means a software or model version, object/model id, technical parameter (opacity, resolution, grid size, timestep, FPS, coordinate, file size, benchmark time), age or death age, phone number, citation or similar. uncertain means the context does not settle it.
+- If economic_relevance is non_economic, disposition MUST be non_claim (or context_only for a date/period). If uncertain, do not force claim_value: use ambiguous with a reason. A technical value is not a commercial claim merely because a company publishes it.
 - disposition=claim_value: the number is the value of a statement about a subject and a measure. subject and predicate are required. predicate is the measure itself: personal_income for "personal income increased $54.5 billion" and also for "personal income increased 0.2 percent"; disposable_personal_income; personal_consumption_expenditures; personal_saving; personal_saving_rate; vehicle_count for "5 million vehicles". Never write increase_amount, monthly_change, change, growth_rate, amount or any direction/relationship word in the predicate; another node decides level versus change.
-- subject must be the entity named in the same clause as the number. If the clause names disposable personal income, use disposable_personal_income even when the previous sentence spoke about personal income. Do not carry a subject over from an earlier clause.
+- subject must be the entity the measure belongs to, named in the same clause as the number. It is not the measure itself: "Intel reported revenue of $16.5 billion" has subject intel and predicate revenue, not subject revenue. "Google value plunges by $500bn" has subject google and predicate market_value, not subject google_value. If the clause names disposable personal income, use disposable_personal_income even when the previous sentence spoke about personal income. Do not carry a subject over from an earlier clause.
 - disposition=context_only: a date, period, comparison basis or other supporting number that does not itself state a claim. subject/predicate may be empty.
 - disposition=non_claim: an identifier, phone number, form number, version, citation or other non-economic number.
 - disposition=ambiguous: more than one reasonable reading and the context does not settle it. Give the reason.
@@ -54,6 +57,7 @@ Rules:
 - kind follows the source statement: a figure a government or company publishes is fact; a forecast stays forecast; interpretation, hypothesis and opinion keep their own kind. Never use system_inference.
 - Do not decide level versus change, increase versus decrease, year-over-year versus month-over-month, monthly rate versus period change, revision status, or seasonality. Another node does that.
 - Keep a percentage and a percentage point distinct in the predicate when the raw text does.
+- Do not put direction or movement words (increase, plunge, surge, fall, rise, growth, decline, drop, gain, slide) in the predicate; they belong to N3.
 - reason must be one short sentence, at most 25 words.
 - evidence_quote must be the shortest exact contiguous excerpt copied from the supplied context that includes the number and the words naming its subject or measure when the sentence provides them. Do not quote the bare number when the clause states who or what it describes. Do not paraphrase, join separate excerpts, translate or add ellipses. evidence_sentence_ids are the sentence ids that contain it (at least one for claim_value).
 - status=resolved only when the interpretation is settled. Use ambiguous or unresolved rather than guessing.
@@ -68,6 +72,8 @@ SCHEMA = {
                 'type': 'object',
                 'properties': {
                     'candidate_id': {'type': 'string'},
+                    'economic_relevance': {'type': 'string',
+                                           'enum': list(ECONOMIC_RELEVANCE)},
                     'disposition': {'type': 'string', 'enum': list(DISPOSITIONS)},
                     'subject': {'type': 'string'},
                     'predicate': {'type': 'string'},
@@ -77,8 +83,9 @@ SCHEMA = {
                     'evidence_quote': {'type': 'string'},
                     'status': {'type': 'string', 'enum': list(STATUSES)},
                 },
-                'required': ['candidate_id', 'disposition', 'subject', 'predicate', 'kind',
-                             'reason', 'evidence_sentence_ids', 'evidence_quote', 'status'],
+                'required': ['candidate_id', 'economic_relevance', 'disposition', 'subject',
+                             'predicate', 'kind', 'reason', 'evidence_sentence_ids',
+                             'evidence_quote', 'status'],
                 'additionalProperties': False,
             },
         },
@@ -92,9 +99,14 @@ MAX_QUOTE = 1000
 # The model sometimes slips a relationship into the measure ("increase_amount",
 # "monthly_change"), which is N3's decision. When it does, the measure is rebuilt from the
 # subject and the substitution is recorded; the model's wording is kept in predicate_raw.
-RELATIONSHIP_WORDS = {'increase', 'decrease', 'rise', 'fall', 'growth', 'grow', 'change',
-                      'decline', 'drop', 'gain', 'monthly', 'annual', 'quarterly', 'yoy',
-                      'mom', 'qoq'}
+RELATIONSHIP_WORDS = {'increase', 'increased', 'decrease', 'decreased', 'rise', 'rose',
+                      'fall', 'fell', 'growth', 'grow', 'grew', 'change', 'decline',
+                      'declined', 'drop', 'dropped', 'gain', 'gained', 'loss', 'plunge',
+                      'plunged', 'surge', 'surged', 'jump', 'jumped', 'climb', 'climbed',
+                      'slide', 'slid', 'slump', 'slumped', 'soar', 'soared', 'tumble',
+                      'tumbled', 'rally', 'rallied', 'rebound', 'rebounded', 'spike',
+                      'spiked', 'dive', 'dived', 'slip', 'slipped', 'retreat', 'retreated',
+                      'monthly', 'annual', 'quarterly', 'yoy', 'mom', 'qoq'}
 GENERIC_MEASURES = {'amount', 'rate', 'value', 'level', 'total'}
 
 
@@ -119,6 +131,13 @@ def input_hash(document, n1, model):
 def _unresolved(candidate_id, reason, deviations=None):
     return {
         'candidate_id': candidate_id,
+        'economic_relevance': 'unknown',
+        'relevance_raw': '',
+        'model_disposition': '',
+        'model_status': '',
+        'model_kind': '',
+        'model_subject': '',
+        'model_predicate': '',
         'disposition': 'unresolved',
         'subject': '', 'predicate': '', 'predicate_raw': '', 'predicate_source': 'none',
         'kind': 'unknown',
@@ -134,13 +153,23 @@ def _normalise(raw, candidate, document, sentence_ids):
     """(record, deviations) for one model item. Never invents a claim."""
     deviations = []
     disposition = str(raw.get('disposition') or '').strip().lower()
+    model_disposition = disposition
     if disposition not in DISPOSITIONS:
         deviations.append({'field': 'disposition', 'reason': 'unknown_value',
                            'value': disposition[:80]})
         disposition = 'unresolved'
+    relevance_raw = str(raw.get('economic_relevance') or '').strip().lower()
+    if relevance_raw not in ECONOMIC_RELEVANCE:
+        deviations.append({'field': 'economic_relevance', 'reason': 'unknown_value',
+                           'value': relevance_raw[:80]})
+        economic_relevance = 'uncertain'
+    else:
+        economic_relevance = relevance_raw
     subject = str(raw.get('subject') or '').strip()
     predicate = str(raw.get('predicate') or '').strip()
+    model_subject, model_predicate = subject, predicate
     kind = str(raw.get('kind') or '').strip().lower()
+    model_kind = kind
     if kind not in KINDS:
         deviations.append({'field': 'kind', 'reason': 'unknown_value', 'value': kind[:80]})
         kind = 'unknown'
@@ -173,17 +202,37 @@ def _normalise(raw, candidate, document, sentence_ids):
         tokens = re.split(r'[^a-z0-9]+', predicate.lower())
         if (any(token in RELATIONSHIP_WORDS for token in tokens)
                 or predicate.lower() in GENERIC_MEASURES):
-            fallback = _measure_from_subject(subject)
+            cleaned = '_'.join(token for token in tokens
+                               if token and token not in RELATIONSHIP_WORDS)
+            fallback = (cleaned if cleaned and cleaned not in GENERIC_MEASURES
+                        else _measure_from_subject(subject))
             if fallback:
                 deviations.append({'field': 'predicate', 'reason': 'relationship_leak',
                                    'value': predicate[:80]})
                 predicate = fallback
-                predicate_source = 'subject_fallback'
+                predicate_source = ('direction_removed'
+                                    if cleaned and cleaned not in GENERIC_MEASURES
+                                    else 'subject_fallback')
 
-    status = str(raw.get('status') or '').strip().lower()
+    model_status = str(raw.get('status') or '').strip().lower()
+    status = model_status
     if status not in STATUSES:
         deviations.append({'field': 'status', 'reason': 'unknown_value', 'value': status[:80]})
         status = 'resolved'
+    if disposition == 'claim_value' and economic_relevance == 'non_economic':
+        deviations.append({'field': 'economic_relevance',
+                           'reason': 'non_economic_claim_value',
+                           'value': relevance_raw})
+        disposition = 'non_claim'
+        status = 'resolved'
+        kind = 'unknown'
+    elif disposition == 'claim_value' and economic_relevance == 'uncertain':
+        deviations.append({'field': 'economic_relevance',
+                           'reason': 'economic_relevance_uncertain',
+                           'value': relevance_raw})
+        disposition = 'ambiguous'
+        status = 'ambiguous'
+        kind = 'unknown'
     if disposition == 'claim_value':
         if not subject or not predicate:
             deviations.append({'field': '*', 'reason': 'claim_value_without_subject_or_predicate',
@@ -205,6 +254,13 @@ def _normalise(raw, candidate, document, sentence_ids):
         pass
     return ({
         'candidate_id': candidate['candidate_id'],
+        'economic_relevance': economic_relevance,
+        'relevance_raw': relevance_raw,
+        'model_disposition': model_disposition,
+        'model_status': model_status,
+        'model_kind': model_kind,
+        'model_subject': model_subject,
+        'model_predicate': model_predicate,
         'disposition': disposition,
         # Long values are kept as the model wrote them and marked with a deviation; trimming
         # them here would be the silent truncation the contract forbids.

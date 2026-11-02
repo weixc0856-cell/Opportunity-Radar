@@ -20,7 +20,7 @@ from . import claim_contract, units
 from .semantic_common import hash_json, locate_quote, node_input_hash
 
 NODE = 'N5'
-NODE_VERSION = 'n5-v1'
+NODE_VERSION = 'n5-v2'
 RULESET = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()[:16]
 CONTRACT_VERSION = claim_contract.CONTRACT_VERSION
 CONTRACT_HASH = hashlib.sha256(
@@ -107,6 +107,146 @@ def _payload(record, interpretation, document):
     }
     meta = {'quote': quote, 'start': start, 'end': end, 'field': field}
     return payload, meta
+
+
+CONCRETE_DIRECTIONS = ('increase', 'decrease', 'unchanged')
+
+
+def _semantic_key(claim):
+    """The r2-v4 fields that make two claims the same fact.
+
+    Relationship type and ids are lineage, not meaning: a change and a comparison that state
+    the same subject, measure, value, unit and period are one claim. Direction is handled by
+    _direction_compatible because one relation may legitimately carry not_applicable while the
+    other carries the movement.
+    """
+    return (claim.get('subject', '').lower(), claim.get('predicate', '').lower(),
+            claim.get('kind'), claim.get('value_num'), claim.get('unit'),
+            claim.get('scale'), claim.get('currency'), claim.get('period'),
+            claim.get('comparison'), claim.get('seasonality'), claim.get('revision'),
+            claim.get('region', ''), claim.get('denominator', ''))
+
+
+def _direction_compatible(left, right):
+    a, b = left['trace'].get('direction', 'unknown'), right['trace'].get('direction', 'unknown')
+    if a in CONCRETE_DIRECTIONS and b in CONCRETE_DIRECTIONS and a != b:
+        return False
+    return True
+
+
+def _merged_direction(claims):
+    directions = [claim['trace'].get('direction', 'unknown') for claim in claims]
+    concrete = [direction for direction in directions if direction in CONCRETE_DIRECTIONS]
+    if concrete:
+        return concrete[0]
+    if 'not_applicable' in directions:
+        return 'not_applicable'
+    return 'unknown'
+
+
+def _merge_group(claims):
+    """One claim from semantically identical records; all lineage survives in the trace."""
+    claims = sorted(claims, key=lambda claim: (
+        0 if claim['trace'].get('direction') in CONCRETE_DIRECTIONS else 1,
+        claim['trace'].get('evidence_start') if claim['trace'].get('evidence_start') is not None
+        else 10 ** 12, claim['claim_id']))
+    primary = claims[0]
+    trace = dict(primary['trace'])
+    trace['merged_claim_ids'] = [claim['claim_id'] for claim in claims]
+    trace['relationship_ids'] = sorted({claim['trace'].get('relationship_id') or ''
+                                        for claim in claims} - {''})
+    trace['n4_record_ids'] = sorted({claim['trace'].get('n4_record_id') or ''
+                                     for claim in claims} - {''})
+    trace['candidate_ids'] = sorted({candidate_id for claim in claims
+                                     for candidate_id in claim['trace'].get('candidate_ids') or []})
+    trace['period_candidate_ids'] = sorted({candidate_id for claim in claims
+                                            for candidate_id in
+                                            claim['trace'].get('period_candidate_ids') or []})
+    trace['denominator_candidate_ids'] = sorted({
+        candidate_id for claim in claims
+        for candidate_id in claim['trace'].get('denominator_candidate_ids') or []})
+    baselines, seen_baselines = [], set()
+    for claim in claims:
+        for baseline in claim['trace'].get('baseline') or []:
+            key = (baseline.get('candidate_id'), baseline.get('raw_text'),
+                   baseline.get('value'), baseline.get('unit'), baseline.get('scale'),
+                   baseline.get('currency'))
+            if key in seen_baselines:
+                continue
+            seen_baselines.add(key)
+            baselines.append(baseline)
+    trace['baseline'] = baselines
+    trace['relationship_types'] = sorted({claim['trace'].get('relationship_type') or ''
+                                          for claim in claims} - {''})
+    trace['direction'] = _merged_direction(claims)
+    trace['evidence_items'] = [{
+        'claim_id': claim['claim_id'],
+        'relationship_id': claim['trace'].get('relationship_id') or '',
+        'n4_record_id': claim['trace'].get('n4_record_id') or '',
+        'quote': claim['quote'],
+        'start': claim['trace'].get('evidence_start'),
+        'end': claim['trace'].get('evidence_end'),
+        'field': claim['trace'].get('evidence_field') or '',
+    } for claim in claims]
+    trace['merged_from'] = [{
+        'claim_id': claim['claim_id'],
+        'relationship_id': claim['trace'].get('relationship_id') or '',
+        'n4_record_id': claim['trace'].get('n4_record_id') or '',
+        'relationship_type': claim['trace'].get('relationship_type') or '',
+        'direction': claim['trace'].get('direction') or 'unknown',
+        'evidence_quote': claim['quote'],
+        'evidence_start': claim['trace'].get('evidence_start'),
+        'evidence_end': claim['trace'].get('evidence_end'),
+        'evidence_field': claim['trace'].get('evidence_field') or '',
+    } for claim in claims[1:]]
+    merged = dict(primary)
+    merged['trace'] = trace
+    merged['claim_id'] = primary['claim_id']
+    deviations = []
+    for claim in claims:
+        for deviation in claim.get('deviations') or []:
+            if deviation not in deviations:
+                deviations.append(deviation)
+    merged['deviations'] = deviations
+    return merged
+
+
+def _merge_claims(claims):
+    """(unique claims, merged-away duplicates, direction conflict groups)."""
+    groups = {}
+    for claim in claims:
+        groups.setdefault(_semantic_key(claim), []).append(claim)
+    unique, duplicates, conflicts = [], [], []
+    for group in groups.values():
+        buckets = []
+        for claim in group:
+            for bucket in buckets:
+                if all(_direction_compatible(claim, member) for member in bucket):
+                    bucket.append(claim)
+                    break
+            else:
+                buckets.append([claim])
+        if len(buckets) > 1:
+            conflicts.append({'semantic_key': list(_semantic_key(buckets[0][0])),
+                              'claim_ids': [claim['claim_id'] for bucket in buckets
+                                            for claim in bucket],
+                              'reason': 'direction_conflict'})
+        for bucket in buckets:
+            merged = _merge_group(bucket)
+            unique.append(merged)
+            for claim in bucket:
+                if claim['claim_id'] == merged['claim_id']:
+                    continue
+                duplicates.append({
+                    'claim_id': claim['claim_id'],
+                    'duplicate_of': merged['claim_id'],
+                    'merged_into': merged['claim_id'],
+                    'reason': 'semantic_duplicate_merged',
+                    'relationship_id': claim['trace'].get('relationship_id') or '',
+                    'n4_record_id': claim['trace'].get('n4_record_id') or '',
+                    'direction': claim['trace'].get('direction') or 'unknown',
+                })
+    return unique, duplicates, conflicts
 
 
 def _critical(deviations):
@@ -201,7 +341,6 @@ def assemble(document, n1, n2, n3, n4):
 
     claims, rejected, unresolved, duplicates = [], [], [], []
     accepted = {}
-    seen = {}
     payloads = []
     claim_meta = []
     if n2.get('status') not in ('success', 'partial'):
@@ -258,18 +397,8 @@ def assemble(document, n1, n2, n3, n4):
                                  'status': 'rejected',
                                  'deviations': critical or deviations})
                 continue
-            key = (claim['subject'].lower(), claim['predicate'].lower(), claim['kind'],
-                   claim['value_num'], claim['unit'], claim['scale'], claim['currency'],
-                   claim['period'], claim['comparison'], record.get('relationship_type'))
-            if key in seen:
-                duplicates.append({'candidate_id': candidate_id,
-                                   'n4_record_id': record.get('record_id'),
-                                   'reason': 'duplicate_claim',
-                                   'duplicate_of': seen[key]})
-                continue
             claim_id = _claim_id(computed_hash, record, claim['subject'],
                                  claim['predicate'], claim['quote'])
-            seen[key] = claim_id
             accepted_here.append(claim_id)
             payloads.append(payload)
             claim_meta.append({'claim_id': claim_id, 'record': record,
@@ -308,6 +437,13 @@ def assemble(document, n1, n2, n3, n4):
             'direction': record.get('direction') or 'unknown',
             'baseline': record.get('baseline') or [],
             'period_candidate_ids': record.get('period_candidate_ids') or [],
+            'period_raw': record.get('period_raw') or '',
+            'period_evidence_quote': record.get('period_evidence_quote') or '',
+            'period_evidence_start': record.get('period_evidence_start'),
+            'period_evidence_end': record.get('period_evidence_end'),
+            'period_evidence_field': record.get('period_evidence_field') or '',
+            'period_source': record.get('period_source') or '',
+            'period_rule': record.get('period_rule') or '',
             'denominator_candidate_ids': record.get('denominator_candidate_ids') or [],
             'evidence_sentence_ids': interpretation.get('evidence_sentence_ids') or [],
             'evidence_start': meta['meta']['start'], 'evidence_end': meta['meta']['end'],
@@ -316,6 +452,15 @@ def assemble(document, n1, n2, n3, n4):
             'n2_predicate': interpretation.get('predicate') or '',
         }
         claims.append(claim)
+    raw_assembled_claims = len(claims)
+    claims, duplicates, merge_conflicts = _merge_claims(claims)
+    merged_ids = {}
+    for claim in claims:
+        for old_claim_id in claim['trace'].get('merged_claim_ids') or [claim['claim_id']]:
+            merged_ids[old_claim_id] = claim['claim_id']
+    accepted = {candidate_id: sorted({merged_ids.get(claim_id, claim_id)
+                                      for claim_id in claim_ids})
+                for candidate_id, claim_ids in accepted.items()}
     claims.sort(key=lambda item: (item['trace']['evidence_start']
                                   if item['trace']['evidence_start'] is not None else 10 ** 12,
                                   item['subject'], item['predicate'], item['value_num']))
@@ -330,7 +475,6 @@ def assemble(document, n1, n2, n3, n4):
         if item['status'] in ('ambiguous', 'unresolved', 'relationship_unassigned'):
             unresolved.append({'candidate_id': item['candidate_id'],
                                'reason': item['reason']})
-    rejected.extend(duplicates)
     disposition_counts = {}
     for item in dispositions:
         disposition_counts[item['status']] = disposition_counts.get(item['status'], 0) + 1
@@ -346,6 +490,7 @@ def assemble(document, n1, n2, n3, n4):
         'input_candidates': len(candidates),
         'accepted_candidates': sum(1 for item in dispositions
                                    if item['status'] == 'claim_accepted'),
+        'raw_assembled_claims': raw_assembled_claims,
         'assembled_claims': len(claims),
         'claim_value_total': claim_value_total,
         'claim_value_resolved': claim_value_resolved,
@@ -363,6 +508,8 @@ def assemble(document, n1, n2, n3, n4):
         'n4_by_status': by_record_status,
         'claims_rejected': len(rejected),
         'duplicate_claims': len(duplicates),
+        'duplicate_groups': len({item['merged_into'] for item in duplicates}),
+        'direction_conflicts': len(merge_conflicts),
         'disposition_counts': disposition_counts,
         'coverage_complete': (len(dispositions) == len(candidates)
                               and len({item['candidate_id'] for item in dispositions})
@@ -391,6 +538,7 @@ def assemble(document, n1, n2, n3, n4):
             'valid': len(parsed) == len(payloads),
         },
         'duplicates': duplicates,
+        'merge_conflicts': merge_conflicts,
         'status': status,
     }
     result['output_hash'] = hashlib.sha256(

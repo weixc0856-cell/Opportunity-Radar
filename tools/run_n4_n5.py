@@ -87,9 +87,18 @@ def summarise(records, seconds):
             'accepted_candidates': sum(output.get('coverage_statistics', {})
                                        .get('accepted_candidates', 0)
                                        for output in n5_records),
+            'raw_assembled_claims': sum(output.get('coverage_statistics', {})
+                                        .get('raw_assembled_claims', 0)
+                                        for output in n5_records),
             'assembled_claims': sum(output.get('coverage_statistics', {})
                                     .get('assembled_claims', 0)
                                     for output in n5_records),
+            'duplicate_claims': sum(output.get('coverage_statistics', {})
+                                    .get('duplicate_claims', 0)
+                                    for output in n5_records),
+            'direction_conflicts': sum(output.get('coverage_statistics', {})
+                                       .get('direction_conflicts', 0)
+                                       for output in n5_records),
             'claim_values': sum(output.get('coverage_statistics', {}).get('claim_value_total', 0)
                                 for output in n5_records),
             'dispositions': n5_dispositions,
@@ -132,6 +141,8 @@ def render(summary):
         f"| 合格影子 Claim | {n5['claims']} |",
         f"| 已接受候选 / 组装 Claim | {n5['accepted_candidates']} / "
         f"{n5['assembled_claims']} |",
+        f"| 合并前 Claim / 语义去重 / 方向冲突 | {n5['raw_assembled_claims']} / "
+        f"{n5['duplicate_claims']} / {n5['direction_conflicts']} |",
         f"| 覆盖完整 | {n5['coverage_complete']} |",
         f"| 契约校验通过 | {n5['contract_valid']} |",
         f"| 缓存复用 | {n5['reused']} |",

@@ -139,17 +139,21 @@ class AcceptedClaimTests(unittest.TestCase):
         n3 = n3_output(document, [change, level])
         n4 = n4_normalization.normalize(document, n1, n2, n3)
         n5 = n5_assembly.assemble(document, n1, n2, n3, n4)
-        self.assertEqual(len(n5['claims']), 2)
-        self.assertEqual({claim['value_num'] for claim in n5['claims']}, {105.6})
-        self.assertEqual({claim['trace']['relationship_type'] for claim in n5['claims']},
-                         {'change', 'level'})
-        self.assertEqual(len({claim['trace']['relationship_id'] for claim in n5['claims']}), 2)
-        self.assertEqual(len({claim['trace']['n4_record_id'] for claim in n5['claims']}), 2)
-        for claim in n5['claims']:
-            self.assertIn(claim['trace']['evidence_field'], ('body',))
-            self.assertIsNotNone(claim['trace']['evidence_start'])
+        # The r2-v4 fields are identical; relationship_type is lineage, so this is one claim
+        # with both relationships preserved in its trace.
+        self.assertEqual(len(n5['claims']), 1)
+        claim = n5['claims'][0]
+        self.assertEqual(claim['value_num'], 105.6)
+        self.assertEqual(set(claim['trace']['relationship_types']), {'change', 'level'})
+        self.assertEqual(len(claim['trace']['relationship_ids']), 2)
+        self.assertEqual(len(claim['trace']['n4_record_ids']), 2)
+        self.assertIn(claim['trace']['evidence_field'], ('body',))
+        self.assertIsNotNone(claim['trace']['evidence_start'])
+        self.assertEqual(len(claim['trace']['evidence_items']), 2)
         self.assertEqual(n5['coverage_statistics']['accepted_candidates'], 1)
-        self.assertEqual(n5['coverage_statistics']['assembled_claims'], 2)
+        self.assertEqual(n5['coverage_statistics']['raw_assembled_claims'], 2)
+        self.assertEqual(n5['coverage_statistics']['assembled_claims'], 1)
+        self.assertEqual(n5['coverage_statistics']['duplicate_claims'], 1)
 
     def test_missing_period_is_not_invented(self):
         document, n1, n2, n3, n4 = build('Revenue was $5 billion.', relation_type='change')
@@ -201,8 +205,11 @@ class RejectionTests(unittest.TestCase):
         n5 = n5_assembly.assemble(document, n1, n2, n3, n4)
         self.assertEqual(len(n5['claims']), 1)
         self.assertEqual(n5['coverage_statistics']['duplicate_claims'], 1)
-        self.assertIn('duplicate_claim',
-                      [item['reason'] for item in n5['rejected_items']])
+        self.assertEqual(n5['duplicates'][0]['reason'], 'semantic_duplicate_merged')
+        self.assertNotEqual(n5['duplicates'][0]['claim_id'],
+                            n5['duplicates'][0]['duplicate_of'])
+        self.assertNotIn('duplicate_claim',
+                         [item['reason'] for item in n5['rejected_items']])
 
     def test_unsupported_unit_does_not_generate_a_claim(self):
         document, n1 = setup('The device measured 3 gizmos in 2026.')
@@ -287,6 +294,69 @@ class DeterminismTests(unittest.TestCase):
         self.assertNotEqual(first['input_hash'], second['input_hash'])
         self.assertNotEqual(first['claims'][0]['claim_id'],
                             second['claims'][0]['claim_id'])
+
+
+class SemanticMergeTests(unittest.TestCase):
+    def build(self, text):
+        document, n1 = setup(text)
+        money = [candidate for candidate in n1['candidates']
+                 if candidate['candidate_type'] == 'currency']
+        periods = [candidate for candidate in n1['candidates']
+                   if candidate['candidate_type'] in ('date', 'period')]
+        n2 = n2_output(document, [interp(candidate) for candidate in money]
+                       + [interp(candidate, 'context_only', subject='', predicate='',
+                                 kind='unknown') for candidate in periods])
+        return document, n1, money, periods, n2
+
+    def assemble(self, document, n1, n2, relationships):
+        n3 = n3_output(document, relationships)
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        return n5_assembly.assemble(document, n1, n2, n3, n4)
+
+    def test_identical_claims_merge_and_keep_all_evidence(self):
+        document, n1, money, periods, n2 = self.build(
+            'Revenue was $5 billion in 2026. Revenue was $5 billion in 2026.')
+        first = relationship(document, n1, [money[0]], 'level',
+                             periods=[periods[0]['candidate_id']])
+        second = relationship(document, n1, [money[1]], 'level',
+                              periods=[periods[0]['candidate_id']], suffix='_second')
+        n5 = self.assemble(document, n1, n2, [first, second])
+        self.assertEqual(len(n5['claims']), 1)
+        claim = n5['claims'][0]
+        self.assertEqual(len(claim['trace']['merged_claim_ids']), 2)
+        self.assertEqual(len(claim['trace']['evidence_items']), 2)
+        self.assertEqual(len(claim['trace']['relationship_ids']), 2)
+        self.assertEqual(n5['coverage_statistics']['raw_assembled_claims'], 2)
+        self.assertEqual(n5['coverage_statistics']['assembled_claims'], 1)
+        self.assertEqual(n5['coverage_statistics']['duplicate_claims'], 1)
+        self.assertEqual(n5['duplicates'][0]['reason'], 'semantic_duplicate_merged')
+
+    def test_the_same_number_in_different_periods_is_not_merged(self):
+        document, n1, money, periods, n2 = self.build(
+            'Revenue was $5 billion in 2025. Revenue was $5 billion in 2026.')
+        first = relationship(document, n1, [money[0]], 'level',
+                             periods=[periods[0]['candidate_id']])
+        second = relationship(document, n1, [money[1]], 'level',
+                              periods=[periods[1]['candidate_id']], suffix='_second')
+        n5 = self.assemble(document, n1, n2, [first, second])
+        self.assertEqual(len(n5['claims']), 2)
+        self.assertEqual({claim['period'] for claim in n5['claims']}, {'2025', '2026'})
+        self.assertEqual(n5['coverage_statistics']['duplicate_claims'], 0)
+
+    def test_opposite_directions_are_not_merged(self):
+        document, n1, money, periods, n2 = self.build(
+            'Revenue was $5 billion in 2026. Revenue was $5 billion in 2026.')
+        first = relationship(document, n1, [money[0]], 'level',
+                             periods=[periods[0]['candidate_id']])
+        second = relationship(document, n1, [money[1]], 'level',
+                              periods=[periods[0]['candidate_id']], suffix='_second')
+        second['direction'] = 'decrease'
+        n5 = self.assemble(document, n1, n2, [first, second])
+        self.assertEqual(len(n5['claims']), 2)
+        self.assertEqual(n5['coverage_statistics']['duplicate_claims'], 0)
+        self.assertEqual(n5['coverage_statistics']['direction_conflicts'], 1)
+        self.assertEqual(n5['merge_conflicts'][0]['reason'], 'direction_conflict')
+
 
 
 if __name__ == '__main__':
