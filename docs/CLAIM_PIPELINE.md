@@ -150,4 +150,5 @@ python tools/eval_numeric_tools.py
 ```
 
 N4/N5 工具默认复用已留存 N0–N3；N2/N3 缺失时记录 missing，不调用模型。
+没有 claim_value 的文章也会记录一个空的 N3 结果，使 N5 仍能处置 context_only/non_claim 候选。
 输出 `data/claim-pipeline/<时间戳>/`（JSONL、summary.json、summary.md），不写生产库。

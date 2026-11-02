@@ -41,7 +41,7 @@ def fixture_articles(path):
             summary=str(entry.get('content') or ''),
             published=str(entry.get('published') or ''),
             source_name=str(entry.get('source_id') or 'fixture'),
-            feed_id='fixture',
+            feed_id=str(entry.get('source_id') or 'fixture'),
         ))
     return articles
 
@@ -353,13 +353,17 @@ def main(argv=None):
                     else:
                         record['n2'], record['n2_reused'] = n2, True
                 if (args.nodes in ('n3', 'both') and n2 is not None
-                        and n2.get('status') in ('success', 'partial')
-                        and n2.get('statistics', {}).get('claim_value_count', 0) > 0):
-                    if not args.n3_limit or n3_used < args.n3_limit:
+                        and n2.get('status') in ('success', 'partial')):
+                    claim_values = n2.get('statistics', {}).get('claim_value_count', 0)
+                    # Even with zero claim values an empty N3 is recorded: N4/N5 must still
+                    # dispose the context_only/non_claim candidates. It makes no model call
+                    # and does not consume the n3-limit.
+                    if claim_values == 0 or not args.n3_limit or n3_used < args.n3_limit:
                         n3, n3_reused = run_n3(article, document, n1, n2, client, settings,
                                                args, store)
                         record['n3'], record['n3_reused'] = n3, n3_reused
-                        n3_used += 1
+                        if claim_values > 0:
+                            n3_used += 1
                 record['seconds'] = round(time.time() - article_started, 1)
             except Exception as exc:  # one article must not stop the run
                 record['error'] = f'{type(exc).__name__}: {exc}'[:300]
