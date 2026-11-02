@@ -359,5 +359,83 @@ class SemanticMergeTests(unittest.TestCase):
 
 
 
+class EndpointLevelTests(unittest.TestCase):
+    def build(self, text):
+        document, n1 = setup(text)
+        money = [candidate for candidate in n1['candidates']
+                 if candidate['candidate_type'] == 'currency']
+        n2 = n2_output(document, [interp(candidate) for candidate in money])
+        return document, n1, money, n2
+
+    def test_a_change_endpoint_level_is_folded_into_the_change(self):
+        document, n1, money, n2 = self.build(
+            'The deficit increased from $92.8 billion in July to $105.6 billion in August.')
+        change_value = next(c for c in money if c.get('value') == 105.6)
+        baseline = next(c for c in money if c.get('value') == 92.8)
+        sentence = next(item for item in document['sentences'] if item['field'] == 'body')
+        change = relationship(document, n1, [change_value], 'change',
+                              baselines=[baseline['candidate_id']],
+                              comparison='period_change')
+        change['evidence_quote'] = sentence['text']
+        change['evidence_start'] = sentence['start']
+        change['evidence_end'] = sentence['end']
+        change['evidence_sentence_ids'] = [sentence['sentence_id']]
+        level = relationship(document, n1, [change_value], 'level', comparison='level')
+        level_quote = 'to $105.6 billion in august'
+        level['evidence_quote'] = level_quote
+        level['evidence_start'] = document['text'].find(level_quote)
+        level['evidence_end'] = level['evidence_start'] + len(level_quote)
+        level['evidence_sentence_ids'] = [sentence['sentence_id']]
+        n3 = n3_output(document, [change, level])
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        n5 = n5_assembly.assemble(document, n1, n2, n3, n4)
+        self.assertEqual(len(n5['claims']), 1)
+        claim = n5['claims'][0]
+        self.assertEqual(claim['trace']['relationship_types'], ['change', 'level'])
+        self.assertTrue(claim['trace']['endpoint_level_merged'])
+        self.assertEqual(n5['coverage_statistics']['endpoint_level_merged'], 1)
+        self.assertEqual(n5['duplicates'][0]['reason'], 'endpoint_level_of_change')
+        self.assertEqual(len(claim['trace']['relationship_ids']), 2)
+
+    def test_an_independent_level_is_not_folded(self):
+        text = ('The deficit increased from $92.8 billion in July to $105.6 billion in August. '
+                'The deficit was $105.6 billion in September.')
+        document, n1, money, n2 = self.build(text)
+        change_value = next(c for c in money if c.get('value') == 105.6)
+        body_sentences = [item for item in document['sentences'] if item['field'] == 'body']
+        change = relationship(document, n1, [change_value], 'change',
+                              comparison='period_change')
+        change['evidence_quote'] = body_sentences[0]['text']
+        change['evidence_start'] = body_sentences[0]['start']
+        change['evidence_end'] = body_sentences[0]['end']
+        change['evidence_sentence_ids'] = [body_sentences[0]['sentence_id']]
+        level = relationship(document, n1, [change_value], 'level', comparison='level')
+        level['evidence_quote'] = body_sentences[1]['text']
+        level['evidence_start'] = body_sentences[1]['start']
+        level['evidence_end'] = body_sentences[1]['end']
+        level['evidence_sentence_ids'] = [body_sentences[1]['sentence_id']]
+        n3 = n3_output(document, [change, level])
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        n5 = n5_assembly.assemble(document, n1, n2, n3, n4)
+        self.assertEqual(len(n5['claims']), 2)
+        self.assertEqual(n5['coverage_statistics']['endpoint_level_merged'], 0)
+        self.assertEqual(n5['coverage_statistics']['endpoint_level_independent'], 1)
+
+    def test_a_level_with_a_different_value_is_not_folded(self):
+        document, n1, money, n2 = self.build(
+            'The deficit increased $12.8 billion in August to $136.6 billion.')
+        change_value = next(c for c in money if c.get('value') == 12.8)
+        level_value = next(c for c in money if c.get('value') == 136.6)
+        change = relationship(document, n1, [change_value], 'change',
+                              comparison='period_change')
+        level = relationship(document, n1, [level_value], 'level', comparison='level')
+        n3 = n3_output(document, [change, level])
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        n5 = n5_assembly.assemble(document, n1, n2, n3, n4)
+        self.assertEqual(len(n5['claims']), 2)
+        self.assertEqual(n5['coverage_statistics']['endpoint_level_merged'], 0)
+
+
+
 if __name__ == '__main__':
     unittest.main()

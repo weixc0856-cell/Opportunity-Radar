@@ -142,7 +142,8 @@ N4 确定性地标准化数值/单位/数量级/币种/期间/baseline，并保�
 影子 Claim 不进入生产 Claim 表、日报或核验。七夹具与 50 篇真实 RSS 影子运行已完成（Batch 12）；
 Batch 13 完成 N2 经济相关性、N3 期间关联与 N5 语义去重（14 篇回归）；Batch 14 修复 N3
 rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 的 GDP subject、贸易 predicate
-与 `$0.1bn` economic relevance（10 篇参考集），影子 Claim 仍非已核实事实。
+与 `$0.1bn` economic relevance；Batch 16 只改 N5，把变化关系的终点 level 折回 change（10 篇参考集），
+影子 Claim 仍非已核实事实。
 契约见 `docs/CLAIM_PIPELINE.md`。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
