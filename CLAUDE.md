@@ -56,8 +56,10 @@ N3 同句/标题同月期间关联与 N5 语义去重；Batch 14 只修 N3，将
 恢复到 Batch 12 参考集基线，并修复 3.8% 遗漏和 N3 输出预算。Batch 15 只修 N2，修复 GDP subject、
 贸易 predicate 与 `$0.1bn` economic relevance，N2 disposition/subject/predicate/economic 达到
 21/20/19/21；N5 严格精确率/召回 18/18、17/18，但语义口径（含 relationship_type/comparison）
-为 16/18、16/18，Google/Intel title-only 与 Personal Income 0.2% DPI 仍有缺口。影子 Claim 未接入
-生产 Claim 表、日报或核验。v7 切换仍是 **NOT READY**，**生产启用需 G6 批准**。
+为 16/18、16/18。Batch 16 只改 N5，将 `$105.6bn` 的终点 level 折回 change，Claim 18→17，
+严格精确率 17/17、正文严格召回 17/18，语义精确率 16/17；没有误合并独立 level。Google/Intel
+title-only 与 Personal Income 0.2% DPI 仍有缺口。影子 Claim 未接入生产 Claim 表、日报或核验。
+v7 切换仍是 **NOT READY**，**生产启用需 G6 批准**。
 已关闭的门与待批准的门见 `docs/IMPLEMENTATION_PLAN.md`。
 
 ## 文档地图

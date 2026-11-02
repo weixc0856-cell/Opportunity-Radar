@@ -1,6 +1,6 @@
 # 主张提取流水线（N0–N5）
 
-版本：4.3 · 2026-11-02
+版本：4.4 · 2026-11-02
 定位：规定"文章 → 主张"这条链路怎么拆、每个节点的输入输出契约、失败语义、留存方式与验收方式。
 现状：**N0–N5 已实现，形成离线影子链路；Claim 仍是影子 Claim，不是已核实事实。**
 Batch 13 已完成 N2 经济相关性、N3 同句/标题同月期间关联、N5 语义去重的定向修复；14 篇回归
@@ -8,10 +8,13 @@ Batch 13 已完成 N2 经济相关性、N3 同句/标题同月期间关联、N5 
 个别召回回退。Batch 14 只修 N3：rate/change 与 period_change 参考集指标恢复到 Batch 12 基线，
 3.8% 由模型关系或一次覆盖重试分配。Batch 15 只修 N2：GDP subject、贸易 predicate 与 `$0.1bn`
 economic relevance 修复，N2 disposition/subject/predicate/economic 为 21/20/19/21；N5 严格
-精确率/召回 18/18、17/18（relationship_type+comparison 语义口径 16/18、16/18）。见
+精确率/召回 18/18、17/18（relationship_type+comparison 语义口径 16/18、16/18）。Batch 16 只修
+N5：`$105.6bn` 的终点 level 折回 change，Claim 18→17，严格精确率 17/17、正文严格召回 17/18，
+语义精确率 16/17，独立/不同值 level 未误合并。见
 `docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`、
-`docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md` 与
-`docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md`。
+`docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`、
+`docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md` 与
+`docs/archive/R2_BATCH16_N5_SEMANTIC_ASSEMBLY_2026-11-02.md`。
 生产提示词仍是 v6，v7 仍是影子，切换判定仍是 **NOT READY**，生产启用需 G6 批准。
 
 - N0/N1：`docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`
@@ -19,7 +22,8 @@ economic relevance 修复，N2 disposition/subject/predicate/economic 为 21/20/
 - N4/N5：`docs/archive/R2_BATCH10_N4_N5_SPEC_2026-11-02.md`、`R2_BATCH10_N4_N5_ACCEPTANCE_2026-11-02.md`
 - 质量修复：`docs/archive/R2_BATCH13_QUALITY_ACCEPTANCE_2026-11-02.md`、
   `docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`、
-  `docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md`
+  `docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md`、
+  `docs/archive/R2_BATCH16_N5_SEMANTIC_ASSEMBLY_2026-11-02.md`
 
 ---
 
@@ -104,7 +108,7 @@ economic relevance 修复，N2 disposition/subject/predicate/economic 为 21/20/
 缺失 period/baseline 保持空并记录；无年份的月/季度保留 `period_raw` 与定位，但 `period` 为空，
 不推断年份；每个 claim_value 必须有记录（无关系 → `missing_semantics`）。N4 不调用模型、不补造关系。
 
-## 7. N5 完整性门禁与 Claim 组装（`n5-v2`）
+## 7. N5 完整性门禁与 Claim 组装（`n5-v3`）
 
 输入 N0–N4。输出：
 
@@ -126,6 +130,9 @@ comparison/seasonality/revision/region/denominator）合并，`relationship_type
 方向相同或一方为 not_applicable/unknown 时合并并保留具体方向，两个具体方向相反则不合并并记录
 `direction_conflict`。合并保留全部 `relationship_ids`、`n4_record_ids`、`period_candidate_ids`、
 baseline 与 `evidence_items`；被合并项写入 `duplicates[]`，不混入 `rejected_items[]`。
+**endpoint level**：同 subject/predicate/value/period 的纯 level，如果其 N4 证据是某条
+change/comparison 证据的严格子区间，则视为变化关系的终点并折回该 change；保留两条关系、N4
+记录与证据。证据在 change 之外则保留为独立 level；多条 change 同时包含则 ambiguous，不合并。
 契约校验把所有 payload 交给 `claim_contract.parse_claims`，全部通过才算有效。
 coverage_complete 要求处置数与 N1 候选数相等且唯一；统计中分别给出 `input_candidates`、
 `accepted_candidates`、`raw_assembled_claims`、`assembled_claims`、`duplicate_claims` 与

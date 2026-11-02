@@ -35,8 +35,8 @@
     corrections only to relationships the model already emitted. `n4_normalization.py` (N4) turns those semantics into
     value/unit/scale/currency/period records, preserving period raw text and locator, without
     re-deciding anything. `n5_assembly.py` (N5) disposes every N1 candidate, merges semantically
-    identical r2-v4 claims while preserving all relationship/evidence lineage, and assembles shadow
-    claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file, reuses the
+    identical r2-v4 claims while preserving all relationship/evidence lineage, folds a level that is
+    only the evidence endpoint of a change back into that change, and assembles shadow claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file, reuses the
     latest usable result for the same input, and records per-batch tokens/timing. Nothing here
     writes to the production database or changes the analyzer.
 

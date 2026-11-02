@@ -65,42 +65,38 @@
 
 事件级重复不再"完全没有识别"，但也不是彻底解决。
 
-## ISSUE-004 主张流水线 N2/N3 语义回退与输出预算
+## ISSUE-004 主张流水线 N2/N3/N5 语义与组装
 
-**状态**：主要部分已解决（Batch 15，2026-11-02）· 影响：影子 Claim 的准确率与召回 · 优先级：中
+**状态**：主要部分已解决（Batch 16，2026-11-02）· 影响：影子 Claim 的准确率与召回 · 优先级：中
 
 **已解决**：
 
-- N2 GDP subject：文档内缩写展开，`real gross domestic product (gdp)` / `real gdp` 都规范化为
-  `real gross domestic product`；`subject_raw` 保留。非 GDP 定义（`gross national product (gnp)`）
-  独立展开，没有硬编码。
-- N2 贸易 predicate：泛化 `amount/rate/...` 与单 token 部分 measure（`deficit`/`surplus`）用
-  subject slug 重建；`deficit_amount`/`deficit_increase` → `goods_deficit`，保留 `predicate_raw`。
-- N2 `$0.1bn`：提示词明确 bounded amount 仍是 economic claim；程序仅在“同句恰有一个 economic
-  claim”时提升，多个 subject → ambiguous，没有经济 claim 不提升。最终运行模型直接判 economic。
-- N3 rate/change 与 period_change 已在 Batch 14 修复；输出预算默认 2400，截断标 invalid_output。
-- Batch 15 N2：disposition 21/21、subject 20/21、predicate 19/21、economic 21/21；
-  N5 严格精确率 18/18、正文严格召回 17/18。
+- N2 GDP subject、贸易 predicate、`$0.1bn` economic relevance：Batch 15 修复，N2 指标
+  21/21 disposition、20/21 subject、19/21 predicate、21/21 economic。
+- N3 rate/change、period_change、3.8%、输出预算：Batch 14 修复。
+- N5 终点 level：Batch 16 只改 N5，将 `$105.6bn` 的终点 level 折回 change；Claim 18→17，
+  严格精确率 17/17、正文严格召回 17/18，语义（relationship_type+comparison）精确率 16/17；
+  `endpoint_level_merged=1`、`endpoint_level_independent=0`、`endpoint_level_ambiguous=0`。
+  独立 level、不同数值 level、rate/level 保留。
 
 **仍未解决**：
 
 - Google `$500bn` predicate 为 `google`（参考 `market_value`）；Intel `20%` subject `intel`
-  （参考 `intel shares`）、predicate `stock_price`（参考 `share_price`）。两者都是 title-only，
-  N5 以 `title_only_evidence` 拒绝，不影响 Claim。
-- N5 严格指标不惩罚 relationship/comparison 差异：贸易 `$105.6bn` 同时有 change（period_change）
-  与 level 两条 Claim；按 relationship_type+comparison 同时匹配，Batch 15 语义精确率/召回为
-  16/18、16/18，而不是 18/18、17/18。
-- BEA Personal Income 的 `0.2%`（DPI）仍缺 N3 关系，N5 标 `relationship_unassigned`；这是 N3
-  遗漏，不在 N2 批次范围。
+  （参考 `intel shares`）、predicate `stock_price`（参考 `share_price`）。两者 title-only，
+  N5 以 `title_only_evidence` 拒绝。
+- BEA Personal Income 的 `0.2%`（DPI）仍缺 N3 关系，N5 标 `relationship_unassigned`；
+  这是 N3 遗漏，不在 N5 批次范围。
 - GDP `2.2%` comparison 仍为 unknown（参考 annual_rate），annual_rate 未跨句延续。
+- N5 语义召回 16/18，低于 Batch 12 的 17/18，原因就是上述 0.2% 漏关系。
 - N2/N3 语义准确率仍只有 10 篇人工参考，不能外推到 50 篇；temperature=0 也不保证跨运行稳定。
 
-**下一步**：单独评审 N5 的语义去重/关系类型口径；评估 N3 对 0.2% DPI 的遗漏；title-only 的
-Google/Intel 语义问题不通过硬编码修复。
+**下一步**：单独评估 N3 对 0.2% DPI 的遗漏；title-only 的 Google/Intel 语义问题不通过硬编码修复；
+N5 的 endpoint 规则只在 evidence containment 明确时生效，后续如出现多 change 包含同一 level，
+保留 ambiguous。
 
-**跟踪指标**：参考集 N2 disposition/subject/predicate/economic_relevance、N3 type/direction/
-comparison、N5 严格与 relationship_type+comparison 语义口径；必须同时报告分母与是否使用人工
-参考，不得外推到 50 篇。
+**跟踪指标**：N2 disposition/subject/predicate/economic_relevance、N3 type/direction/comparison、
+N5 严格与 relationship_type+comparison 语义口径、endpoint 合并/独立/ambiguous、重复 Claim、
+误合并；必须同时报告分母与是否使用人工参考，不得外推到 50 篇。
 
 ## 记录约定
 

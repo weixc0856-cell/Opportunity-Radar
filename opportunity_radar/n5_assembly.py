@@ -20,7 +20,7 @@ from . import claim_contract, units
 from .semantic_common import hash_json, locate_quote, node_input_hash
 
 NODE = 'N5'
-NODE_VERSION = 'n5-v2'
+NODE_VERSION = 'n5-v3'
 RULESET = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()[:16]
 CONTRACT_VERSION = claim_contract.CONTRACT_VERSION
 CONTRACT_HASH = hashlib.sha256(
@@ -249,6 +249,102 @@ def _merge_claims(claims):
     return unique, duplicates, conflicts
 
 
+def _endpoint_key(claim):
+    """Fields that must agree before an endpoint level can be folded into a change."""
+    return (claim.get('subject', '').lower(), claim.get('predicate', '').lower(),
+            claim.get('kind'), claim.get('value_num'), claim.get('unit'),
+            claim.get('scale'), claim.get('currency'), claim.get('period'),
+            claim.get('seasonality'), claim.get('revision'), claim.get('region', ''),
+            claim.get('denominator', ''))
+
+
+def _record_for_claim(claim, records_by_id):
+    return records_by_id.get((claim.get('trace') or {}).get('n4_record_id') or '')
+
+
+def _evidence_contains(change_record, level_record):
+    """True when the level evidence is strictly inside the change evidence."""
+    if not change_record or not level_record:
+        return False
+    c_start, c_end = change_record.get('evidence_start'), change_record.get('evidence_end')
+    l_start, l_end = level_record.get('evidence_start'), level_record.get('evidence_end')
+    if (c_start is not None and c_end is not None and l_start is not None and l_end is not None
+            and change_record.get('evidence_field') == level_record.get('evidence_field')):
+        return c_start <= l_start and l_end <= c_end and (l_start, l_end) != (c_start, c_end)
+    change_quote = str(change_record.get('evidence_quote') or '').lower()
+    level_quote = str(level_record.get('evidence_quote') or '').lower()
+    return bool(level_quote and level_quote in change_quote and level_quote != change_quote)
+
+
+def _merge_endpoint_levels(claims, records_by_id):
+    """Fold a level that is only the endpoint of a change into that change.
+
+    The level must have the same subject/measure/value/period and its evidence must be a
+    strict sub-span of the change evidence. A level with its own sentence stays independent;
+    multiple containing change claims are ambiguous and are not merged. Relationship and
+    evidence lineage is preserved on the surviving change claim.
+    """
+    groups = {}
+    for claim in claims:
+        groups.setdefault(_endpoint_key(claim), []).append(claim)
+    merged = list(claims)
+    by_id = {claim['claim_id']: claim for claim in claims}
+    replace = {}
+    remove = set()
+    duplicates = []
+    stats = {'merged': 0, 'independent': 0, 'ambiguous': 0}
+    for group in groups.values():
+        changes = [claim for claim in group
+                   if {'change', 'comparison'}
+                   & set((claim.get('trace') or {}).get('relationship_types')
+                         or [(claim.get('trace') or {}).get('relationship_type') or ''])]
+        levels = [claim for claim in group
+                  if 'level' in ((claim.get('trace') or {}).get('relationship_types')
+                                 or [(claim.get('trace') or {}).get('relationship_type') or ''])
+                  and not ({'change', 'comparison'}
+                           & set((claim.get('trace') or {}).get('relationship_types')
+                                 or [(claim.get('trace') or {}).get('relationship_type') or '']))]
+        if not changes or not levels:
+            continue
+        merged_into = {}
+        for level in levels:
+            level_record = _record_for_claim(level, records_by_id)
+            containing = [change for change in changes
+                          if _evidence_contains(_record_for_claim(change, records_by_id),
+                                                level_record)]
+            if len(containing) == 1:
+                merged_into.setdefault(containing[0]['claim_id'], []).append(level)
+            elif len(containing) > 1:
+                stats['ambiguous'] += 1
+            else:
+                stats['independent'] += 1
+        for change_id, level_claims in merged_into.items():
+            change = by_id.get(change_id)
+            if not change:
+                continue
+            combined = _merge_group([change] + level_claims)
+            combined['trace']['endpoint_level_merged'] = True
+            replace[change_id] = combined
+            for level in level_claims:
+                remove.add(level['claim_id'])
+                duplicates.append({
+                    'claim_id': level['claim_id'],
+                    'duplicate_of': change['claim_id'],
+                    'merged_into': change['claim_id'],
+                    'reason': 'endpoint_level_of_change',
+                    'relationship_id': (level.get('trace') or {}).get('relationship_id') or '',
+                    'n4_record_id': (level.get('trace') or {}).get('n4_record_id') or '',
+                    'direction': (level.get('trace') or {}).get('direction') or 'unknown',
+                })
+                stats['merged'] += 1
+    result = []
+    for claim in merged:
+        if claim['claim_id'] in remove:
+            continue
+        result.append(replace.get(claim['claim_id'], claim))
+    return result, duplicates, stats
+
+
 def _critical(deviations):
     return [deviation for deviation in deviations
             if deviation.get('reason') in CRITICAL_DEVIATIONS]
@@ -454,6 +550,11 @@ def assemble(document, n1, n2, n3, n4):
         claims.append(claim)
     raw_assembled_claims = len(claims)
     claims, duplicates, merge_conflicts = _merge_claims(claims)
+    records_by_id = {record['record_id']: record
+                     for record in n4.get('normalized_records') or []}
+    claims, endpoint_duplicates, endpoint_stats = _merge_endpoint_levels(
+        claims, records_by_id)
+    duplicates.extend(endpoint_duplicates)
     merged_ids = {}
     for claim in claims:
         for old_claim_id in claim['trace'].get('merged_claim_ids') or [claim['claim_id']]:
@@ -509,6 +610,9 @@ def assemble(document, n1, n2, n3, n4):
         'claims_rejected': len(rejected),
         'duplicate_claims': len(duplicates),
         'duplicate_groups': len({item['merged_into'] for item in duplicates}),
+        'endpoint_level_merged': endpoint_stats['merged'],
+        'endpoint_level_independent': endpoint_stats['independent'],
+        'endpoint_level_ambiguous': endpoint_stats['ambiguous'],
         'direction_conflicts': len(merge_conflicts),
         'disposition_counts': disposition_counts,
         'coverage_complete': (len(dispositions) == len(candidates)
