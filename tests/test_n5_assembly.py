@@ -126,6 +126,31 @@ class AcceptedClaimTests(unittest.TestCase):
                              'non_claim' if candidate['candidate_type'] == 'identifier'
                              else 'context_only')
 
+    def test_one_candidate_with_two_relationships_makes_two_distinct_claims(self):
+        document, n1 = setup('Revenue was $105.6 billion in 2026.')
+        money, period = find(n1, 'currency'), find(n1, 'period')
+        n2 = n2_output(document, [interp(money),
+                                  interp(period, 'context_only', subject='', predicate='',
+                                         kind='unknown')])
+        change = relationship(document, n1, [money], 'change',
+                              periods=[period['candidate_id']])
+        level = relationship(document, n1, [money], 'level',
+                             periods=[period['candidate_id']], suffix='_level')
+        n3 = n3_output(document, [change, level])
+        n4 = n4_normalization.normalize(document, n1, n2, n3)
+        n5 = n5_assembly.assemble(document, n1, n2, n3, n4)
+        self.assertEqual(len(n5['claims']), 2)
+        self.assertEqual({claim['value_num'] for claim in n5['claims']}, {105.6})
+        self.assertEqual({claim['trace']['relationship_type'] for claim in n5['claims']},
+                         {'change', 'level'})
+        self.assertEqual(len({claim['trace']['relationship_id'] for claim in n5['claims']}), 2)
+        self.assertEqual(len({claim['trace']['n4_record_id'] for claim in n5['claims']}), 2)
+        for claim in n5['claims']:
+            self.assertIn(claim['trace']['evidence_field'], ('body',))
+            self.assertIsNotNone(claim['trace']['evidence_start'])
+        self.assertEqual(n5['coverage_statistics']['accepted_candidates'], 1)
+        self.assertEqual(n5['coverage_statistics']['assembled_claims'], 2)
+
     def test_missing_period_is_not_invented(self):
         document, n1, n2, n3, n4 = build('Revenue was $5 billion.', relation_type='change')
         n5 = n5_assembly.assemble(document, n1, n2, n3, n4)

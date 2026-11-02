@@ -109,6 +109,25 @@ class CoverageTests(unittest.TestCase):
         self.assertTrue(record['duplicate_candidate_ids'])
         self.assertEqual(result['status'], 'partial')
 
+    def test_batch_metrics_are_recorded(self):
+        document, n1 = setup()
+
+        def respond(payload):
+            base = default_respond(payload)
+            base.update(seconds=1.5, input_chars=123, output_chars=45,
+                        usage={'prompt_tokens': 80, 'completion_tokens': 20},
+                        parse_retry=False)
+            return base
+
+        result = n2_semantic.run(document, n1, Runner(respond), MODEL)
+        batch = result['batches'][0]
+        self.assertEqual(batch['seconds'], 1.5)
+        self.assertEqual(batch['input_chars'], 123)
+        self.assertEqual(batch['output_chars'], 45)
+        self.assertEqual(batch['prompt_tokens'], 80)
+        self.assertEqual(batch['completion_tokens'], 20)
+        self.assertEqual(batch['candidate_count'], len(batch['candidate_ids']))
+
     def test_empty_candidates_do_not_call_the_model(self):
         document, _n1 = setup()
         n1 = dict(_n1, candidates=[])

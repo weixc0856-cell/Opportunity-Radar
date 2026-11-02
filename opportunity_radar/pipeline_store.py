@@ -101,6 +101,56 @@ class PipelineStore:
             inserted = cursor.rowcount > 0
         return inserted, output_hash
 
+    def find_latest(self, article_id, node_name, node_version, input_hash):
+        """The newest usable result for this exact input, across retries/parameter variants.
+
+        Failed attempts stay in history but are skipped; a later retry therefore becomes
+        discoverable without deleting the failure. This is the resume path for N2/N3/N4/N5.
+        """
+        unusable = {'failed', 'invalid_output', 'model_unavailable', 'timeout', 'schema_error'}
+        with self.connect() as conn:
+            rows = conn.execute(
+                'SELECT output_json FROM node_runs WHERE article_id=? AND node_name=? '
+                'AND node_version=? AND input_hash=? AND execution_status=? '
+                'ORDER BY executed_at DESC',
+                (article_id, node_name, node_version, input_hash, 'ok')
+            ).fetchall()
+        for row in rows:
+            try:
+                output = json.loads(row['output_json'])
+            except (TypeError, ValueError):
+                continue
+            if output.get('status') not in unusable:
+                return output
+        return None
+
+    def find_latest_document(self, article_id, node_name, node_version, document_id):
+        """Newest usable result for the same N0 document, even when the input hash differs.
+
+        document_id is sha256(n0 version + content hash), so a match proves the text is the
+        same. This is the fallback for a metrics-only code change: the semantic output is
+        still valid and the successful run must not be thrown away or overwritten.
+        """
+        if not document_id:
+            return None
+        unusable = {'failed', 'invalid_output', 'model_unavailable', 'timeout', 'schema_error'}
+        with self.connect() as conn:
+            rows = conn.execute(
+                'SELECT output_json FROM node_runs WHERE article_id=? AND node_name=? '
+                'AND node_version=? AND execution_status=? ORDER BY executed_at DESC',
+                (article_id, node_name, node_version, 'ok')
+            ).fetchall()
+        for row in rows:
+            try:
+                output = json.loads(row['output_json'])
+            except (TypeError, ValueError):
+                continue
+            if output.get('document_id') != document_id:
+                continue
+            if output.get('status') not in unusable:
+                return output
+        return None
+
     def runs(self, article_id=None):
         """Every recorded run, newest first, without the possibly large output payload."""
         query = ('SELECT article_id, document_id, content_hash, node_name, node_version, '

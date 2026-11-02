@@ -36,10 +36,11 @@ def _node_params(node, max_tokens):
             'response_format': 'json_schema'}
 
 
-def _find(store, article_id, node, version, input_hash, params):
+def _find(store, article_id, node, version, input_hash, params=None, document_id=''):
     if store is None:
         return None
-    return store.find(article_id, node, version, input_hash, params)
+    return (store.find_latest(article_id, node, version, input_hash)
+            or store.find_latest_document(article_id, node, version, document_id))
 
 
 def _record(store, article_id, document, node, version, input_hash, output, params, tools):
@@ -83,6 +84,12 @@ def summarise(records, seconds):
         'n5': {
             'articles': len(n5_records),
             'claims': sum(len(output.get('claims') or []) for output in n5_records),
+            'accepted_candidates': sum(output.get('coverage_statistics', {})
+                                       .get('accepted_candidates', 0)
+                                       for output in n5_records),
+            'assembled_claims': sum(output.get('coverage_statistics', {})
+                                    .get('assembled_claims', 0)
+                                    for output in n5_records),
             'claim_values': sum(output.get('coverage_statistics', {}).get('claim_value_total', 0)
                                 for output in n5_records),
             'dispositions': n5_dispositions,
@@ -123,6 +130,8 @@ def render(summary):
         f"| 文章 | {n5['articles']} |",
         f"| claim_value | {n5['claim_values']} |",
         f"| 合格影子 Claim | {n5['claims']} |",
+        f"| 已接受候选 / 组装 Claim | {n5['accepted_candidates']} / "
+        f"{n5['assembled_claims']} |",
         f"| 覆盖完整 | {n5['coverage_complete']} |",
         f"| 契约校验通过 | {n5['contract_valid']} |",
         f"| 缓存复用 | {n5['reused']} |",
@@ -186,7 +195,8 @@ def main(argv=None):
                 n2_model = semantic_common.model_metadata(settings, args.n2_tokens, True)
                 n2 = _find(store, article.article_id, 'N2', n2_semantic.NODE_VERSION,
                            n2_semantic.input_hash(document, n1, n2_model),
-                           _node_params('N2', args.n2_tokens))
+                           _node_params('N2', args.n2_tokens),
+                           document.get('document_id'))
                 if n2 is None:
                     record['missing'] = 'n2'
                     record['error'] = 'N2 result not found in the store'
@@ -198,7 +208,8 @@ def main(argv=None):
                 n3_model = semantic_common.model_metadata(settings, args.n3_tokens, True)
                 n3 = _find(store, article.article_id, 'N3', n3_relationships.NODE_VERSION,
                            n3_relationships.input_hash(document, n1, n2, n3_model),
-                           _node_params('N3', args.n3_tokens))
+                           _node_params('N3', args.n3_tokens),
+                           document.get('document_id'))
                 if n3 is None:
                     record['missing'] = 'n3'
                     record['error'] = 'N3 result not found in the store'
@@ -215,20 +226,27 @@ def main(argv=None):
                     n4_hash = n4_normalization.input_hash(document, n1, n2, n3)
                     n4 = None if args.no_reuse else _find(
                         store, article.article_id, 'N4', n4_normalization.NODE_VERSION,
-                        n4_hash, {'node': 'N4'})
+                        n4_hash, {'node': 'N4'}, document.get('document_id'))
+                    if n4 is not None and n4.get('input_hash') != n4_hash:
+                        n4 = None
                     if n4 is not None:
                         record['n4_reused'] = True
                     else:
                         n4 = n4_normalization.normalize(document, n1, n2, n3)
                         record['n4_reused'] = False
+                        n4_params = {'node': 'N4'}
+                        if n4.get('status') not in ('success', 'partial'):
+                            n4_params = dict(n4_params, failed_status=n4.get('status'))
+                        elif args.no_reuse:
+                            n4_params = dict(n4_params, retry=True)
                         _record(store, article.article_id, document, 'N4',
                                 n4_normalization.NODE_VERSION, n4_hash, n4,
-                                {'node': 'N4'}, {'units_version': n4_normalization.UNITS_VERSION})
+                                n4_params, {'units_version': n4_normalization.UNITS_VERSION})
                     record['n4'] = n4
                 elif args.nodes == 'n5':
                     n4_hash = n4_normalization.input_hash(document, n1, n2, n3)
                     n4 = _find(store, article.article_id, 'N4', n4_normalization.NODE_VERSION,
-                               n4_hash, {'node': 'N4'})
+                               n4_hash, {'node': 'N4'}, document.get('document_id'))
                     if n4 is None:
                         record['missing'] = 'n4'
                         record['error'] = 'N4 result not found in the store'
@@ -242,15 +260,22 @@ def main(argv=None):
                     n5_hash = n5_assembly.input_hash(document, n1, n2, n3, n4)
                     n5 = None if args.no_reuse else _find(
                         store, article.article_id, 'N5', n5_assembly.NODE_VERSION,
-                        n5_hash, {'node': 'N5'})
+                        n5_hash, {'node': 'N5'}, document.get('document_id'))
+                    if n5 is not None and n5.get('input_hash') != n5_hash:
+                        n5 = None
                     if n5 is not None:
                         record['n5_reused'] = True
                     else:
                         n5 = n5_assembly.assemble(document, n1, n2, n3, n4)
                         record['n5_reused'] = False
+                        n5_params = {'node': 'N5'}
+                        if n5.get('status') not in ('success', 'partial', 'blocked'):
+                            n5_params = dict(n5_params, failed_status=n5.get('status'))
+                        elif args.no_reuse:
+                            n5_params = dict(n5_params, retry=True)
                         _record(store, article.article_id, document, 'N5',
                                 n5_assembly.NODE_VERSION, n5_hash, n5,
-                                {'node': 'N5'},
+                                n5_params,
                                 {'contract_version': n5_assembly.CONTRACT_VERSION,
                                  'contract_hash': n5_assembly.CONTRACT_HASH})
                     record['n5'] = n5

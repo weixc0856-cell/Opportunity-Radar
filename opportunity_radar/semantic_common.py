@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 
 from . import schema
 from .analyzer import (CONNECT_REFUSED, CONNECT_RESET, ModelCallError, TIMEOUT,
@@ -104,24 +105,49 @@ class JsonRunner:
     def run(self, payload):
         messages = [{'role': 'system', 'content': self.system},
                     {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]
+        input_chars = len(messages[1]['content'])
         last_raw, error = '', ''
+        total_seconds = 0.0
+        usage = {}
+        attempts_metrics = []
         for attempt in range(1, self.retries + 2):
             self.calls += 1
+            started = time.time()
+            detail = {}
             try:
-                raw = self.client.complete(messages, max_tokens=self.max_tokens,
-                                           temperature=0.0,
-                                           response_format=self.response_format)
+                if hasattr(self.client, 'complete_detailed'):
+                    raw, detail = self.client.complete_detailed(
+                        messages, max_tokens=self.max_tokens, temperature=0.0,
+                        response_format=self.response_format)
+                    seconds = detail.get('seconds', time.time() - started)
+                    usage = detail.get('usage') or {}
+                else:
+                    raw = self.client.complete(messages, max_tokens=self.max_tokens,
+                                               temperature=0.0,
+                                               response_format=self.response_format)
+                    seconds = time.time() - started
             except ModelCallError as exc:
                 self.failures += 1
+                total_seconds += time.time() - started
                 return {'status': failure_status(exc),
                         'error': f'{exc.cause}: {exc.detail}'[:300],
-                        'attempts': attempt, 'raw': ''}
+                        'attempts': attempt, 'raw': '',
+                        'seconds': round(total_seconds, 2), 'input_chars': input_chars,
+                        'output_chars': 0, 'usage': usage,
+                        'attempts_metrics': attempts_metrics}
+            total_seconds += float(seconds)
+            attempts_metrics.append({'attempt': attempt, 'seconds': round(float(seconds), 2),
+                                     'output_chars': len(raw), 'usage': usage})
             last_raw = raw
             try:
                 parsed = schema._load_object(raw)
                 if not isinstance(parsed, dict):
                     raise ValueError('top-level JSON is not an object')
-                return {'status': 'ok', 'parsed': parsed, 'raw': raw, 'attempts': attempt}
+                return {'status': 'ok', 'parsed': parsed, 'raw': raw, 'attempts': attempt,
+                        'seconds': round(total_seconds, 2), 'input_chars': input_chars,
+                        'output_chars': len(raw), 'usage': usage,
+                        'parse_retry': attempt > 1, 'attempts_metrics': attempts_metrics,
+                        'timings': detail.get('timings') or {}}
             except (ValueError, json.JSONDecodeError) as exc:
                 error = f'{type(exc).__name__}: {exc}'[:300]
                 messages = [messages[0], {
@@ -132,7 +158,9 @@ class JsonRunner:
                 }]
         self.failures += 1
         return {'status': INVALID_OUTPUT, 'error': error, 'attempts': self.retries + 1,
-                'raw': last_raw}
+                'raw': last_raw, 'seconds': round(total_seconds, 2),
+                'input_chars': input_chars, 'output_chars': len(last_raw), 'usage': usage,
+                'parse_retry': True, 'attempts_metrics': attempts_metrics}
 
 
 def locate_quote(document, sentence_ids, quote):
