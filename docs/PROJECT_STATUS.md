@@ -1,7 +1,7 @@
 # 项目状态（2026-11-03）
 
 当前分支 `main`；Batch 16 已合并（`d48d872`），第七至十六批均已进入 `main`。
-测试：本地 **973 项通过**（含 Source Pilot 测试）；本次未复核干净检出。
+测试：本地 **984 项通过**（含 Source Pilot 测试）；本次未复核干净检出。
 
 ## 当前阶段冻结（2026-11-02）
 
@@ -44,6 +44,8 @@ N0–N5 影子 Claim 生成路线已完成阶段性验收并冻结，基线为 B
 | P0 Batch 6 | 迁移安全与事件证据表达：显式 `db-migrate`、审计样本分层、`EVIDENCE_BACKED`/`NO_EVIDENCE`/`INSUFFICIENT_EVIDENCE` | 已实现；普通 CLI 不再隐式迁移；显式迁移在副本完成 v5→v8；审计 10 条完整链路 + 各类缺失样本；47 个无 Evidence 事件在日报中显示“无证据”；生产库未改 |
 | P0 Batch 7 | 下游输出证据边界：文本/HTML/邮件/JSON 一致表达 Event/Claim/Source 状态；Opportunity 缺失记录 | 已实现；验证副本 70 EVIDENCE_BACKED / 47 NO_EVIDENCE；220 条 Claim 全为 skeleton/unverified；无独立 Opportunity 实体；文本、HTML、邮件共用状态行，JSON 保留原始状态；生产库未改 |
 | P0 Batch 8 | 输出安全降级与 Text/HTML 一致性：`event_context` 状态、HTML 渲染 v5 facts/inferences | 已实现；事件上下文区分 AVAILABLE/NOT_FOUND/UNAVAILABLE/READ_FAILED/SCHEMA_UNSUPPORTED；文章证据等级不升级为事件状态；HTML 补齐 v5 内容；审计 117 篇有 Event / 21 篇无 Event；生产库未改 |
+| P0 Batch 9 | Opportunity 数据模型设计与现有数据映射审计 | 仅设计，未实现；65 个 B 种子，42 个可挂 Evidence，23 个无 Evidence 线索，0 个自动验证机会；推荐轻量四表模型；无表、无迁移、生产库未改 |
+| P0 Batch 10 | Opportunity 最小数据模型：schema v9 四表、最小数据访问、append-only trigger、只读 audit | 已实现；隔离副本 v5→v9；Opportunity 0 行；未从 B 候选自动生成；生产库未迁移 |
 
 ## 数据库现状
 
@@ -54,6 +56,8 @@ N0–N5 影子 Claim 生成路线已完成阶段性验收并冻结，基线为 B
 | P0 Batch 3 验证副本（Batch 1+2 副本 + candidates） | 25 | 7 | `data/archive/p0-batch3-validation-2026-11-03/opportunity_radar.sqlite3`；117 events / 117 articles；`event_candidate` 1 条（weak、same_source_family）；`reprint_candidate` 0；`source_family_count` 11；独立佐证事件 0；未知独立性事件 42；SHA-256 `c10aaa86…d7a3` |
 | P0 Batch 5 验证副本（Batch 1–4 修正后） | 26 | 8 | `data/archive/p0-batch5-validation-2026-11-03/opportunity_radar.sqlite3`；138/138 articles 绑定 `source_id`；24 entities（company 10 / organization 3 / government 3 / location 8）；mentions 52 行 / 60 次；有定位 52/52；有 Evidence 30；`entity_relations` 0（`PUBLISHED_BY` 不生成）；`event_candidate` 1 条；SHA-256 `5bbf3781…3d10` |
 | P0 Batch 6 迁移验证副本（生产 v5 显式迁移） | 26 | 8 | `data/archive/p0-batch6-migration-validation-2026-11-03/opportunity_radar.sqlite3`；138/138 source_id；220/220 skeleton period 修正；24 entities；mentions 52/60，有定位 52/52；`entity_relations` 0；event_candidate 1；审计 PARTIAL（70 EVIDENCE_BACKED / 47 NO_EVIDENCE；15 declared；21 未分析文章）；SHA-256 `ca370add…5a6f` |
+| P0 Batch 10 验证副本（v8→v9） | 30 | 9 | `data/archive/p0-batch10-validation-2026-11-03/opportunity_radar.sqlite3`；articles 138 / events 117 / claims 220 保持不变；opportunities 0 / links 0 / hypotheses 0 / revisions 0；审计 Opportunity 空表通过；SHA-256 `30409f1c…5f7e` |
+| P0 Batch 10 v5→v9 迁移验证（仅 schema） | 30 | 9 | `data/archive/p0-batch10-v5-to-v9-validation/opportunity_radar.sqlite3`；articles 138 / events 117 保持不变；opportunities 0；迁移前备份 `pre-v9-backup.sqlite3`；SHA-256 `937e0db3…cd6b` |
 | `data/ingest/opportunity_radar_ingest.sqlite3` | 18 | 3 | sec_facts 2,719 / eia_observations 34 / evidences 2,753 / claims 2,753 |
 
 生产最近一次运行 run 16（2026-11-03 08:30 本地）为 `analysis_failed` / `HOLD`，覆盖率 0.0，失败原因 `circuit_open` 10、`timeout` 3，未发送邮件；这是本批次之前的调度运行故障；P0 Batch 1/Batch 2/Batch 3/Batch 4/Batch 5 均未修改生产库。
@@ -79,6 +83,7 @@ independent_primary 19。
 - **输出证据边界**：文本、HTML 和邮件共用 `event_summary_lines`；`NO_EVIDENCE` 显示“仅线索，不作为已核实事实”，`EVIDENCE_BACKED` 也注明“不等于主张已核验”。归档 JSON 保留原始 `event.evidence_status` 和 Claim `verification_state`。当前没有独立 Opportunity 表；B 通道是文章级候选。
 - **Event 上下文降级**：`cli.attach_event_context` 为每个 item 记录 `AVAILABLE` / `NOT_FOUND` / `UNAVAILABLE` / `READ_FAILED` / `SCHEMA_UNSUPPORTED`。上下文缺失时保留文章证据等级，并在文本/HTML 明确写“不是事件级核验结论”；不把缺失映射成 `NO_EVIDENCE` 或 `EVIDENCE_BACKED`。归档 JSON 保存 `event_context`。
 - **Text/HTML 一致性**：HTML 与文本都渲染 v5 facts、inferences、gaps、actions；事件证据状态行共用 `event_summary_lines`。HTML 只是排版和密度不同，不再静默丢失事实或推断。
+- **Opportunity 模型（schema + 最小数据访问）**：见 `docs/OPPORTUNITY_MODEL.md`。schema v9 已包含 `opportunities` / `opportunity_links` / `opportunity_hypotheses` / `opportunity_revisions`；`opportunity.py` 提供创建、查询、link、hypothesis、revision、history 和一致性检查。当前 Opportunity 行数为 0，未从 B 候选自动生成；Claim verified 不等于 Opportunity validated。
 - **主张核验（离线）**：`verify` 模块对主张与证据做确定性对照，产出 verified / rejected /
   unverifiable 与冲突记录，并提供 `--audit`（检查执行情况）与 `--conflicts`（冲突报告）。
   尚未接入生产库、日报或门禁。
@@ -114,12 +119,13 @@ independent_primary 19。
    Claim 表、`verify.py`、日报或门禁。v7 切换判定仍为 **NOT READY**。N2/N3 语义准确率仅 10 篇
    人工参考，不外推；程序只记录缺失、不补造。
 7. **R3–R6 未开始**：编辑优先级、周报月报、经济数据引擎、回测。
-8. **生产迁移与历史修正未执行**：P0 Batch 1/5 的 `source_id` 回填与 feed alias、P0 Batch 2 的 `period` 修正、P0 Batch 3 的事件候选写入、P0 Batch 4 的 schema v8 实体列/关系表迁移和 P0 Batch 5 的审计均只在生产副本完成；需批准后先备份再对生产库执行。
+8. **生产迁移与历史修正未执行**：P0 Batch 1/5 的 `source_id` 回填与 feed alias、P0 Batch 2 的 `period` 修正、P0 Batch 3 的事件候选写入、P0 Batch 4/10 的 schema v9 实体/机会表迁移和 P0 Batch 5 的审计均只在生产副本完成；需批准后先备份再对生产库执行。
 9. **事件聚合真实样本不足**：当前 117 个事件对应 117 篇文章，没有多文章事件；Batch 3 只得到 1 个同来源族弱候选，强候选/转载候选/跨来源族独立佐证均为 0。真实聚合能力标记为 PARTIAL，合成测试通过不等于真实数据已验证。
 10. **实体层只验证了组织/政府/地点**：Batch 5 验证副本得到 52 条 mention、24 个正文实体；PRODUCT/TECHNOLOGY/PERSON 没有自动抽取；APPLICANT/PETITIONER/REGULATED_BY 真实数据为 0，只有合成测试覆盖。`AFFECTED_BY` 和 `RELATED_TO` 按边界不自动生成。`source_name` 是 feed 标签，未生成 `PUBLISHED_BY`。实体数量增长不等于关系质量已验证。
 11. **事件证据覆盖仍不完整**：验证副本 117 个事件中 70 个 `EVIDENCE_BACKED`、47 个 `NO_EVIDENCE`、0 个 `INSUFFICIENT_EVIDENCE`；21 篇文章未分析。无 Evidence 事件保留但不作为已核实事实。来源谱系 15 条全部 `declared`，没有 `verified`；不能声称独立来源已核验。
 12. **没有独立 Opportunity 实体**：B 通道“值得验证的商业机会”是按文章分析和评分路由的候选，不存储在独立 Opportunity 表，也不具备事件/Claim 级事实依据结构。当前只能保证它不把无证据事件或未核验 Claim 显示为已核实事实，不能声称已有完整的商业机会事实模型。
 13. **Event 上下文状态不持久化**：`AVAILABLE/NOT_FOUND/UNAVAILABLE/READ_FAILED/SCHEMA_UNSUPPORTED` 是运行时 item 状态，不存在数据库表中；审计只能统计 Event 成员关系，无法从数据库重建具体读取失败。Event 上下文读取失败时，输出明确降级，不伪装成无证据。
+14. **Opportunity 只有 schema/数据访问，没有机会数据**：v9 四表已实现，但 Opportunity 行数为 0；没有自动发现、自动归并、自动评分或商业验证，也没有从 B 通道 65 个分析自动创建机会。B 通道仍是文章级种子；现有数据中 0 个可自动验证为 Opportunity。
 
 ## 边界
 

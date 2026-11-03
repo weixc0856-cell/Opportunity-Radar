@@ -173,8 +173,10 @@ rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 �
 `advance_estimate` 等修订状态与年度区间（`1997-2024`），并把模型的原始表达保留在
 `unit_raw` / `period_raw` / `revision_raw` 里。**核验尚未在生产库运行，也未接入日报或门禁**（待 G6）。
 
-- 七张表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`、
+- 七张核心表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`、
   `claim_corrections`；实体层：`entities`、`entity_aliases`、`entity_mentions`、`entity_relations`、`event_links`。
+- 机会层（schema v9，当前空表）：`opportunities`、`opportunity_links`、`opportunity_hypotheses`、
+  `opportunity_revisions`。最小数据访问在 `opportunity.py`，append-only revision；尚未接入日报、评分或自动发现。
 - 标识符是内容哈希，重复运行不产生第二条记录。
 - 事件合并只有两条规则：规范化 URL 相同，或规范化标题相同且在 72 小时窗口内。其余是不同事件；
   共享关键词不合并。
@@ -261,6 +263,7 @@ rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 �
 | `docs/OPERATIONS.md` | 运行、排障、任务计划与归档 |
 | `docs/EVIDENCE_AND_LANES.md` | 证据等级与通道评分规则 |
 | `docs/SOURCE_POLICY.md` | 来源准入、治理字段、正文获取 |
+| `docs/OPPORTUNITY_MODEL.md` | Opportunity 数据模型设计与现有数据映射（仅设计，未实现） |
 | `docs/FULL_TEXT_FETCH.md`、`docs/PAGE_MONITORING.md`、`docs/DATASETS.md` | 三个子系统：正文抓取、页面监测、数据集登记 |
 | `docs/E2E_VERIFICATION.md` | 端到端与故障注入 |
 | `docs/SECURITY_PRIVACY_SOURCE_COMPLIANCE.md` | 安全、隐私与合规清单 |

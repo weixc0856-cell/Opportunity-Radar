@@ -14,7 +14,9 @@ REQUIRED_COLUMNS = {
     'articles': {'source_id'},
     'entity_mentions': {'article_key', 'evidence_id', 'claim_id', 'locator_json', 'occurrence_count'},
 }
-REQUIRED_TABLES = {'entity_mentions', 'claim_corrections', 'entity_relations'}
+REQUIRED_TABLES = {'entity_mentions', 'claim_corrections', 'entity_relations',
+                   'opportunities', 'opportunity_links', 'opportunity_hypotheses',
+                   'opportunity_revisions'}
 
 
 def _connect(path):

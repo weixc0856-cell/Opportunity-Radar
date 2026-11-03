@@ -12,7 +12,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from . import lineage, linking, source_policy
+from . import lineage, linking, opportunity_audit, source_policy
 from .unified import evidence_integrity_problems
 
 
@@ -507,13 +507,15 @@ def audit(db_path, source_registry=None, lineage_registry=None):
         claim_checks = _evidence_claim_checks(conn)
         event_checks, event_info = _event_checks(conn)
         entity_checks, entity_info, limitations = _entity_checks(conn)
+        opportunity_checks, opportunity_info = opportunity_audit.check(conn)
         claim_info = {}
         if _table(conn, 'claims'):
             claim_info['claims_by_state'] = {row[0]: row[1] for row in conn.execute(
                 'SELECT verification_state, COUNT(*) FROM claims GROUP BY verification_state ORDER BY 2 DESC')}
             claim_info['claims_by_extractor'] = {row[0]: row[1] for row in conn.execute(
                 'SELECT extractor, COUNT(*) FROM claims GROUP BY extractor ORDER BY 2 DESC')}
-        checks = source_checks + claim_checks + event_checks + entity_checks
+        checks = (source_checks + claim_checks + event_checks + entity_checks
+                  + opportunity_checks)
         errors = [item for item in checks if item['severity'] == 'ERROR' and item['count'] > 0]
         warnings = [item for item in checks if item['severity'] == 'WARN' and item['count'] > 0]
         status = 'FAIL' if errors else ('PARTIAL' if warnings else 'PASS')
@@ -526,11 +528,7 @@ def audit(db_path, source_registry=None, lineage_registry=None):
             'event': event_info,
             'entity': entity_info,
             'claim': claim_info,
-            'opportunity': {
-                'entity': 'absent',
-                'fact_basis': 'no separate Opportunity table; B-lane cards are article-level analyses',
-                'note': 'event evidence status is attached to item.event; no Opportunity row stores facts',
-            },
+            'opportunity': opportunity_info,
             'outputs': {
                 'text': 'digest.render_digest + event_summary_lines',
                 'html': 'render_html uses the same event_summary_lines',

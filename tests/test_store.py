@@ -63,7 +63,7 @@ class Tests(unittest.TestCase):
     cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
     version=c.execute('PRAGMA user_version').fetchone()[0]
    self.assertTrue({'fetched_at','content_source','retrieval_status','source_id'} <= cols)
-   self.assertEqual(version, 8)
+   self.assertEqual(version, 9)
  def test_run_records_report_and_delivery_is_idempotent(self):
   with tempfile.TemporaryDirectory() as d:
    s=Store(str(Path(d)/'run.sqlite3')); rid=s.start_run()

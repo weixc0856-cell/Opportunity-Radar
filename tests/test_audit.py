@@ -40,7 +40,8 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(self.check(result, 'source.article_missing_source_id')['count'], 1)
         self.assertIn(result['status'], ('PARTIAL', 'FAIL'))
-        self.assertEqual(result['opportunity']['entity'], 'absent')
+        self.assertTrue(result['opportunity']['tables_present'])
+        self.assertEqual(result['opportunity']['opportunities'], 0)
         self.assertIn('event_context', result['event'])
         self.assertEqual(result['event']['event_context']['runtime_statuses_persisted'], False)
 

@@ -44,9 +44,9 @@
     keeps the raw `event.evidence_status` and `event_context`. When event context is missing,
     `cli.attach_event_context` records `NOT_FOUND`, `UNAVAILABLE`, `READ_FAILED` or
     `SCHEMA_UNSUPPORTED`; the article evidence state is retained but never promoted to an event
-    state. HTML and text both render v5 facts, inferences, gaps and actions. There is no separate
-    Opportunity table: the B lane is an article-level candidate, not a stored, verified opportunity.
-    `cli.attach_event_context` attaches R1 context to the digest, and the
+    state. HTML and text both render v5 facts, inferences, gaps and actions. The B lane remains an
+    article-level candidate; it is not automatically a stored Opportunity. `cli.attach_event_context`
+    attaches R1 context to the digest, and the
     digest prints one card per event instead of one per article.
 12. SEC/EIA keep their own database and entry points (`ingest/`); they share the R1 table contract but
     never write to the RSS database.
@@ -71,6 +71,12 @@
     only the evidence endpoint of a change back into that change, and assembles shadow claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file, reuses the
     latest usable result for the same input, and records per-batch tokens/timing. Nothing here
     writes to the production database or changes the analyzer.
+14. Schema v9 adds the four Opportunity tables: `opportunities`, `opportunity_links`,
+    `opportunity_hypotheses`, `opportunity_revisions`. `opportunity.py` is the minimal data access
+    layer: stable canonical IDs, polymorphic link target checks, append-only hypotheses/revisions,
+    and revision triggers that reject UPDATE/DELETE. `opportunity_audit.py` checks targets,
+    ownership, projection and validation gates. No Opportunity rows are auto-created and nothing
+    here changes B-lane classification, scoring, digest, reports or gate decisions.
 
 The order in step 6 matters. Evidence is established before scoring, so a lane can never
 promote an item whose quotes could not be located in the text we actually received. See

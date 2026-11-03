@@ -32,7 +32,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from . import claim_contract
 
 RULES_VERSION = 'r1-v1'
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 TITLE_WINDOW_HOURS = 72
 
 
@@ -196,6 +196,92 @@ CREATE TABLE IF NOT EXISTS event_corrections(
   actor TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS opportunities(
+  opportunity_id TEXT PRIMARY KEY,
+  canonical_key TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL DEFAULT '',
+  problem_statement TEXT NOT NULL DEFAULT '',
+  buyer_scope TEXT NOT NULL DEFAULT '',
+  opportunity_kind TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL DEFAULT 'active' CHECK(stage IN ('active','monitoring','closed')),
+  validation_state TEXT NOT NULL DEFAULT 'signal_detected'
+    CHECK(validation_state IN ('signal_detected','insufficient_evidence','problem_supported',
+                               'buyer_identified','payment_verified','opportunity_candidate',
+                               'contradicted')),
+  confidence REAL NOT NULL DEFAULT 0 CHECK(confidence>=0 AND confidence<=1),
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  current_revision_id TEXT NOT NULL DEFAULT '',
+  rules_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opportunity_links(
+  link_id TEXT PRIMARY KEY,
+  opportunity_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK(target_kind IN ('article','event','evidence','claim','entity')),
+  target_key TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('seed_signal','fact_basis','unverified_claim','inference',
+                                    'counter_evidence','payment_evidence','buyer','subject',
+                                    'competitor','affected','context')),
+  support TEXT NOT NULL DEFAULT 'context' CHECK(support IN ('direct','indirect','contradicts','context')),
+  locator_json TEXT NOT NULL DEFAULT '{}',
+  method TEXT NOT NULL DEFAULT 'manual',
+  confidence REAL NOT NULL DEFAULT 0 CHECK(confidence>=0 AND confidence<=1),
+  observed_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(opportunity_id,target_kind,target_key,role)
+);
+CREATE TABLE IF NOT EXISTS opportunity_hypotheses(
+  hypothesis_id TEXT PRIMARY KEY,
+  opportunity_id TEXT NOT NULL,
+  hypothesis_kind TEXT NOT NULL,
+  statement TEXT NOT NULL,
+  basis_hash TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0 CHECK(confidence>=0 AND confidence<=1),
+  status TEXT NOT NULL DEFAULT 'proposed'
+    CHECK(status IN ('proposed','supported','contradicted','retired')),
+  supersedes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE(opportunity_id,hypothesis_kind,statement,basis_hash,supersedes)
+);
+CREATE TABLE IF NOT EXISTS opportunity_revisions(
+  revision_id TEXT PRIMARY KEY,
+  opportunity_id TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK(stage IN ('active','monitoring','closed')),
+  validation_state TEXT NOT NULL CHECK(validation_state IN ('signal_detected','insufficient_evidence',
+    'problem_supported','buyer_identified','payment_verified','opportunity_candidate','contradicted')),
+  hypothesis_id TEXT NOT NULL DEFAULT '',
+  basis_hash TEXT NOT NULL,
+  link_ids_json TEXT NOT NULL DEFAULT '[]',
+  rules_version TEXT NOT NULL,
+  actor TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE(opportunity_id,stage,validation_state,hypothesis_id,basis_hash,rules_version)
+);
+CREATE INDEX IF NOT EXISTS idx_opportunity_links_opportunity ON opportunity_links(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_opportunity_links_target ON opportunity_links(target_kind,target_key);
+CREATE INDEX IF NOT EXISTS idx_opportunity_hypotheses_opportunity ON opportunity_hypotheses(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_opportunity_revisions_opportunity ON opportunity_revisions(opportunity_id,created_at);
+CREATE TRIGGER IF NOT EXISTS opportunity_links_no_update
+BEFORE UPDATE ON opportunity_links
+BEGIN SELECT RAISE(ABORT, 'opportunity_links are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS opportunity_links_no_delete
+BEFORE DELETE ON opportunity_links
+BEGIN SELECT RAISE(ABORT, 'opportunity_links are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS opportunity_hypotheses_no_update
+BEFORE UPDATE ON opportunity_hypotheses
+BEGIN SELECT RAISE(ABORT, 'opportunity_hypotheses are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS opportunity_hypotheses_no_delete
+BEFORE DELETE ON opportunity_hypotheses
+BEGIN SELECT RAISE(ABORT, 'opportunity_hypotheses are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS opportunity_revisions_no_update
+BEFORE UPDATE ON opportunity_revisions
+BEGIN SELECT RAISE(ABORT, 'opportunity_revisions are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS opportunity_revisions_no_delete
+BEFORE DELETE ON opportunity_revisions
+BEGIN SELECT RAISE(ABORT, 'opportunity_revisions are append-only'); END;
 CREATE INDEX IF NOT EXISTS idx_claims_article ON claims(article_key);
 CREATE INDEX IF NOT EXISTS idx_claim_corrections_claim ON claim_corrections(claim_id);
 CREATE INDEX IF NOT EXISTS idx_claims_event ON claims(event_id);
