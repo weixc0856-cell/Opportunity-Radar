@@ -24,6 +24,7 @@ import tempfile
 from pathlib import Path
 
 from . import audit, lineage, linking, migration, unified
+from . import opportunity_candidates, opportunity_review
 from .source_binding import backfill_article_sources
 from .store import Store
 
@@ -141,11 +142,11 @@ def backfill_eia(db_path):
 
 
 def seed_entities_and_mentions(db_path):
-    """Register the companies the structured sources already cover, then find them in text.
+    """Register the companies the structured sources already cover, then extract mentions.
 
     The company list is the same static registry the SEC connector uses; nothing is derived
-    from filing values. Mentions are searched in what the pipeline actually holds: the title
-    and every fact and inference the analysis produced.
+    from filing values. Mentions are produced by the single extract path so the daily run
+    and the manual command cannot create two parallel mention rows for the same text.
     """
     from .ingest.labels import COMPANIES   # static registry, not ingest data
 
@@ -153,20 +154,10 @@ def seed_entities_and_mentions(db_path):
     companies = [{'cik': cik, 'name': info['name'], 'ticker': info['ticker']}
                  for cik, info in COMPANIES.items()]
     created = linking.seed_entities(store, companies)
-
-    analyser = Store(db_path, migrate=False)
-    texts = []
-    with analyser.connect() as conn:
-        articles = [(r['article_key'], r['title'] or '') for r in conn.execute('SELECT article_key, title FROM articles')]
-    for article_key, title in articles:
-        parts = [title]
-        for section in analyser.analysis_sections(article_key):
-            if section.get('kind') in ('fact', 'inference') and section.get('text'):
-                parts.append(section['text'])
-        texts.append((article_key, ' | '.join(parts)))
-    indexed = linking.index_mentions(store, texts)
-    return {'entities_created': created, 'mentions_created': indexed['mentions'],
-            'articles_with_mentions': indexed['articles']}
+    report = linking.extract_entities(store)
+    return {'entities_created': created,
+            'mentions_created': report['mention_rows_written'],
+            'articles_with_mentions': report['articles_scanned']}
 
 
 def apply_lineage(db_path, registry_path=None):
@@ -364,6 +355,12 @@ def report(db_path):
     return out
 
 
+def _write_b_candidates(db_path, output_dir, fmt):
+    report = opportunity_candidates.build_candidates(db_path)
+    report['outputs'] = opportunity_candidates.write_outputs(report, output_dir, fmt)
+    return report
+
+
 def _run_on_copy(db_path, action):
     """`--dry-run` must not write to the real database, so it writes to a copy."""
     source = Path(db_path)
@@ -378,13 +375,23 @@ def _run_on_copy(db_path, action):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _split_review_argv(argv):
+    raw = list(sys.argv[1:] if argv is None else argv)
+    action = ''
+    if raw and raw[0] == 'b-review':
+        if len(raw) > 1 and raw[1] in ('validate', 'preview', 'apply'):
+            action = raw[1]
+            raw = [raw[0]] + raw[2:]
+    return raw, action
+
+
 def main(argv=None):
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except (AttributeError, ValueError):
         pass
     parser = argparse.ArgumentParser(description='Backfill the unified Event/Evidence/Claim model')
-    parser.add_argument('what', choices=('db-migrate', 'rss', 'sec', 'eia', 'entities', 'extract', 'links', 'candidates', 'lineage', 'sources', 'periods', 'audit', 'report'))
+    parser.add_argument('what', choices=('db-migrate', 'rss', 'sec', 'eia', 'entities', 'extract', 'links', 'candidates', 'b-candidates', 'b-review', 'lineage', 'sources', 'periods', 'audit', 'report', 'economic', 'quality', 'backtest', 'benchmark', 'opportunities', 'weekly', 'monthly'))
     parser.add_argument('--db', help='database to read and write')
     parser.add_argument('--ingest-db', help='SEC/EIA database (links)')
     parser.add_argument('--registry', help='source lineage registry (lineage)')
@@ -394,7 +401,16 @@ def main(argv=None):
     parser.add_argument('--apply', action='store_true', help='apply a change (periods repair or db migration)')
     parser.add_argument('--backup', help='backup file required by db-migrate --apply')
     parser.add_argument('--json', action='store_true')
+    parser.add_argument('--output-dir', default='reports', help='b-candidates report directory')
+    parser.add_argument('--format', choices=('both', 'json', 'markdown'), default='both',
+                        help='b-candidates output format')
+    parser.add_argument('--manifest', help='b-review manifest path')
+    parser.add_argument('--report', default='reports/opportunity-candidates.json',
+                        help='candidate report used by b-review')
+    parser.add_argument('--result-dir', default='reports', help='b-review apply result directory')
+    argv, review_action = _split_review_argv(argv)
     args = parser.parse_args(argv)
+    args.review_action = review_action
 
     if args.what == 'db-migrate':
         db = _rss_db(args.db)
@@ -450,6 +466,63 @@ def main(argv=None):
     elif args.what == 'candidates':
         db = _rss_db(args.db)
         action = lambda path: build_event_candidates(path)
+    elif args.what == 'b-candidates':
+        db = _rss_db(args.db)
+        action = lambda path: _write_b_candidates(path, args.output_dir, args.format)
+    elif args.what == 'economic':
+        from . import economic
+        db = _rss_db(args.db)
+        action = lambda path: economic.refresh()
+    elif args.what == 'quality':
+        from . import quality
+        db = _rss_db(args.db)
+        action = lambda path: quality.record(path)
+    elif args.what == 'backtest':
+        from . import quality
+        db = _rss_db(args.db)
+        action = lambda path: quality.backtest(path, days=30)
+    elif args.what == 'benchmark':
+        from . import quality
+        db = _rss_db(args.db)
+        action = lambda path: quality.benchmark()
+    elif args.what == 'opportunities':
+        from . import opportunity_discovery
+        db = _rss_db(args.db)
+        action = lambda path: opportunity_discovery.discover(path)
+    elif args.what in ('weekly', 'monthly'):
+        from . import period_report
+        db = _rss_db(args.db)
+        action = lambda path: period_report.write(period_report.build(path, args.what),
+                                                  args.output_dir)
+    elif args.what == 'b-review':
+        db = _rss_db(args.db)
+        if not args.manifest:
+            print('b-review requires --manifest', file=sys.stderr)
+            return 2
+        if args.review_action not in ('validate', 'preview', 'apply'):
+            print('b-review requires validate, preview or apply', file=sys.stderr)
+            return 2
+        if args.review_action == 'apply' and not args.apply:
+            print('b-review apply requires --apply', file=sys.stderr)
+            return 2
+        try:
+            if args.review_action == 'validate':
+                result = opportunity_review.validate_manifest(args.manifest, db, args.report)
+            elif args.review_action == 'preview':
+                result = opportunity_review.preview_manifest(args.manifest, db, args.report)
+            else:
+                result = opportunity_review.apply_manifest(args.manifest, db, args.report,
+                                                            apply=True,
+                                                            result_dir=args.result_dir)
+        except (opportunity_review.ManifestError, unified.SchemaVersionError) as exc:
+            print(f'b-review stopped: {exc}', file=sys.stderr)
+            return 2
+        result['database'] = db
+        result['review_action'] = args.review_action
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        if args.review_action == 'apply':
+            return 0 if result.get('ok') else 2
+        return 0 if result.get('valid') else 2
     else:
         db = _rss_db(args.db)
         action = report

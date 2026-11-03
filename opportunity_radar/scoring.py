@@ -238,6 +238,7 @@ def score_article(a,weights=None,article=None,classification=None,thresholds=Non
     if total<=0:
         raise ValueError('Scoring weights must have a positive total')
     raw=round(sum(parts[k]*max(0,float(w.get(k,0))) for k in parts)/total*20)
+    uncapped_raw=raw
     capped=not rank_at_least(rank,promote)
     if capped: raw=min(raw,th['priority']-1)
     if rank=='E0': raw=min(raw,th['watch']-1)
@@ -254,7 +255,23 @@ def score_article(a,weights=None,article=None,classification=None,thresholds=Non
     elif claimed in {'none','unknown'} and any(REVENUE_EVIDENCE.search(q) for q in quotes): risk='revenue_evidence_contradicts_claim'
     else: risk=''
     integrity='no_evidence' if not items else ('ok' if all(e['field']!='unlocated' for e in items) else 'unlocated_quotes')
-    return {'score':score,'components':parts,'status':status,'filter_reason':reason,'lane':lane,
+    # R3: separate the importance signal from the evidence strength and the editorial
+    # order. The public `score` is unchanged; these are explicit, explainable fields.
+    evidence_score={'E2':100,'E1':60,'E0':20}.get(rank,0)
+    if integrity=='unlocated_quotes': evidence_score=min(evidence_score,20)
+    if capped and uncapped_raw>=th['priority'] and rank!='E0':
+        editorial_priority='P1'; priority_basis='priority signal capped below the lane evidence gate'
+    elif status=='priority':
+        editorial_priority='P0'; priority_basis='priority band and lane evidence gate met'
+    elif status=='watch':
+        editorial_priority='P2'; priority_basis='watch band'
+    elif rank!='E0' and integrity=='ok':
+        editorial_priority='P3'; priority_basis='filtered by score but evidenced'
+    else:
+        editorial_priority='REJECT'; priority_basis=reason or 'insufficient evidence'
+    return {'score':score,'signal_score':min(100,uncapped_raw),'evidence_score':evidence_score,
+            'editorial_priority':editorial_priority,'priority_basis':priority_basis,
+            'components':parts,'status':status,'filter_reason':reason,'lane':lane,
             'evidence_level':LEGACY_LEVEL[state],'evidence_state':state,'evidence_rank':rank,
             'evidence_basis':basis,'content_basis_estimate':estimate,'classification':cls,'risk_flag':risk,
             'evidence':items,'evidence_integrity':integrity,

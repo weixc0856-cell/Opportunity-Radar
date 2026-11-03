@@ -83,7 +83,7 @@ def _finding(x):
     return (f'<div style="padding:18px 0;border-bottom:1px solid #ececec;page-break-inside:avoid;">'
             f'<div style="font-size:15px;font-weight:700;color:{INK};line-height:1.5;">'
             f'<span style="color:{ORANGE};margin-right:6px;">{_e(x.get("score",0))}</span>{_e(x.get("title",""))}</div>'
-            f'<div style="font-size:11px;color:{MUTED};margin:5px 0 8px;">初筛得分 {_e(x.get("score",0))}/100 · {_e(_evidence_text(x))} · 通道内相对优先级，不代表成功概率或市场规模</div>'
+            f'<div style="font-size:11px;color:{MUTED};margin:5px 0 8px;">初筛得分 {_e(x.get("score",0))}/100 · 编辑优先级 {_e(x.get("editorial_priority","—"))} · 信号 {_e(x.get("signal_score",x.get("score",0)))}/100 · 证据 {_e(x.get("evidence_score",0))}/100 · {_e(_evidence_text(x))} · 通道内相对优先级，不代表成功概率或市场规模</div>'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;border-collapse:collapse;">{rows}</table></div>')
 
 def _brief(items):

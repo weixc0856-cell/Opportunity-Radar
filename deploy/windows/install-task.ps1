@@ -1,4 +1,4 @@
-param([string]$TaskName="OpportunityRadarDaily",[string]$ProjectPath=(Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,[string]$StartTime="08:00")
+﻿param([string]$TaskName="OpportunityRadarDaily",[string]$ProjectPath=(Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,[string]$StartTime="08:00")
 $ErrorActionPreference="Stop"
 $scriptPath=Join-Path $ProjectPath "deploy\windows\run-digest.ps1"
 $action=New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
@@ -8,7 +8,7 @@ $trigger=New-ScheduledTaskTrigger -Daily -At $StartTime
 # starting (scheduler-run.log has "start-model" but no "CLI exit code"). A daily digest that
 # silently does not run is worse than one that runs late. Logon type is deliberately left at
 # Interactive: changing it changes the security context, which is a separate decision.
-$settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 60) `
+$settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 180) `
   -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "Run Opportunity Radar daily digest" -Force | Out-Null
 # Read the task back: the registered object, not this script, is the source of truth.

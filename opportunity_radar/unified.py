@@ -981,16 +981,17 @@ class UnifiedStore:
                     inserted['claims_rejected'] += 1
                     reject('claim', claim_id, problems, cl.get('article_key'))
                     continue
-                cur = conn.execute('INSERT OR IGNORE INTO claims(claim_id,article_key,event_id,fact_ordinal,subject,predicate,'
-                                   'value_num,value_text,unit,currency,region,period,comparison,denominator,seasonality,'
-                                   'revision,kind,quote,locator_json,verification_state,extractor,rules_version,created_at) '
-                                   'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                                   tuple(cl[k] for k in ('claim_id', 'article_key', 'event_id', 'fact_ordinal',
-                                                         'subject', 'predicate', 'value_num', 'value_text', 'unit',
-                                                         'currency', 'region', 'period', 'comparison', 'denominator',
-                                                         'seasonality', 'revision', 'kind', 'quote', 'locator_json',
-                                                         'verification_state', 'extractor', 'rules_version',
-                                                         'created_at')))
+                columns = ('claim_id', 'article_key', 'event_id', 'fact_ordinal', 'subject',
+                           'predicate', 'value_num', 'value_text', 'unit', 'unit_raw', 'scale',
+                           'currency', 'region', 'period', 'period_raw', 'comparison',
+                           'denominator', 'seasonality', 'revision', 'revision_raw', 'kind',
+                           'quote', 'locator_json', 'verification_state', 'extractor',
+                           'rules_version', 'created_at')
+                values = tuple(cl.get(name, None if name == 'value_num' else '')
+                               for name in columns)
+                cur = conn.execute(
+                    'INSERT OR IGNORE INTO claims(%s) VALUES(%s)'
+                    % (','.join(columns), ','.join('?' * len(columns))), values)
                 inserted['claims'] += cur.rowcount
                 for link in links_by_claim[claim_id]:
                     cur = conn.execute('INSERT OR IGNORE INTO claim_evidence(claim_id,evidence_id,support,independence,locator_json,created_at) '

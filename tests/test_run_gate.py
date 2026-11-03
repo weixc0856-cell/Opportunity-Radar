@@ -78,8 +78,12 @@ class GateRunTests(unittest.TestCase):
         self.settings = settings_for(self.tmp)
         Store(str(self.tmp / 'run.sqlite3'))
         logging.disable(logging.CRITICAL)   # the run logs its own failures on purpose
+        # The unified pipeline is an external-model step; the gate tests isolate it.
+        self._pipeline_env = mock.patch.dict(os.environ, {'OR_PIPELINE_ENABLED': '0'})
+        self._pipeline_env.start()
 
     def tearDown(self):
+        self._pipeline_env.stop()
         logging.disable(logging.NOTSET)
 
     def _run(self, behaviour, articles=None, ensure=(True, 'ok'), health=True, argv=None):

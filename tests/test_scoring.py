@@ -260,3 +260,26 @@ class ActionabilityIsolationTests(unittest.TestCase):
   a=score_article(base,article=art('Acme record demand',LONG),source=src())
   b=score_article(with_act,article=art('Acme record demand',LONG),source=src())
   self.assertEqual((a['score'],a['lane'],a['status']),(b['score'],b['lane'],b['status']))
+
+
+class EditorialPriorityTests(unittest.TestCase):
+ def test_priority_fields_are_explicit_and_ordered(self):
+  a=dict(STRONG); a['evidence_quotes']=['owners paid for a budget tool']
+  article=art('Weekly roster','owners paid for a budget tool. '+LONG)
+  source=src(source_type='user_forum',content_access_level='full_text')
+  high=score_article(dict(a),article=article,source=source,lane='B',
+                     thresholds={'priority':10,'watch':5})
+  self.assertEqual(high['editorial_priority'],'P0')
+  self.assertIn('signal_score',high); self.assertIn('evidence_score',high)
+  self.assertEqual(high['evidence_score'],100)
+  low=score_article(dict(a),article=art('Acme record demand','no quotes here. '+LONG),
+                    source=src(),lane='A')
+  self.assertEqual(low['editorial_priority'],'REJECT')
+  self.assertEqual(low['evidence_score'],20)
+ def test_a_priority_item_capped_by_evidence_is_p1_not_p0(self):
+  a=dict(STRONG); a['evidence_quotes']=['record demand']
+  article=art('Acme weekly update','record demand. '+LONG)
+  s=score_article(dict(a),article=article,source=src(content_access_level='auto'),lane='C',
+                  thresholds={'priority':10,'watch':5})
+  self.assertTrue(s['capped_by_evidence'])
+  self.assertEqual(s['editorial_priority'],'P1')

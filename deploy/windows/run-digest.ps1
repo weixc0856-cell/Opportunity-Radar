@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Continue"
+﻿$ErrorActionPreference = "Continue"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $ProjectRoot
 $logDir = Join-Path $ProjectRoot "reports"
@@ -48,8 +48,8 @@ try {
   $cliOut = Join-Path $logDir "cli-run.log"
   $cliErr = Join-Path $logDir "cli-run.err.log"
   $venv = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-  if (Test-Path $venv) { $cliExe = $venv; $cliArgs = @('-m','opportunity_radar.cli') }
-  else { $cliExe = 'py'; $cliArgs = @('-3','-m','opportunity_radar.cli') }
+  if (Test-Path $venv) { $cliExe = $venv; $cliArgs = @('-m','opportunity_radar.cli','--period','auto') }
+  else { $cliExe = 'py'; $cliArgs = @('-3','-m','opportunity_radar.cli','--period','auto') }
   Write-RunLog "CLI starting: $cliExe $($cliArgs -join ' ')"
   $proc = Start-Process -FilePath $cliExe -ArgumentList $cliArgs -NoNewWindow -PassThru -RedirectStandardOutput $cliOut -RedirectStandardError $cliErr
   # PowerShell 5.1 leaves ExitCode empty on a -PassThru object started without -Wait. Turning on
@@ -76,6 +76,25 @@ catch {
   if ($stepExit -ne 0) { $code = $stepExit } else { $code = 1 }
 }
 finally {
+  # Single-port policy: stop only the llama-server this run started, so 8080 is free again
+  # for the project. The pid file is written by start-model.ps1 and its process carries
+  # --api-key; a project server does not, so it can never be killed by this cleanup.
+  $modelPidFile = Join-Path $ProjectRoot "reports\llama-server.pid"
+  if (Test-Path $modelPidFile) {
+    $modelPid = 0
+    [void][int]::TryParse(((Get-Content $modelPidFile -Raw).Trim()), [ref]$modelPid)
+    if ($modelPid -gt 0) {
+      $modelProc = Get-Process -Id $modelPid -ErrorAction SilentlyContinue
+      if ($modelProc -and $modelProc.ProcessName -eq 'llama-server') {
+        $modelCmd = [string](Get-CimInstance Win32_Process -Filter "ProcessId=$modelPid" -ErrorAction SilentlyContinue).CommandLine
+        if ($modelCmd -like '*--api-key*') {
+          Stop-Process -Id $modelPid -Force -ErrorAction SilentlyContinue
+          Write-RunLog "stopped llama-server pid $modelPid; port released"
+        }
+      }
+    }
+    Remove-Item -Path $modelPidFile -Force -ErrorAction SilentlyContinue
+  }
   Write-RunLog ("Finished Opportunity Radar with exit code {0} (run {1}, phase {2})" -f $code, $runId, $phase)
   Remove-Item -Path $markerPath -ErrorAction SilentlyContinue
 }

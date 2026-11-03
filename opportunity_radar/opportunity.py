@@ -1,6 +1,6 @@
 """Minimal, append-only Opportunity data access.
 
-This module implements the four-table model designed in docs/OPPORTUNITY_MODEL.md:
+This module implements the four-table model designed in docs/ARCHITECTURE.md:
 opportunities, opportunity_links, opportunity_hypotheses and opportunity_revisions.
 It does not discover opportunities, score them, or call a model.
 """
@@ -187,8 +187,8 @@ def _links_for(conn, opportunity_id, link_ids=None):
     return rows
 
 
-def add_link(store, opportunity_id, target_kind, target_key, role, support='context',
-             locator=None, method='manual', confidence=0.0, observed_at=None):
+def _insert_link(conn, opportunity_id, target_kind, target_key, role, support='context',
+                 locator=None, method='manual', confidence=0.0, observed_at=None):
     if target_kind not in TARGET_KINDS:
         raise OpportunityError(f'unknown target_kind: {target_kind!r}')
     if role not in ROLES:
@@ -203,33 +203,40 @@ def add_link(store, opportunity_id, target_kind, target_key, role, support='cont
         raise OpportunityError('payment_evidence requires support=direct')
     confidence = _confidence(confidence)
     locator_json = json.dumps(_locator(locator), ensure_ascii=False, sort_keys=True)
+    if not conn.execute('SELECT 1 FROM opportunities WHERE opportunity_id=?',
+                        (opportunity_id,)).fetchone():
+        raise OpportunityError(f'no such Opportunity: {opportunity_id}')
+    problem = _target_problem(conn, target_kind, target_key)
+    if problem:
+        raise OpportunityError(problem)
+    if role == 'fact_basis' and target_kind == 'claim':
+        if not _valid_fact_link(conn, {'target_kind': target_kind, 'target_key': target_key}):
+            raise OpportunityError('fact_basis claim must be verified')
+    link_id = link_id_for(opportunity_id, target_kind, target_key, role)
+    existing = conn.execute('SELECT * FROM opportunity_links WHERE link_id=?',
+                            (link_id,)).fetchone()
+    if existing:
+        same = (existing['support'] == support and existing['locator_json'] == locator_json
+                and existing['method'] == method and float(existing['confidence']) == confidence
+                and (existing['observed_at'] or '') == str(observed_at or ''))
+        if same:
+            return link_id, False
+        raise OpportunityError('link exists with a different payload')
+    conn.execute(
+        'INSERT INTO opportunity_links(link_id,opportunity_id,target_kind,target_key,role,'
+        'support,locator_json,method,confidence,observed_at,created_at) '
+        'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        (link_id, opportunity_id, target_kind, target_key, role, support, locator_json,
+         method, confidence, observed_at, now()))
+    return link_id, True
+
+
+def add_link(store, opportunity_id, target_kind, target_key, role, support='context',
+             locator=None, method='manual', confidence=0.0, observed_at=None):
     with store.connect() as conn:
-        if not conn.execute('SELECT 1 FROM opportunities WHERE opportunity_id=?',
-                            (opportunity_id,)).fetchone():
-            raise OpportunityError(f'no such Opportunity: {opportunity_id}')
-        problem = _target_problem(conn, target_kind, target_key)
-        if problem:
-            raise OpportunityError(problem)
-        if role == 'fact_basis' and target_kind == 'claim':
-            if not _valid_fact_link(conn, {'target_kind': target_kind, 'target_key': target_key}):
-                raise OpportunityError('fact_basis claim must be verified')
-        link_id = link_id_for(opportunity_id, target_kind, target_key, role)
-        existing = conn.execute('SELECT * FROM opportunity_links WHERE link_id=?',
-                                (link_id,)).fetchone()
-        if existing:
-            same = (existing['support'] == support and existing['locator_json'] == locator_json
-                    and existing['method'] == method and float(existing['confidence']) == confidence
-                    and (existing['observed_at'] or '') == str(observed_at or ''))
-            if same:
-                return False
-            raise OpportunityError('link exists with a different payload')
-        conn.execute(
-            'INSERT INTO opportunity_links(link_id,opportunity_id,target_kind,target_key,role,'
-            'support,locator_json,method,confidence,observed_at,created_at) '
-            'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-            (link_id, opportunity_id, target_kind, target_key, role, support, locator_json,
-             method, confidence, observed_at, now()))
-        return True
+        _, created = _insert_link(conn, opportunity_id, target_kind, target_key, role,
+                                  support, locator, method, confidence, observed_at)
+        return created
 
 
 def create_hypothesis(store, opportunity_id, hypothesis_kind, statement, basis_hash,
@@ -310,6 +317,67 @@ def create_opportunity(store, *, subject, problem_statement, buyer_scope='',
             'UPDATE opportunities SET current_revision_id=?,updated_at=? WHERE opportunity_id=?',
             (revision_id, stamp, opportunity_id))
     return {'opportunity_id': opportunity_id, 'created': True, 'current_revision_id': revision_id}
+
+
+def create_opportunity_with_links(store, *, subject, problem_statement, buyer_scope='',
+                                  opportunity_kind='demand', title='', stage='active',
+                                  validation_state='signal_detected', confidence=0.0,
+                                  rules_version='opp-v1', actor='system', note='', links=()):
+    """Create an Opportunity, its links and its first Revision in one transaction.
+
+    The caller supplies link specifications so a seed cannot be left behind without its
+    article/evidence links. An existing canonical key is returned untouched; this function
+    never appends to or merges an existing Opportunity.
+    """
+    if stage not in STAGES:
+        raise OpportunityError(f'unknown stage: {stage!r}')
+    if validation_state not in VALIDATION_STATES:
+        raise OpportunityError(f'unknown validation_state: {validation_state!r}')
+    confidence = _confidence(confidence)
+    canonical_key = canonical_key_for(subject, problem_statement, buyer_scope, opportunity_kind)
+    opportunity_id = opportunity_id_for(canonical_key)
+    with store.connect() as conn:
+        existing = conn.execute('SELECT * FROM opportunities WHERE canonical_key=?',
+                                (canonical_key,)).fetchone()
+        if existing:
+            return {'opportunity_id': existing['opportunity_id'], 'created': False,
+                    'current_revision_id': existing['current_revision_id']}
+        stamp = now()
+        conn.execute(
+            'INSERT INTO opportunities(opportunity_id,canonical_key,title,problem_statement,'
+            'buyer_scope,opportunity_kind,stage,validation_state,confidence,first_seen_at,'
+            'last_seen_at,current_revision_id,rules_version,created_at,updated_at) '
+            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (opportunity_id, canonical_key, str(title or problem_statement).strip(),
+             str(problem_statement).strip(), str(buyer_scope or '').strip(),
+             str(opportunity_kind).strip(), stage, validation_state, confidence, stamp, stamp,
+             '', rules_version, stamp, stamp))
+        link_ids = []
+        for spec in links:
+            link_id, created = _insert_link(
+                conn, opportunity_id, spec['target_kind'], spec['target_key'], spec['role'],
+                spec.get('support', 'context'), spec.get('locator'), spec.get('method', 'manual'),
+                spec.get('confidence', 0.0), spec.get('observed_at'))
+            if created:
+                link_ids.append(link_id)
+            elif link_id not in link_ids:
+                link_ids.append(link_id)
+        rows = _links_for(conn, opportunity_id, link_ids)
+        _validate_state(conn, validation_state, rows)
+        basis_hash = basis_hash_for(link_ids)
+        revision_id = revision_id_for(opportunity_id, stage, validation_state, '', basis_hash,
+                                       rules_version)
+        conn.execute(
+            'INSERT INTO opportunity_revisions(revision_id,opportunity_id,stage,validation_state,'
+            'hypothesis_id,basis_hash,link_ids_json,rules_version,actor,note,created_at) '
+            'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+            (revision_id, opportunity_id, stage, validation_state, '', basis_hash,
+             json.dumps(sorted(link_ids)), rules_version, actor, note, stamp))
+        conn.execute(
+            'UPDATE opportunities SET current_revision_id=?,updated_at=? WHERE opportunity_id=?',
+            (revision_id, stamp, opportunity_id))
+    return {'opportunity_id': opportunity_id, 'created': True, 'current_revision_id': revision_id,
+            'link_ids': sorted(link_ids), 'canonical_key': canonical_key}
 
 
 def append_revision(store, opportunity_id, *, stage, validation_state, hypothesis_id='',

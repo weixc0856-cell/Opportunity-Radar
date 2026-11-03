@@ -106,7 +106,11 @@ def evaluate(article,analysis,weights=None,thresholds=None,model='',source=None,
           'output_hash':hashlib.sha256(json.dumps(analysis,ensure_ascii=False,sort_keys=True).encode()).hexdigest()}
     return {'title':article.title,'url':article.url,'source_name':article.source_name,
             'published':getattr(article,'published',''),'analysis':analysis,
-            'score':sc['score'],'status':sc['status'],'filter_reason':sc['filter_reason'],
+            'score':sc['score'],'signal_score':sc.get('signal_score',sc['score']),
+            'evidence_score':sc.get('evidence_score',0),
+            'editorial_priority':sc.get('editorial_priority',''),
+            'priority_basis':sc.get('priority_basis',''),
+            'status':sc['status'],'filter_reason':sc['filter_reason'],
             'source_id':meta['source_id'],'lane':sc['lane'],'distribution':'included',
             'evidence_level':sc['evidence_level'],'evidence_state':sc['evidence_state'],
             'evidence_rank':sc['evidence_rank'],'evidence_basis':sc['evidence_basis'],
@@ -133,8 +137,10 @@ def _stats(items,fetched=0,new=0,queued=0,analyzed=0,failed=0,skipped=0,threshol
            deferred=0,unresolved_sources=0,source_match=None,not_attempted=0,publication_status=None,
            coverage=None,failed_causes=None,circuit_open=False):
     counts={s:sum(1 for x in items if x.get('status')==s) for s in ('priority','watch','filtered')}
+    priority_counts={p:sum(1 for x in items if x.get('editorial_priority')==p)
+                     for p in ('P0','P1','P2','P3','REJECT')}
     st={'fetched':fetched,'new':new,'updated':updated,'queued':queued,'duplicate_events':duplicate_events,'analyzed':analyzed,'failed':failed,'skipped':skipped,
-        'counts':counts,'rules_version':RULES_VERSION,'thresholds':thresholds or {},'weights':weights or {},
+        'counts':counts,'priority_counts':priority_counts,'rules_version':RULES_VERSION,'thresholds':thresholds or {},'weights':weights or {},
         'lane_weights':lane_weights or {},'lane_thresholds':lane_thresholds or {},'source_issues':source_issues or [],
         'deferred':deferred,'unresolved_sources':unresolved_sources,'source_match':source_match or {}}
     if publication_status is not None:
@@ -184,7 +190,7 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     txt=arch/f'{stamp}.txt'; html_path=arch/f'{stamp}.html'
     items_path=arch/f'{stamp}.items.json'; manifest_path=arch/f'{stamp}.manifest.json'
     _atomic_write(txt,text); _atomic_write(html_path,html)
-    payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','event_context','analysis','score','status','filter_reason',
+    payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','event_context','analysis','score','signal_score','evidence_score','editorial_priority','priority_basis','status','filter_reason',
                                              'source_id','intelligence_lines','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
                                              'classification','market_validation','risk_flag','verification_note',
                                              'evidence','evidence_integrity','components','meta','scoring')} for item in (items or [])]
@@ -399,6 +405,39 @@ def _render_only(store,s,cfg):
     subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html,archive=False)
     print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
 
+def _period_due(report_dir, prefix, days):
+    files = sorted(Path(report_dir).glob(f'{prefix}-*.txt'),
+                   key=lambda path: path.stat().st_mtime, reverse=True)
+    if not files:
+        return True
+    age = (__import__('time').time() - files[0].stat().st_mtime) / 86400.0
+    return age >= days
+
+
+def _write_period_report(settings, period):
+    from . import period_report
+    report = period_report.build(settings.db_path, period)
+    result = period_report.write(report, settings.report_dir)
+    logging.info('%s report written: %s', period, result['text'])
+    return {'period': period, 'text': result['text'], 'json': result['json'],
+            'events': report['event_count'], 'claims': report['claim_count'],
+            'opportunities': len(report['opportunities'])}
+
+
+def _maybe_period_reports(settings):
+    """Weekly on a 7-day cadence and monthly on a 30-day cadence, with catch-up.
+
+    The check is by the last written report, not by weekday, so a missed Monday does not
+    silently skip the week.
+    """
+    written = []
+    if _period_due(settings.report_dir, 'weekly', 6):
+        written.append(_write_period_report(settings, 'weekly'))
+    if _period_due(settings.report_dir, 'monthly', 29):
+        written.append(_write_period_report(settings, 'monthly'))
+    return written
+
+
 def main(argv=None):
     # A report can contain currency symbols or non-CJK characters. On Windows the
     # console defaults to a legacy code page, and echoing the report used to raise
@@ -408,7 +447,7 @@ def main(argv=None):
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except (AttributeError, ValueError):
         pass
-    p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); args=p.parse_args(argv)
+    p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); p.add_argument('--period',choices=('daily','weekly','monthly','auto'),default='daily'); args=p.parse_args(argv)
     s=Settings.from_env(); Path(s.log_path).parent.mkdir(parents=True,exist_ok=True)
     rotate_log(s.log_path)
     handlers=[logging.FileHandler(s.log_path,encoding='utf-8'),logging.StreamHandler(sys.stdout)]
@@ -417,6 +456,12 @@ def main(argv=None):
     Path(s.report_dir).mkdir(parents=True,exist_ok=True)
     cfg=load_scoring(); lanes_cfg=cfg.get('lanes'); lane_weights,lane_thresholds=lane_display_config(cfg)
     min_chars=(cfg.get('evidence') or {}).get('full_text_min_chars')
+    if args.period in ('weekly','monthly'):
+        if not Path(s.db_path).exists():
+            print(f'Database not found: {s.db_path}',file=sys.stderr); return 2
+        result=_write_period_report(s,args.period)
+        print(Path(result['text']).read_text(encoding='utf-8'))
+        return 0
     if args.sample:
         items=sample(); stats=_stats(items,fetched=len(items),new=len(items),queued=len(items),analyzed=len(items),
                                     lane_weights=lane_weights,lane_thresholds=lane_thresholds)
@@ -552,8 +597,25 @@ def main(argv=None):
                     consecutive_transport_failures=0
         caps=apply_source_caps(items,sources)
         attach_event_context(store, items, write=True)
+        # One production chain: the daily run now produces Evidence/Claim/Entity/
+        # Opportunity/quality after analysis instead of leaving them to manual CLIs.
+        try:
+            from . import pipeline as production_pipeline
+            analyzed_keys={Store.key(item.get('url','')) for item in items}
+            pipe=production_pipeline.run_after_analysis(
+                s.db_path, articles=articles, analyzed_keys=analyzed_keys, settings=s)
+        except Exception as exc:
+            logging.exception('Unified pipeline failed')
+            pipe={'status':'failed','steps':{},
+                  'blocking_failures':['pipeline'],
+                  'warnings':[],'error':f'{type(exc).__name__}: {exc}'}
+        if pipe.get('blocking_failures'):
+            logging.error('Unified pipeline blocking failures: %s',pipe['blocking_failures'])
+        # Re-read event profiles after the pipeline wrote claims/evidence for this run.
+        attach_event_context(store, items, write=True)
+        integrity_fault=bool(pipe.get('blocking_failures'))
         cov=publication.coverage(analyzed,queued)
-        pub=publication.decide(analyzed,queued,integrity_fault=False,
+        pub=publication.decide(analyzed,queued,integrity_fault=integrity_fault,
                                min_coverage=s.publish_min_coverage,hold_below=s.publish_hold_below)
         stats=_stats(items,fetched,new_count,queued,analyzed,errors,skipped,updated=updated_count,duplicate_events=duplicate_events,
                      lane_weights=lane_weights,lane_thresholds=lane_thresholds,source_issues=source_issues,
@@ -562,20 +624,26 @@ def main(argv=None):
                      failed_causes=dict(causes),circuit_open=circuit_open)
         attach_conflicts(store,stats)
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
+        stats['pipeline']=pipe
         if pages_fetched: stats['full_text_fetched']=pages_fetched
         if win_start or win_end:
             stats['sample_window']={'since':s.sample_since,'until':s.sample_until,
                                     'pool':len(raw),'in_window':len(in_window),'sampled':len(articles)}
         subject,body=render_digest(items,stats); html=render_html(items,stats)
+        if args.period=='auto' and not args.dry_run:
+            stats['period_reports']=_maybe_period_reports(s)
         store.update_run(rid,stage='rendering')
         archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid)
         out=Path(s.report_dir)/'latest-digest.txt'
         if args.dry_run:
             status=dry_run_status(analyzed,errors)
             if pub==publication.HOLD and status=='dry_run': status=hold_status(analyzed,errors+not_attempted)
+            if integrity_fault: status='failed'
             exit_code=0 if status=='dry_run' else 1
             message=('No email sent (dry run)' if status=='dry_run'
-                     else f'Dry run with {errors} failed and {not_attempted} unattempted article(s); no email sent')
+                     else (f'Dry run with {errors} failed and {not_attempted} unattempted article(s); no email sent'
+                           if not integrity_fault else
+                           'Dry run held: unified pipeline failure '+','.join(pipe.get('blocking_failures') or [])))
             store.finish_run(rid,status,fetched,analyzed,errors,message,archive_path,report_hash,exit_code=exit_code,
                              publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             print(body)
@@ -586,7 +654,9 @@ def main(argv=None):
         if pub==publication.HOLD:
             # The only place that may stop a subscription email. It must run before every
             # other send branch, including the duplicate and no-new-content paths.
-            reason=f'分析覆盖率 {cov:.0%} 低于 {s.publish_hold_below:.0%}'
+            reason=(f'生产管线失败（{",".join(pipe.get("blocking_failures") or [])}）'
+                    if integrity_fault else
+                    f'分析覆盖率 {cov:.0%} 低于 {s.publish_hold_below:.0%}')
             store.finish_run(rid,hold_status(analyzed,errors+not_attempted),fetched,analyzed,errors,
                              f'HOLD: {reason}; subscription email skipped',archive_path,report_hash,
                              exit_code=1,publication_status=publication.HOLD,coverage=cov,

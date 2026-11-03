@@ -285,12 +285,34 @@ def index_mentions(store, article_texts, target_kind='article'):
             if not hits:
                 continue
             touched += 1
+            # A mention must carry the same article/locator contract as the extract path.
+            # The title is the strongest locator we hold here; fall back to the supplied
+            # text only when the alias is not in the title, and say so in the field name.
+            try:
+                title_row = conn.execute('SELECT title FROM articles WHERE article_key=?',
+                                         (article_key,)).fetchone()
+            except sqlite3.OperationalError:
+                title_row = None
+            title_text = (title_row['title'] if title_row else '') or ''
             for entity_id, alias, matched, confidence in hits:
+                locator = {}
+                match = re.search(_word_pattern(matched), title_text, re.I)
+                if match:
+                    locator = {'field': 'title', 'start': match.start(),
+                               'length': match.end() - match.start()}
+                else:
+                    match = re.search(_word_pattern(matched), text or '', re.I)
+                    if match:
+                        locator = {'field': 'article_text', 'start': match.start(),
+                                   'length': match.end() - match.start()}
                 mention_id = stable_id('men-', entity_id, target_kind, article_key, 'name')
                 found += conn.execute(
                     'INSERT OR IGNORE INTO entity_mentions(mention_id,entity_id,target_kind,target_key,method,'
-                    'matched_text,confidence,created_at) VALUES(?,?,?,?,?,?,?,?)',
-                    (mention_id, entity_id, target_kind, article_key, 'name', matched, confidence, now())).rowcount
+                    'matched_text,confidence,created_at,article_key,locator_json,occurrence_count) '
+                    'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                    (mention_id, entity_id, target_kind, article_key, 'name', matched, confidence,
+                     now(), article_key if target_kind == 'article' else '',
+                     json.dumps(locator, ensure_ascii=False, sort_keys=True), 1)).rowcount
         return {'mentions': found, 'articles': touched}
 
 
@@ -645,6 +667,11 @@ def _extract_from_source(conn, report, alias_entries, ambiguous, target_kind, ta
 def _backfill_mention_locators(conn):
     """Give old article-level mentions a title locator when the raw text is still there."""
     updated = 0
+    # Rows written by the legacy index path predate the article_key column; the target
+    # key is the article key, so repair the binding before looking for a locator.
+    conn.execute(
+        "UPDATE entity_mentions SET article_key=target_key "
+        "WHERE target_kind='article' AND (article_key IS NULL OR article_key='')")
     rows = [dict(row) for row in conn.execute(
         "SELECT mention_id, article_key, matched_text FROM entity_mentions "
         "WHERE target_kind='article' AND article_key<>'' AND locator_json IN ('{}','')")]

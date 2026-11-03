@@ -45,14 +45,22 @@ def event_id_of(x):
     return str((x.get('event') or {}).get('event_id') or '')
 
 
+PRIORITY_RANK={'P0':0,'P1':1,'P2':2,'P3':3,'REJECT':4}
+
+
+def _order_key(item):
+    return (PRIORITY_RANK.get(item.get('editorial_priority') or '', 5),
+            -item.get('score', 0), item.get('title', ''))
+
+
 def group_by_event(items):
-    """One card per event. The highest-scoring article represents it; the rest are listed.
+    """One card per event. Editorial priority first, score second.
 
     Grouping happens across lanes on purpose: the same event filed once as economy and once
     as an opportunity is still one thing that happened, and printing it twice is how a
     reading list turns into a duplicate feed.
     """
-    ordered = sorted(items, key=lambda v: (v.get('score', 0), v.get('title', '')), reverse=True)
+    ordered = sorted(items, key=_order_key)
     reps, siblings = [], {}
     for item in ordered:
         event_id = event_id_of(item)
@@ -416,6 +424,10 @@ def _card(i,x):
     lines=['',f"{i}. [{x.get('score',0)}/100] {x.get('title','')}",
            f"   通道：{lane} · {LANE_LABEL[lane]}",
            f"   证据：{_evidence_text(x)} · 来源质量：{SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality',''))}"]
+    priority=x.get('editorial_priority')
+    if priority:
+        lines.append(f"   编辑优先级：{priority} · 信号 {x.get('signal_score',x.get('score',0))}/100"
+                     f" · 证据 {x.get('evidence_score',0)}/100（{x.get('priority_basis','')}）")
     if v5:
         lines.append(f"   排序分：{x.get('score',0)}/100（仅用于本期排序，不是结论）")
         lines+=_v5_sections(x, (x.get('event') or {}).get('evidence_status'))
@@ -464,6 +476,15 @@ def render_digest(items,stats,date_label=None):
                  else f"运行统计：获取 {fetched} | 新增 {new} | 内容更新 {stats.get('updated',0)} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped} | 重复事件 {stats.get('duplicate_events',0)}")
     disclosed=disclosure(stats)
     if disclosed: lines.append(f'运行完整性：{disclosed}')
+    pipeline=stats.get('pipeline')
+    if pipeline:
+        steps=pipeline.get('steps') or {}
+        ok=sum(1 for value in steps.values() if value.get('ok'))
+        lines.append(f"统一管线：{pipeline.get('status','')} · {ok}/{len(steps)} 步成功"
+                     + (f" · 阻断：{','.join(pipeline.get('blocking_failures') or [])}"
+                        if pipeline.get('blocking_failures') else '')
+                     + (f" · 警告：{','.join(pipeline.get('warnings') or [])}"
+                        if pipeline.get('warnings') else ''))
     window=stats.get('sample_window')
     if window:
         lines.append(f"样本窗口：{window.get('since') or '(无下界)'} 至 {window.get('until') or '(无上界)'} UTC"

@@ -542,7 +542,7 @@ def audit(db_path, source_registry=None, lineage_registry=None):
                 'SOURCE_FAMILY is represented by evidences.source_family; SYNDICATED_FROM only by a recorded syndication_group.',
                 'A mention is not AFFECTED_BY or a business relationship.',
                 'event_candidate rows are candidates; they do not merge events.',
-                'There is no separate Opportunity entity; B-lane output is a per-article candidate.',
+                'Opportunity tables exist in schema v9 but are not auto-created; B-lane output remains a per-article candidate.',
                 'Text, HTML and email share event_summary_lines; JSON stores the raw event evidence_status and event_context.',
                 'Event context runtime statuses (NOT_FOUND/UNAVAILABLE/READ_FAILED/SCHEMA_UNSUPPORTED) are not persisted in the database; audit can only count event membership.',
             ],
