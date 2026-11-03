@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 from . import claim_contract, units
-from .unified import UnifiedStore, now, stable_id
+from .unified import SchemaVersionError, UnifiedStore, now, stable_id
 
 # r2-v2: 'the quote has no comparable number' is unverifiable, not rejected. Rejection is
 # reserved for a comparable number that disagrees.
@@ -480,7 +480,11 @@ def main(argv=None):
     parser.add_argument('--limit-conflicts', type=int, default=20)
     args = parser.parse_args(argv)
     db = args.db or 'data/opportunity_radar.sqlite3'
-    store = UnifiedStore(db)
+    try:
+        store = UnifiedStore(db, migrate=False)
+    except SchemaVersionError as exc:
+        print(f'Database schema check failed: {exc}', file=sys.stderr)
+        return 2
     if args.conflicts:
         found = conflicts_report(store, limit=args.limit_conflicts)
         print(chr(10).join(conflict_lines(found, limit=args.limit_conflicts)) or '没有记录到冲突')

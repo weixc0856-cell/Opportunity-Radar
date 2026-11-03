@@ -22,7 +22,10 @@
     article publication date and `period_raw` is empty, clears it in an append-only
     `claim_corrections` log; every other case is reported as pending. Claim/evidence writes require
     a source id, a locator, and at least one valid evidence link; rejected records are counted and
-    named in the command report. `unified_main extract` reads stored titles, evidence quotes and claim
+    named in the command report. Business commands open the store with `migrate=False`: a database
+    below the code schema raises `SchemaVersionError` and points to `unified_main db-migrate`; only
+    that explicit command uses `--apply` (with a required backup) to migrate. `audit`, `report` and
+    `--render-only` stay read-only. `unified_main extract` reads stored titles, evidence quotes and claim
     text (never a new full-text fetch) and records deterministic entity mentions with category, raw
     text, article/evidence/claim key, locator, method and confidence. A source name is a
     FreshRSS/feed label (`INGESTED_FROM`), not a publisher; `PUBLISHED_BY` requires an explicit
@@ -35,7 +38,9 @@
     a signal beyond title similarity, title-only matches are at most weak, and no event membership is
     changed. `event_profile` reports articles, source ids, source families and independent source
     units separately; unknown families never count, and a recorded syndication group collapses its
-    members into one unit. `cli.attach_event_context` attaches R1 context to the digest, and the
+    members into one unit. Event profiles also expose `EVIDENCE_BACKED` / `NO_EVIDENCE` /
+    `INSUFFICIENT_EVIDENCE`; an event with no valid evidence remains visible but is not presented as
+    a verified fact. `cli.attach_event_context` attaches R1 context to the digest, and the
     digest prints one card per event instead of one per article.
 12. SEC/EIA keep their own database and entry points (`ingest/`); they share the R1 table contract but
     never write to the RSS database.

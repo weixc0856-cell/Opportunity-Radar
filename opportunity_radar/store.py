@@ -2,15 +2,24 @@ import hashlib, json, re, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
-from .unified import SCHEMA as UNIFIED_SCHEMA, SCHEMA_VERSION as UNIFIED_SCHEMA_VERSION
+from .unified import (SCHEMA as UNIFIED_SCHEMA, SCHEMA_VERSION as UNIFIED_SCHEMA_VERSION,
+                      SchemaVersionError, require_schema)
 
 def now(): return datetime.now(timezone.utc).isoformat()
 class Store:
-    def __init__(self,path,read_only=False):
+    def __init__(self,path,read_only=False,migrate=True):
         # read_only skips init(): a re-render must not migrate the schema or backfill rows.
         self.path=Path(path); self.read_only=read_only
         if not read_only:
-            self.path.parent.mkdir(parents=True,exist_ok=True); self.init()
+            self.path.parent.mkdir(parents=True,exist_ok=True)
+            if migrate:
+                self.init()
+            else:
+                if not self.path.exists():
+                    raise SchemaVersionError(
+                        f'database does not exist: {self.path}; run a digest or explicit migration')
+                with self.connect() as c:
+                    require_schema(c,str(self.path))
     @contextmanager
     def connect(self):
         # sqlite3's connection context manager commits but never closes, so open

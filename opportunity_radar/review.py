@@ -90,7 +90,7 @@ def main(argv=None):
     ap=sub.add_parser('label'); ap.add_argument('key'); ap.add_argument('label'); ap.add_argument('--note',default='')
     sub.add_parser('stats')
     args=p.parse_args(argv)
-    s=Settings.from_env(); store=Store(s.db_path)
+    s=Settings.from_env(); store=Store(s.db_path, migrate=False)
     if args.cmd=='list': return cmd_list(store,args.limit)
     if args.cmd=='label': return cmd_label(store,args.key,args.label,args.note)
     return cmd_stats(store)

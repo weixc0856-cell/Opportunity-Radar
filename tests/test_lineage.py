@@ -136,7 +136,7 @@ class CorroborationTests(unittest.TestCase):
         event = self.event_with(('k1', 'bbc-business'), ('k3', 'us-bea'))
         self.add('ev-1', 'k1', 'bbc-business', 'bbc', 'independent_secondary')
         self.add('ev-2', 'k3', 'us-bea', 'bea', 'independent_primary')
-        profile = linking.event_profile(self.uni, event)
+        profile = linking.event_profile(self.uni, event, verified_sources={'bbc-business', 'bbc-technology', 'us-bea'})
         self.assertEqual(profile['source_families'], ['bbc', 'bea'])
         self.assertEqual(profile['corroborating_units'], 2)
         self.assertEqual(profile['source_family_count'], 2)
@@ -148,7 +148,7 @@ class CorroborationTests(unittest.TestCase):
         event = self.event_with(('k1', 'bbc-business'), ('k2', 'bbc-technology'))
         self.add('ev-1', 'k1', 'bbc-business', 'bbc', 'independent_secondary')
         self.add('ev-2', 'k2', 'bbc-technology', 'bbc', 'independent_secondary')
-        profile = linking.event_profile(self.uni, event)
+        profile = linking.event_profile(self.uni, event, verified_sources={'bbc-business', 'bbc-technology'})
         self.assertEqual(profile['source_families'], ['bbc'])
         self.assertEqual(profile['evidences'], 2)
         self.assertEqual(profile['corroborating_units'], 1)
@@ -161,17 +161,33 @@ class CorroborationTests(unittest.TestCase):
         event = self.event_with(('k1', 'bbc-business'), ('k2', 'bbc-technology'))
         self.add('ev-1', 'k1', 'bbc-business', 'bbc', 'independent_secondary')
         self.add('ev-2', 'k2', 'bbc-technology', 'bbc', 'unknown')
-        profile = linking.event_profile(self.uni, event)
+        profile = linking.event_profile(self.uni, event, verified_sources={'bbc-business', 'bbc-technology'})
         self.assertEqual(profile['corroborating_units'], 1)
         self.assertEqual(profile['unknown_independence_evidence_count'], 1)
         self.assertEqual(profile['independence_status'], 'PARTIAL')
         self.assertFalse(profile['independent_corroboration'])
 
+    def test_event_evidence_status_names_missing_and_invalid_evidence(self):
+        event = self.event_with(('k1', 'bbc-business'))
+        profile = linking.event_profile(self.uni, event, verified_sources=set())
+        self.assertEqual(profile['evidence_status'], 'NO_EVIDENCE')
+        self.assertEqual(profile['valid_evidences'], 0)
+        with self.uni.connect() as conn:
+            conn.execute(
+                'INSERT INTO evidences(evidence_id,article_key,source_id,evidence_kind,quote,'
+                'locator_json,source_family,independence,observed_at,rules_version,created_at) '
+                'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                ('ev-invalid', 'k1', '', 'quote', 'q', '{"field":"summary","start":0,"length":1}',
+                 'bbc', 'unknown', None, 'r1-v1', 't'))
+        profile = linking.event_profile(self.uni, event, verified_sources=set())
+        self.assertEqual(profile['evidence_status'], 'INSUFFICIENT_EVIDENCE')
+        self.assertEqual(profile['valid_evidences'], 0)
+
     def test_a_shared_wire_copy_is_one_unit(self):
         event = self.event_with(('k1', 'bbc-business'), ('k3', 'us-bea'))
         self.add('ev-1', 'k1', 'bbc-business', 'bbc', 'independent_secondary', group='wire-1')
         self.add('ev-2', 'k3', 'us-bea', 'bea', 'independent_primary', group='wire-1')
-        profile = linking.event_profile(self.uni, event)
+        profile = linking.event_profile(self.uni, event, verified_sources={'bbc-business', 'bbc-technology', 'us-bea'})
         self.assertEqual(profile['syndication_groups'], ['wire-1'])
         self.assertEqual(profile['syndicated_article_count'], 2)
         self.assertEqual(profile['corroborating_units'], 1)

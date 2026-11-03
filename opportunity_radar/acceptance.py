@@ -74,7 +74,7 @@ def main(argv=None):
     results.append(run_check('model', model_check))
 
     def db_check():
-        store = Store(s.db_path); latest = store.latest_run()
+        store = Store(s.db_path, migrate=False); latest = store.latest_run()
         return True, f'ok; latest run {latest["run_id"] if latest else "none"}'
     results.append(run_check('sqlite', db_check))
 

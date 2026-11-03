@@ -15,6 +15,7 @@ from opportunity_radar import cli
 from opportunity_radar.digest import event_summary_lines, group_by_event, render_digest
 from opportunity_radar.render_html import render_html
 from opportunity_radar.store import Store
+from opportunity_radar.unified import UnifiedStore
 
 
 def item(title, score, url=None, event=None, lane='A', status='priority'):
@@ -80,6 +81,12 @@ class SummaryLineTests(unittest.TestCase):
         self.assertIn('独立来源单元 2 个', text)
         self.assertIn('独立佐证：是', text)
 
+    def test_an_event_without_evidence_is_not_presented_as_verified(self):
+        block = event_block(evidence_status='NO_EVIDENCE')
+        text = ' '.join(event_summary_lines(item('A', 50, event=block)))
+        self.assertIn('证据状态：无证据', text)
+        self.assertNotIn('已核实', text)
+
     def test_candidates_are_labelled_as_candidates(self):
         block = event_block(candidate_links=3, link_items=[link(link_id=f'lnk-{i}') for i in range(3)])
         text = ' '.join(event_summary_lines(item('A', 50, event=block)))
@@ -110,6 +117,7 @@ class AttachTests(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp(prefix='or-event-view-'))
         self.db = self.dir / 'db.sqlite3'
         self.store = Store(str(self.db))
+        UnifiedStore(str(self.db))
 
     def test_articles_of_one_event_share_its_context(self):
         articles = [('k1', 'Same headline', 'https://example.org/1', '2026-10-29T08:00:00+00:00'),

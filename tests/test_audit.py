@@ -68,6 +68,9 @@ class AuditTests(unittest.TestCase):
         self.assertIn('evidence', chain['missing'])
         self.assertIn('claim', chain['missing'])
         self.assertIn('entity_mention', chain['missing'])
+        event_check = self.check(result, 'event.event_without_evidence')
+        self.assertEqual(event_check['count'], 1)
+        self.assertTrue(event_check['samples'])
 
 
 if __name__ == '__main__':

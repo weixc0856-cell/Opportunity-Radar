@@ -10,6 +10,7 @@ from .scoring import score_article, RULES_VERSION, DEFAULT_LANE_WEIGHTS, DEFAULT
 from .lanes import LANES
 from .source_policy import load_sources, is_approved
 from .store import Store
+from .unified import SchemaVersionError
 from .analyzer import (PROMPT_VERSION, PROMPT_HASH, CONNECT_RESET, CONNECT_REFUSED,
                        TIMEOUT, UNKNOWN)
 from .source_audit import audit_sources
@@ -210,7 +211,7 @@ def attach_event_context(store, items, write=True):
     try:
         from .linking import event_profile
         from .unified import ArticleRef, UnifiedStore
-        uni = UnifiedStore(store.path, read_only=not write)
+        uni = UnifiedStore(store.path, read_only=not write, migrate=False)
         # Two passes: file every article first, then describe the events. Otherwise the
         # first article of an event would report a membership of one.
         placed_events = []
@@ -386,7 +387,11 @@ def main(argv=None):
             print(f'Database not found: {s.db_path}. Run a digest first, then re-render.',file=sys.stderr); return 2
         # Genuinely read-only: no schema migration, no backfill, no writes of any kind.
         return _render_only(Store(s.db_path,read_only=True),s,cfg)
-    store=Store(s.db_path)
+    try:
+        store=Store(s.db_path, migrate=False)
+    except SchemaVersionError as exc:
+        print(f'Database schema check failed: {exc}', file=sys.stderr)
+        return 4
     registry=load_sources()
     audit=audit_sources(registry)
     audit_errors=[x for x in audit if x['severity']=='error']

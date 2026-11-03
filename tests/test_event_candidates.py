@@ -67,6 +67,16 @@ class SourceIndependenceTests(unittest.TestCase):
         self.assertEqual(result['independent_source_units'], 1)
         self.assertFalse(result['independent_corroboration'])
 
+    def test_declared_lineage_does_not_count_as_verified_independent(self):
+        rows = [self.row('k1', 'bbc', source='bbc-business')]
+        declared = linking.source_independence(rows, verified_sources=set())
+        self.assertEqual(declared['independent_source_units'], 0)
+        self.assertEqual(declared['declared_only_evidence_count'], 1)
+        self.assertEqual(declared['independence_status'], 'UNKNOWN')
+        verified = linking.source_independence(rows, verified_sources={'bbc-business'})
+        self.assertEqual(verified['independent_source_units'], 1)
+        self.assertEqual(verified['independence_status'], 'SINGLE_SOURCE')
+
     def test_no_evidence_is_insufficient_data(self):
         result = linking.source_independence([])
         self.assertEqual(result['independence_status'], 'INSUFFICIENT_DATA')

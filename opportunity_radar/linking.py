@@ -21,7 +21,8 @@ import re
 import sqlite3
 from html import unescape
 
-from .unified import canonical_title, hours_apart, now, stable_id
+from .unified import canonical_title, evidence_integrity_problems, hours_apart, now, stable_id
+from . import lineage
 from .lineage import CORROBORATING
 
 ENTITY_SCHEMA = """
@@ -852,12 +853,13 @@ def _set_similarity(left, right):
     return len(shared) / len(left | right), len(shared) / min(len(left), len(right))
 
 
-def source_independence(rows):
+def source_independence(rows, verified_sources=None):
     """Count articles, source ids, source families and independent units separately.
 
     A family is one organisation, not one feed. Unknown independence never contributes.
-    Two families in the same recorded syndication group are one unit. This function does
-    not decide whether a pair is a reprint; it only uses recorded lineage.
+    Two families in the same recorded syndication group are one unit. When
+    ``verified_sources`` is supplied, only sources whose lineage row is verified may form
+    an independent unit; declared-only rows are counted separately and never corroborate.
     """
     rows = [dict(row) for row in rows]
 
@@ -888,6 +890,7 @@ def source_independence(rows):
                              for family, articles in sorted(family_articles.items())}
     units = set()
     groups = set()
+    declared_only = 0
     for row in rows:
         family = str(row.get('source_family') or '').strip()
         status = str(row.get('independence') or 'unknown').strip() or 'unknown'
@@ -895,6 +898,10 @@ def source_independence(rows):
         if group:
             groups.add(group)
         if status in CORROBORATING and family:
+            source_id = str(row.get('source_id') or '').strip()
+            if verified_sources is not None and source_id not in verified_sources:
+                declared_only += 1
+                continue
             units.add(group or family)
     if not rows:
         status = 'INSUFFICIENT_DATA'
@@ -922,6 +929,7 @@ def source_independence(rows):
         'unknown_family_article_count': len(unknown_family_articles),
         'unknown_independence_evidence_count': unknown_independence_evidence,
         'independent_source_units': len(units),
+        'declared_only_evidence_count': declared_only,
         'independent_corroboration': len(units) >= 2,
         'independence_status': status,
     }
@@ -1128,13 +1136,18 @@ def link_event_candidates(store, window_days=EVENT_CANDIDATE_WINDOW_DAYS):
     return result
 
 
-def event_profile(store, event_id):
+def event_profile(store, event_id, verified_sources=None):
     """What stands behind one event, counted four ways and never conflated.
 
     Articles, sources, source families and corroborating units are different numbers. A
     family counts as a corroborating unit only when its evidence carries a recorded
-    independence; evidences that merely share a wire copy collapse into one unit.
+    independence and (when a verified source set is supplied) its lineage row is verified;
+    evidences that merely share a wire copy collapse into one unit.
     """
+    if verified_sources is None:
+        registry = lineage.load()
+        verified_sources = {source_id for source_id, row in registry.items()
+                            if (row.get('review_status') or '').strip() == 'verified'}
     store_has_articles = getattr(store, 'has_articles', False)
     with store.connect() as conn:
         articles = conn.execute('SELECT COUNT(*) FROM event_articles WHERE event_id=?', (event_id,)).fetchone()[0]
@@ -1146,7 +1159,8 @@ def event_profile(store, event_id):
         group_expr = "COALESCE(v.syndication_group,'')" if has_lineage else "''"
         rows = [dict(r) for r in conn.execute(
             f'''SELECT v.evidence_id, v.article_key, v.source_id, v.source_family, v.independence,
-                      v.evidence_kind, {group_expr} AS syndication_group
+                      v.evidence_kind, v.quote, v.locator_json,
+                      {group_expr} AS syndication_group
                FROM event_articles ea JOIN evidences v USING(article_key) WHERE ea.event_id=?''', (event_id,))]
         claims = conn.execute('''SELECT COUNT(*) FROM claims c JOIN event_articles ea ON ea.article_key = c.article_key
                                  WHERE ea.event_id=?''', (event_id,)).fetchone()[0]
@@ -1190,7 +1204,14 @@ def event_profile(store, event_id):
         status = row['independence'] or 'unknown'
         independence_counts[status] = independence_counts.get(status, 0) + 1
         kinds[row['evidence_kind']] = kinds.get(row['evidence_kind'], 0) + 1
-    independence = source_independence(rows)
+    valid_evidences = sum(1 for row in rows if not evidence_integrity_problems(row))
+    if not rows:
+        evidence_status = 'NO_EVIDENCE'
+    elif valid_evidences:
+        evidence_status = 'EVIDENCE_BACKED'
+    else:
+        evidence_status = 'INSUFFICIENT_EVIDENCE'
+    independence = source_independence(rows, verified_sources=verified_sources)
     reprint_candidate_links = 0
     for row in event_candidate_rows:
         try:
@@ -1199,15 +1220,22 @@ def event_profile(store, event_id):
             evidence = {}
         if evidence.get('reprint_candidate'):
             reprint_candidate_links += 1
-    if independence['independence_status'] == 'MULTI_SOURCE':
-        note = (f"至少两个独立来源单元（{independence['independent_source_units']} 个），"
+    if evidence_status == 'NO_EVIDENCE':
+        note = '无 Evidence：这是事件记录，不是已核实事实'
+    elif evidence_status == 'INSUFFICIENT_EVIDENCE':
+        note = '有关联记录但没有有效 Evidence；不能作为已核实事实'
+    elif independence['independence_status'] == 'MULTI_SOURCE':
+        note = (f"至少两个已验证独立来源单元（{independence['independent_source_units']} 个），"
                 f"可视为多来源佐证；文章数量不等于独立来源数量")
     elif independence['independence_status'] == 'SINGLE_SOURCE':
-        note = '仅一个已知独立来源单元；文章数量和证据数量都不等于独立来源数量'
+        note = '仅一个已验证独立来源单元；文章数量和证据数量都不等于独立来源数量'
     elif independence['independence_status'] == 'PARTIAL':
         note = '只有部分来源有独立性记录；未知来源不计入独立佐证'
     elif independence['independence_status'] == 'UNKNOWN':
-        note = '来源独立性未知：未知来源族不能默认视为独立来源'
+        if independence.get('declared_only_evidence_count'):
+            note = '来源独立性未知：来源族只有 declared 判断，尚未 verified'
+        else:
+            note = '来源独立性未知：未知来源族不能默认视为独立来源'
     else:
         note = '没有足够数据计算来源独立性'
     return {
@@ -1217,6 +1245,8 @@ def event_profile(store, event_id):
         'sources': sources,
         'member_sources': member_sources,
         'evidences': len(rows),
+        'valid_evidences': valid_evidences,
+        'evidence_status': evidence_status,
         'claims': claims,
         'source_families': independence['source_families'],
         'source_family_count': independence['source_family_count'],
@@ -1227,6 +1257,7 @@ def event_profile(store, event_id):
         'syndicated_article_count': independence['syndicated_article_count'],
         'unknown_family_article_count': independence['unknown_family_article_count'],
         'unknown_independence_evidence_count': independence['unknown_independence_evidence_count'],
+        'declared_only_evidence_count': independence.get('declared_only_evidence_count', 0),
         'independent_source_units': independence['independent_source_units'],
         'independence_status': independence['independence_status'],
         'independence': independence_counts,

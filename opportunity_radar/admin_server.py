@@ -252,7 +252,7 @@ class Handler(BaseHTTPRequestHandler):
                                         '/api/freshrss-feeds','/api/audit','/api/source-check','/api/email/test','/api/email/resend',
                                         '/api/deliveries/latest','/api/run','/api/schedule','/api/logs','/report']})
             elif path == '/api/status':
-                s = Settings.from_env(); store = Store(s.db_path)
+                s = Settings.from_env(); store = Store(s.db_path, migrate=False)
                 previous = RUN_PROCESS
                 finalize_launcher(store)
                 running = bool(RUN_PROCESS and RUN_PROCESS.poll() is None)
@@ -289,7 +289,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/audit':
                 self._ok({'issues': audit_sources(load_sources(str(source_file())))})
             elif path == '/api/deliveries/latest':
-                self._ok({'deliveries': Store(Settings.from_env().db_path).latest_deliveries()})
+                self._ok({'deliveries': Store(Settings.from_env().db_path, migrate=False).latest_deliveries()})
             elif path == '/api/logs':
                 s = Settings.from_env(); rd = report_dir()
                 self._ok({'application': redact(tail(s.log_path, 200)), 'admin': redact(tail(rd / 'admin-run.log', 200)),
@@ -376,7 +376,7 @@ class Handler(BaseHTTPRequestHandler):
         s = Settings.from_env()
         results = send_email_detailed(s.smtp_host, s.smtp_port, s.smtp_username, s.smtp_password, s.email_from, addresses,
                                       subject or 'Opportunity Radar', body, s.smtp_starttls, html=html, security=s.smtp_security)
-        store = Store(s.db_path); latest = store.latest_run(); rid = latest['run_id'] if latest else None
+        store = Store(s.db_path, migrate=False); latest = store.latest_run(); rid = latest['run_id'] if latest else None
         key = 'retry-' + hashlib.sha256(raw.encode()).hexdigest()[:16]
         for res in results:
             store.delivery(rid, 'sent' if res['ok'] else 'failed', res.get('error',''), key, res['recipient'])
@@ -388,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
     def _run_digest(self):
         global RUN_PROCESS, RUN_STARTED, RUN_BASELINE
         with RUN_LOCK:
-            s = Settings.from_env(); store = Store(s.db_path)
+            s = Settings.from_env(); store = Store(s.db_path, migrate=False)
             finalize_launcher(store)
             if RUN_PROCESS and RUN_PROCESS.poll() is None:
                 self._error('RUN_ALREADY_ACTIVE', '已有日报任务正在运行', 409, [{'field': 'run_id', 'message': str(store.latest_run() and store.latest_run().get('run_id'))}]); return

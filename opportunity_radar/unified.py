@@ -35,6 +35,20 @@ RULES_VERSION = 'r1-v1'
 SCHEMA_VERSION = 8
 TITLE_WINDOW_HOURS = 72
 
+
+class SchemaVersionError(RuntimeError):
+    """The database is older than the code and must be migrated explicitly."""
+
+
+def require_schema(conn, path=''):
+    """Refuse a writable business operation on an unmigrated database."""
+    current = conn.execute('PRAGMA user_version').fetchone()[0]
+    if current < SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f'database schema is {current}, code requires {SCHEMA_VERSION}; '
+            f'run `python -m opportunity_radar.unified_main db-migrate --db {path}` '
+            f'to preview and `--apply --backup <backup>` to migrate')
+
 # Relations an article can have to the event it was filed under.
 SAME_STORY = 'same_story'
 FOLLOW_UP = 'follow_up'
@@ -604,12 +618,19 @@ def match_relation(article, event, member_urls, member_titles, first_seen, last_
 class UnifiedStore:
     """The unified tables, in whichever database they belong to."""
 
-    def __init__(self, path, read_only=False):
+    def __init__(self, path, read_only=False, migrate=True):
         self.path = Path(path)
         self.read_only = read_only
         if not read_only:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.init()
+            if migrate:
+                self.init()
+            else:
+                if not self.path.exists():
+                    raise SchemaVersionError(
+                        f'database does not exist: {self.path}; run a digest or explicit migration')
+                with self.connect() as conn:
+                    require_schema(conn, str(self.path))
         self.has_articles = self._articles_present()
 
     def _articles_present(self):

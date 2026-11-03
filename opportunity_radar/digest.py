@@ -67,6 +67,7 @@ def group_by_event(items):
 CLAIM_KIND_LABEL={'fact':'事实','source_interpretation':'来源解释','system_inference':'系统推断',
                   'hypothesis':'假设','forecast':'预测','opinion':'观点'}
 CLAIM_STATE_LABEL={'unverified':'未核验','verified':'已核验','rejected':'已否决','unverifiable':'无法核验'}
+EVIDENCE_STATUS_LABEL={'EVIDENCE_BACKED':'有证据','NO_EVIDENCE':'无证据','INSUFFICIENT_EVIDENCE':'证据不足'}
 
 
 def _locator_text(raw):
@@ -127,14 +128,17 @@ def event_summary_lines(x):
     others = max(0, len(members) - 1)
     claims = event.get('claim_items') or []
     links = event.get('link_items') or []
-    if others == 0 and len(families) <= 1 and not links and not claims:
+    evidence_status = event.get('evidence_status')
+    if (others == 0 and len(families) <= 1 and not links and not claims
+            and evidence_status in (None, 'EVIDENCE_BACKED')):
         return []
     verdict = '是' if event.get('independent_corroboration') else '否'
     outlets = len(event.get('member_sources') or []) or len(event.get('sources') or [])
     lines = []
     # A single report from a single family says nothing about corroboration; printing the
     # line anyway would train the reader to skip it.
-    if others or len(families) > 1 or links:
+    if (others or len(families) > 1 or links
+            or evidence_status in ('NO_EVIDENCE', 'INSUFFICIENT_EVIDENCE')):
         units = event.get('independent_source_units', event.get('corroborating_units'))
         unit_text = f" · 独立来源单元 {units} 个" if units is not None else ''
         syndicated = event.get('syndicated_article_count')
@@ -145,9 +149,11 @@ def event_summary_lines(x):
             status_text = ' · 独立性部分未知'
         elif status == 'UNKNOWN':
             status_text = ' · 独立性未知'
+        evidence_text = (f" · 证据状态：{EVIDENCE_STATUS_LABEL[evidence_status]}"
+                         if evidence_status in EVIDENCE_STATUS_LABEL else '')
         lines.append(f"   事件结构：同事件报道 {len(members)} 篇 · 报道来源 {outlets} 个 · "
-                     f"来源族 {len(families)} 个{unit_text}{syndicated_text}{status_text} · "
-                     f"独立佐证：{verdict}")
+                     f"来源族 {len(families)} 个{unit_text}{syndicated_text}{status_text}"
+                     f"{evidence_text} · 独立佐证：{verdict}")
     lines += _claim_lines(event)
     lines += _link_lines(event)
     if others:

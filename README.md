@@ -14,6 +14,10 @@
 运行期只依赖 Python 标准库（`sqlite3`、`urllib`、`tomllib`、`html`、`json`），
 `pyproject.toml` 声明的依赖为空。
 
+普通业务 CLI 以 `migrate=False` 打开 store：数据库版本低于代码要求时直接报错并提示
+`db-migrate`，不会静默迁移。`audit`、`report`、`--render-only` 保持只读；`db-migrate --apply`
+必须提供备份文件，迁移失败即停止。
+
 ## 快速开始（Windows PowerShell）
 
 1. 安装 Docker Desktop（WSL2）与 Python 3.11+，`py -3 -m venv .venv`。
@@ -54,7 +58,9 @@ EIA API  ─┴─> 独立摄取库（原始快照 + 规范化事实）──> R
   归档文本、HTML、`.items.json`（分析快照）与 `.manifest.json`（运行 ID、报告哈希、统计）。
   `--render-only` 只刷新 latest，不新增归档，也不写数据库。
 - 结构：执行摘要 → 三个编辑通道（A 商业/科技/经济、B 商业机会、C 技术观察）→ 数据概览 → 附录。
-- **事件视图**：同属一个事件的报道只占一张卡片。卡片下依次给出：
+- **事件视图**：同属一个事件的报道只占一张卡片。事件证据状态分为 `EVIDENCE_BACKED`、
+  `NO_EVIDENCE`、`INSUFFICIENT_EVIDENCE`；无 Evidence 的事件仍保留，但卡片明确显示“证据状态：无证据”，
+  不表示已核实事实。卡片下依次给出：
   - `事件结构`：同事件报道 N 篇 · 报道来源 N 个 · 来源族 N 个 · 独立佐证：是/否（单篇单族时不打印）；
   - `事实主张`：事件关联的主张，逐条标注类型（事实/推断/…）与核验状态，并给出证据 ID、定位
     （`summary@起-止`）与来源 ID；超过两条时提示"另有 N 条主张，见归档 JSON"；
@@ -103,6 +109,8 @@ python -m opportunity_radar.unified_main sources    # 文章 -> source_id（只�
 python -m opportunity_radar.unified_main periods --dry-run --json   # 检查旧 skeleton Claim 的 period
 python -m opportunity_radar.unified_main periods --apply            # 置空错误 period（先备份并获批准）
 python -m opportunity_radar.unified_main audit --db <库>  # 只读端到端一致性审计
+python -m opportunity_radar.unified_main db-migrate --db <库>  # 预览 schema 迁移，不写库
+python -m opportunity_radar.unified_main db-migrate --db <库> --apply --backup <备份>  # 显式迁移
 python -m opportunity_radar.unified_main report     # 各表计数、完整性与缺口
 ```
 

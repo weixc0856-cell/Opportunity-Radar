@@ -18,6 +18,7 @@ from unittest import mock
 from opportunity_radar.analyzer import ModelCallError
 from opportunity_radar.cli import main
 from opportunity_radar.config import Settings
+from opportunity_radar.store import Store
 from opportunity_radar.source_policy import Source
 
 SOURCE = Source('s1', 'Test Source', 'https://example.org', 'https://example.org/feed', 'rss',
@@ -75,6 +76,7 @@ class GateRunTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='or-gate-'))
         self.settings = settings_for(self.tmp)
+        Store(str(self.tmp / 'run.sqlite3'))
         logging.disable(logging.CRITICAL)   # the run logs its own failures on purpose
 
     def tearDown(self):

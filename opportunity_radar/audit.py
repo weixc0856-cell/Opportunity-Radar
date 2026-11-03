@@ -13,6 +13,7 @@ import sqlite3
 from pathlib import Path
 
 from . import lineage, linking, source_policy
+from .unified import evidence_integrity_problems
 
 
 def _norm(value):
@@ -115,9 +116,12 @@ def _source_checks(conn, sources, lineage_path):
     info['lineage_registry_rows'] = len(registry_rows)
     info['lineage_syndication_groups'] = len(groups)
     if review_status.get('declared', 0) and not review_status.get('verified', 0):
+        declared_samples = [{'source_id': source_id, 'review_status': row.get('review_status', '')}
+                            for source_id, row in registry_rows.items()
+                            if (row.get('review_status') or '').strip() == 'declared'][:5]
         checks.append(_check('source.lineage_only_declared', 'WARN',
                              'source lineage rows are declared, not independently verified',
-                             review_status.get('declared', 0), detail=review_status))
+                             review_status.get('declared', 0), declared_samples, review_status))
     if _table(conn, 'evidences'):
         syndicated = conn.execute(
             "SELECT COUNT(*) FROM evidences WHERE syndication_group<>''").fetchone()[0]
@@ -174,7 +178,14 @@ def _evidence_claim_checks(conn):
             checks.append(_check('claim.missing_locator', 'WARN',
                                  'claims without a locator', len(missing),
                                  _samples(missing, ['claim_id', 'article_key'])))
-        if _table(conn, 'claim_evidence'):
+        if _table(conn, 'claim_evidence') and _table(conn, 'evidences'):
+            unclaimed = [dict(row) for row in conn.execute(
+                '''SELECT v.evidence_id, v.article_key FROM evidences v
+                   WHERE NOT EXISTS (SELECT 1 FROM claim_evidence ce
+                                     WHERE ce.evidence_id=v.evidence_id)''')]
+            checks.append(_check('evidence.without_claim', 'INFO',
+                                 'evidence rows with no claim link', len(unclaimed),
+                                 _samples(unclaimed, ['evidence_id', 'article_key'])))
             invalid = [dict(row) for row in conn.execute(
                 '''SELECT c.claim_id, c.article_key FROM claims c
                    WHERE NOT EXISTS (
@@ -273,15 +284,26 @@ def _event_checks(conn):
     if _table(conn, 'evidences'):
         rows = [dict(row) for row in conn.execute(
             '''SELECT ea.event_id, v.article_key, v.evidence_id, v.source_id, v.source_family,
-                      v.independence, v.syndication_group
+                      v.independence, v.evidence_kind, v.quote, v.locator_json,
+                      v.syndication_group
                FROM event_articles ea JOIN evidences v USING(article_key)''')]
         by_event = {}
         for row in rows:
             by_event.setdefault(row['event_id'], []).append(row)
-        profiles = {event_id: linking.source_independence(items)
+        registry = lineage.load()
+        verified_sources = {source_id for source_id, row in registry.items()
+                            if (row.get('review_status') or '').strip() == 'verified'}
+        profiles = {event_id: linking.source_independence(items, verified_sources=verified_sources)
                     for event_id, items in by_event.items()}
         info['events'] = len(profiles)
         info['events_without_evidence'] = event_total - len(profiles)
+        status_counts = {'EVIDENCE_BACKED': 0, 'NO_EVIDENCE': 0, 'INSUFFICIENT_EVIDENCE': 0}
+        for items in by_event.values():
+            valid = sum(1 for item in items if not evidence_integrity_problems(item))
+            status_counts['EVIDENCE_BACKED' if valid else 'INSUFFICIENT_EVIDENCE'] += 1
+        # Events with no evidence rows never appeared in by_event; count them explicitly.
+        status_counts['NO_EVIDENCE'] += info['events_without_evidence']
+        info['events_by_evidence_status'] = status_counts
         empty_events = [dict(row) for row in conn.execute(
             '''SELECT e.event_id, e.title_norm FROM events e
                WHERE NOT EXISTS (
@@ -294,6 +316,8 @@ def _event_checks(conn):
             1 for profile in profiles.values() if profile['source_family_count'] > 1)
         info['events_with_independent_corroboration'] = sum(
             1 for profile in profiles.values() if profile['independent_corroboration'])
+        info['declared_only_evidence'] = sum(
+            profile.get('declared_only_evidence_count', 0) for profile in profiles.values())
         info['events_unknown_independence'] = sum(
             1 for profile in profiles.values() if profile['independence_status'] == 'UNKNOWN')
         info['events_partial_independence'] = sum(

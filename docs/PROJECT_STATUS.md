@@ -1,7 +1,7 @@
 # 项目状态（2026-11-03）
 
 当前分支 `main`；Batch 16 已合并（`d48d872`），第七至十六批均已进入 `main`。
-测试：本地 **956 项通过**（含 Source Pilot 测试）；本次未复核干净检出。
+测试：本地 **966 项通过**（含 Source Pilot 测试）；本次未复核干净检出。
 
 ## 当前阶段冻结（2026-11-02）
 
@@ -41,6 +41,7 @@ N0–N5 影子 Claim 生成路线已完成阶段性验收并冻结，基线为 B
 | P0 Batch 3 | 事件候选与来源独立性：`event_candidate` 强/弱候选、来源族/独立来源单元/转载候选计算 | 已实现；真实数据 117 事件、6,786 对比较，1 个弱候选、0 强候选、0 已确认转载；无多文章事件，真实聚合能力标记 PARTIAL；生产库未改 |
 | P0 Batch 4 | 实体识别与关系：确定性 mention、类别、定位、受控规范化、`entity_relations` | 已实现；Batch 5 修正 source_name 不是 publisher，`PUBLISHED_BY` 不再生成；APPLICANT/PETITIONER/REGULATED_BY 真实数据 0 条，合成测试覆盖；生产库未改 |
 | P0 Batch 5 | 数据链路闭环与一致性：来源语义、只读端到端审计、10 条完整链路样本 | 已实现；验证副本 138/138 source_id、52 mention/60 次、24 实体、0 `PUBLISHED_BY`；审计 PARTIAL（15 条 lineage 仅 declared、47 个事件无证据、21 篇未分析文章）；生产库未改 |
+| P0 Batch 6 | 迁移安全与事件证据表达：显式 `db-migrate`、审计样本分层、`EVIDENCE_BACKED`/`NO_EVIDENCE`/`INSUFFICIENT_EVIDENCE` | 已实现；普通 CLI 不再隐式迁移；显式迁移在副本完成 v5→v8；审计 10 条完整链路 + 各类缺失样本；47 个无 Evidence 事件在日报中显示“无证据”；生产库未改 |
 
 ## 数据库现状
 
@@ -50,6 +51,7 @@ N0–N5 影子 Claim 生成路线已完成阶段性验收并冻结，基线为 B
 | P0 Batch 1+2 部署验证副本（生产库拷贝） | 25 | 7 | `data/archive/p0-batch2-postdeploy-validation-2026-11-03/opportunity_radar.sqlite3`；132/138 篇文章绑定 `source_id`；220/220 条 skeleton Claim 的 `period` 已置空；`claim_corrections` 220 条；验证状态仍全部为 `unverified`；SHA-256 `cbeecbdb…f482` |
 | P0 Batch 3 验证副本（Batch 1+2 副本 + candidates） | 25 | 7 | `data/archive/p0-batch3-validation-2026-11-03/opportunity_radar.sqlite3`；117 events / 117 articles；`event_candidate` 1 条（weak、same_source_family）；`reprint_candidate` 0；`source_family_count` 11；独立佐证事件 0；未知独立性事件 42；SHA-256 `c10aaa86…d7a3` |
 | P0 Batch 5 验证副本（Batch 1–4 修正后） | 26 | 8 | `data/archive/p0-batch5-validation-2026-11-03/opportunity_radar.sqlite3`；138/138 articles 绑定 `source_id`；24 entities（company 10 / organization 3 / government 3 / location 8）；mentions 52 行 / 60 次；有定位 52/52；有 Evidence 30；`entity_relations` 0（`PUBLISHED_BY` 不生成）；`event_candidate` 1 条；SHA-256 `5bbf3781…3d10` |
+| P0 Batch 6 迁移验证副本（生产 v5 显式迁移） | 26 | 8 | `data/archive/p0-batch6-migration-validation-2026-11-03/opportunity_radar.sqlite3`；138/138 source_id；220/220 skeleton period 修正；24 entities；mentions 52/60，有定位 52/52；`entity_relations` 0；event_candidate 1；审计 PARTIAL（70 EVIDENCE_BACKED / 47 NO_EVIDENCE；15 declared；21 未分析文章）；SHA-256 `ca370add…5a6f` |
 | `data/ingest/opportunity_radar_ingest.sqlite3` | 18 | 3 | sec_facts 2,719 / eia_observations 34 / evidences 2,753 / claims 2,753 |
 
 生产最近一次运行 run 16（2026-11-03 08:30 本地）为 `analysis_failed` / `HOLD`，覆盖率 0.0，失败原因 `circuit_open` 10、`timeout` 3，未发送邮件；这是本批次之前的调度运行故障；P0 Batch 1/Batch 2/Batch 3/Batch 4/Batch 5 均未修改生产库。
@@ -69,7 +71,9 @@ independent_primary 19。
 - **统一模型**：事件、证据、主张、实体、候选关联、来源谱系；文章可直接绑定 `source_id`；Claim/Evidence 写入要求可追溯来源、可定位记录和至少一条证据关联，不满足的 Claim 不写入并在报告中列出；skeleton Claim 的 `period` 为空，发布日期只作为文章/观察时间；生产库尚未执行迁移/回填。
 - **事件候选与来源独立性**：`unified_main candidates` 生成强/弱事件候选，保留双方 event/article、标题、共享词、实体、证据 ID、时间差和转载判断；不自动合并。`event_profile` 分开输出文章数、来源 ID 数、来源族数、独立来源单元、联合发布组、未知来源族；未知来源族不计入独立佐证。
 - **实体识别与关系**：`unified_main extract` 从已存标题、Evidence 引文和 Claim 文本抽取确定性 mention；保留原始文本、类别、article/evidence/claim 键、定位、方法和置信度。`source_name` 是 feed/`INGESTED_FROM` 标签，不是发布机构；当前不生成 `PUBLISHED_BY`。`APPLICANT`/`PETITIONER`/`REGULATED_BY` 只在明确句子线索下生成且全部 `unverified`；`AFFECTED_BY`/`RELATED_TO` 不自动生成。
-- **一致性审计**：`unified_main audit --db <库>` 只读检查 source、evidence、claim、event、entity、relation 和 10 条端到端链路；不迁移 schema，不修改数据库。
+- **一致性审计**：`unified_main audit --db <库>` 只读检查 source、evidence、claim、event、entity、relation；输出完整链路和各类缺失样本（最多每类若干条），计数与样本分开；不迁移 schema，不修改数据库。
+- **迁移安全**：普通业务 CLI 使用 `migrate=False`；旧 schema 直接报错并提示 `unified_main db-migrate`。`db-migrate` 默认只预览，`--apply --backup <文件>` 才迁移；`audit`、`report`、`--render-only` 保持只读。
+- **事件证据状态**：`event_profile` 区分 `EVIDENCE_BACKED` / `NO_EVIDENCE` / `INSUFFICIENT_EVIDENCE`；无 Evidence 的事件保留在日报中并显示“证据状态：无证据”，不作为已核实事实或商业机会事实依据。
 - **主张核验（离线）**：`verify` 模块对主张与证据做确定性对照，产出 verified / rejected /
   unverifiable 与冲突记录，并提供 `--audit`（检查执行情况）与 `--conflicts`（冲突报告）。
   尚未接入生产库、日报或门禁。
@@ -108,6 +112,7 @@ independent_primary 19。
 8. **生产迁移与历史修正未执行**：P0 Batch 1/5 的 `source_id` 回填与 feed alias、P0 Batch 2 的 `period` 修正、P0 Batch 3 的事件候选写入、P0 Batch 4 的 schema v8 实体列/关系表迁移和 P0 Batch 5 的审计均只在生产副本完成；需批准后先备份再对生产库执行。
 9. **事件聚合真实样本不足**：当前 117 个事件对应 117 篇文章，没有多文章事件；Batch 3 只得到 1 个同来源族弱候选，强候选/转载候选/跨来源族独立佐证均为 0。真实聚合能力标记为 PARTIAL，合成测试通过不等于真实数据已验证。
 10. **实体层只验证了组织/政府/地点**：Batch 5 验证副本得到 52 条 mention、24 个正文实体；PRODUCT/TECHNOLOGY/PERSON 没有自动抽取；APPLICANT/PETITIONER/REGULATED_BY 真实数据为 0，只有合成测试覆盖。`AFFECTED_BY` 和 `RELATED_TO` 按边界不自动生成。`source_name` 是 feed 标签，未生成 `PUBLISHED_BY`。实体数量增长不等于关系质量已验证。
+11. **事件证据覆盖仍不完整**：验证副本 117 个事件中 70 个 `EVIDENCE_BACKED`、47 个 `NO_EVIDENCE`、0 个 `INSUFFICIENT_EVIDENCE`；21 篇文章未分析。无 Evidence 事件保留但不作为已核实事实。来源谱系 15 条全部 `declared`，没有 `verified`；不能声称独立来源已核验。
 
 ## 边界
 

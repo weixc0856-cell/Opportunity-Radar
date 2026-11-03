@@ -23,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import audit, lineage, linking, unified
+from . import audit, lineage, linking, migration, unified
 from .source_binding import backfill_article_sources
 from .store import Store
 
@@ -51,8 +51,8 @@ def _payload(result_json):
 
 def backfill_rss(db_path, limit=None):
     """Articles -> events; located v5 facts -> evidence + claim skeleton + link."""
-    store = Store(db_path)
-    uni = unified.UnifiedStore(db_path)
+    store = Store(db_path, migrate=False)
+    uni = unified.UnifiedStore(db_path, migrate=False)
     report = {'articles': 0, 'events_new': 0, 'articles_skipped_v4': 0,
               'facts_located': 0, 'facts_skipped_unlocated': 0,
               'evidences': 0, 'claims': 0, 'links': 0,
@@ -149,12 +149,12 @@ def seed_entities_and_mentions(db_path):
     """
     from .ingest.labels import COMPANIES   # static registry, not ingest data
 
-    store = unified.UnifiedStore(db_path)
+    store = unified.UnifiedStore(db_path, migrate=False)
     companies = [{'cik': cik, 'name': info['name'], 'ticker': info['ticker']}
                  for cik, info in COMPANIES.items()]
     created = linking.seed_entities(store, companies)
 
-    analyser = Store(db_path)
+    analyser = Store(db_path, migrate=False)
     texts = []
     with analyser.connect() as conn:
         articles = [(r['article_key'], r['title'] or '') for r in conn.execute('SELECT article_key, title FROM articles')]
@@ -181,7 +181,7 @@ def apply_lineage(db_path, registry_path=None):
     problems = lineage.validate(registry)
     if problems:
         return {'applied': False, 'problems': problems}
-    store = unified.UnifiedStore(db_path)
+    store = unified.UnifiedStore(db_path, migrate=False)
     result = lineage.apply(store, registry)
     result['applied'] = True
     result['families'] = lineage.families_for(registry)
@@ -190,18 +190,18 @@ def apply_lineage(db_path, registry_path=None):
 
 def build_event_candidates(db_path, window_days=linking.EVENT_CANDIDATE_WINDOW_DAYS):
     """Find strong/weak event pairs. They are candidates; no event is merged or moved."""
-    return linking.link_event_candidates(unified.UnifiedStore(db_path), window_days=window_days)
+    return linking.link_event_candidates(unified.UnifiedStore(db_path, migrate=False), window_days=window_days)
 
 
 def extract_entities(db_path):
     """Extract mentions and explicit entity relations from stored text."""
-    return linking.extract_entities(unified.UnifiedStore(db_path))
+    return linking.extract_entities(unified.UnifiedStore(db_path, migrate=False))
 
 
 def build_links(db_path, ingest_db):
     """Candidate links only: claim<->event when a company and a period line up, and
     event<->event when two events name the same company or share a strong event signal."""
-    store = unified.UnifiedStore(db_path)
+    store = unified.UnifiedStore(db_path, migrate=False)
     with store.connect() as conn:
         cik_to_entity = {r['cik']: r['entity_id'] for r in conn.execute("SELECT cik, entity_id FROM entities WHERE cik<>''")}
     claims = []
@@ -384,17 +384,32 @@ def main(argv=None):
     except (AttributeError, ValueError):
         pass
     parser = argparse.ArgumentParser(description='Backfill the unified Event/Evidence/Claim model')
-    parser.add_argument('what', choices=('rss', 'sec', 'eia', 'entities', 'extract', 'links', 'candidates', 'lineage', 'sources', 'periods', 'audit', 'report'))
+    parser.add_argument('what', choices=('db-migrate', 'rss', 'sec', 'eia', 'entities', 'extract', 'links', 'candidates', 'lineage', 'sources', 'periods', 'audit', 'report'))
     parser.add_argument('--db', help='database to read and write')
     parser.add_argument('--ingest-db', help='SEC/EIA database (links)')
     parser.add_argument('--registry', help='source lineage registry (lineage)')
     parser.add_argument('--source-registry', help='source CSV used by audit')
     parser.add_argument('--limit', type=int, help='only the first N articles (rss)')
     parser.add_argument('--dry-run', action='store_true', help='work on a copy and leave the database untouched')
-    parser.add_argument('--apply', action='store_true', help='apply the periods repair (otherwise report only)')
+    parser.add_argument('--apply', action='store_true', help='apply a change (periods repair or db migration)')
+    parser.add_argument('--backup', help='backup file required by db-migrate --apply')
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
 
+    if args.what == 'db-migrate':
+        db = _rss_db(args.db)
+        if args.apply and args.dry_run:
+            print('choose either db-migrate --apply or --dry-run', file=sys.stderr)
+            return 2
+        try:
+            result = migration.migrate(db, apply=args.apply, backup=args.backup)
+        except (ValueError, RuntimeError, unified.SchemaVersionError) as exc:
+            print(f'Migration stopped: {exc}', file=sys.stderr)
+            return 2
+        result['database'] = db
+        result['dry_run'] = not args.apply
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
     if args.what == 'rss':
         db = _rss_db(args.db)
         action = lambda path: backfill_rss(path, limit=args.limit)
@@ -415,7 +430,7 @@ def main(argv=None):
         action = lambda path: apply_lineage(path, args.registry)
     elif args.what == 'sources':
         db = _rss_db(args.db)
-        action = lambda path: backfill_article_sources(Store(path))
+        action = lambda path: backfill_article_sources(Store(path, migrate=False))
     elif args.what == 'audit':
         db = _rss_db(args.db)
         action = lambda path: audit.audit(path, source_registry=args.source_registry,
@@ -424,7 +439,7 @@ def main(argv=None):
         db = _rss_db(args.db)
         if args.apply:
             action = lambda path: unified.repair_skeleton_periods(
-                unified.UnifiedStore(path), apply=True)
+                unified.UnifiedStore(path, migrate=False), apply=True)
         else:
             # An audit must not migrate the production schema. Only --apply opens writable.
             action = lambda path: unified.repair_skeleton_periods(
@@ -439,7 +454,11 @@ def main(argv=None):
         db = _rss_db(args.db)
         action = report
 
-    result = _run_on_copy(db, action) if args.dry_run else action(db)
+    try:
+        result = _run_on_copy(db, action) if args.dry_run else action(db)
+    except unified.SchemaVersionError as exc:
+        print(f'Database schema check failed: {exc}', file=sys.stderr)
+        return 2
     result['database'] = db
     result['dry_run'] = bool(args.dry_run)
     if args.json:
