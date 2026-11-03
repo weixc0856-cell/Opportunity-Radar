@@ -1,0 +1,36 @@
+{
+  "articles": [
+    {
+      "url": "https://www.reuters.com/technology/ai-foo?utm_source=x",
+      "title": "AI &amp; Data Center Investment",
+      "seendate": "20261101T120000Z",
+      "domain": "reuters.com",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://www.bbc.com/news/dup-story",
+      "title": "Duplicate story",
+      "seendate": "20261101T130000Z",
+      "domain": "www.bbc.com",
+      "language": "English",
+      "sourcecountry": "United Kingdom"
+    },
+    {
+      "url": "https://unknown.example.org/post",
+      "title": "Unknown domain",
+      "seendate": "20261101T140000Z",
+      "domain": "unknown.example.org",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "not-a-url",
+      "title": "Bad URL",
+      "seendate": "20261101T150000Z",
+      "domain": "",
+      "language": "English",
+      "sourcecountry": "United States"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+﻿watch_id,agency_slug,term,document_types,enabled,max_documents,notes
+commerce-ai,commerce-department,artificial intelligence,"RULE,PRORULE",true,50,Commerce AI policy
+commerce-chip,commerce-department,semiconductor,"RULE,PRORULE,NOTICE",true,50,Commerce semiconductor policy
+energy-minerals,energy-department,critical minerals,"RULE,PRORULE,NOTICE",true,50,Energy critical minerals
+treasury-tariff,treasury-department,tariff,"RULE,NOTICE",true,50,Treasury tariff actions
+ustr-trade,trade-representative-office-of-united-states,tariff,NOTICE,true,50,USTR trade notices; slug verified via /agencies.json
+ftc-ai,federal-trade-commission,artificial intelligence,NOTICE,true,50,FTC AI notices
+fcc-datacenter,federal-communications-commission,data center,"RULE,PRORULE",true,50,FCC data center rules
+epa-ev,environmental-protection-agency,electric vehicle,"RULE,PRORULE",true,50,EPA EV rules
+fda-medical-device,food-and-drug-administration,medical device,"RULE,PRORULE,NOTICE",true,50,FDA medical device policy; slug verified via /agencies.json

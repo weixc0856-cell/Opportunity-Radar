@@ -1,0 +1,10 @@
+﻿series_id,label,topic,unit,frequency,seasonal_adjustment,enabled,notes
+CES0000000001,"All employees, thousands, total nonfarm",employment,thousands of employees,monthly,seasonally adjusted,true,BLS CES; official Data Viewer
+LNS14000000,Unemployment rate,employment,percent,monthly,seasonally adjusted,true,BLS CPS; official Data Viewer
+CES0500000003,"Average hourly earnings of all employees, total private",wages,USD per hour,monthly,seasonally adjusted,true,BLS CES; official Data Viewer
+CUSR0000SA0,"CPI-U all items, U.S. city average, seasonally adjusted",inflation,index 1982-84=100,monthly,seasonally adjusted,true,BLS CPI; official Data Viewer
+CUUR0000SA0,"CPI-U all items, U.S. city average, not seasonally adjusted",inflation,index 1982-84=100,monthly,not seasonally adjusted,true,BLS CPI; official Data Viewer
+JTS000000000000000JOL,"Job openings, total nonfarm",labor demand,thousands,monthly,seasonally adjusted,true,BLS JOLTS; official Data Viewer
+JTS000000000000000HIL,"Hires, total nonfarm",labor demand,thousands,monthly,seasonally adjusted,true,BLS JOLTS; official Data Viewer
+JTS000000000000000QUL,"Quits, total nonfarm",labor demand,thousands,monthly,seasonally adjusted,true,BLS JOLTS; official Data Viewer
+PRS85006092,"Labor productivity (output per hour), nonfarm business, % change from previous quarter",productivity,percent,quarterly,seasonally adjusted,true,BLS productivity release: quarterly percent changes are seasonally adjusted annualized rates

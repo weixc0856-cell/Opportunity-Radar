@@ -1,0 +1,63 @@
+{
+  "count": 3,
+  "total_pages": 1,
+  "results": [
+    {
+      "document_number": "2026-10001",
+      "title": "Artificial Intelligence Rule",
+      "type": "Rule",
+      "publication_date": "2026-11-01",
+      "effective_on": "2026-12-01",
+      "comments_close_on": null,
+      "citation": "91 FR 10001",
+      "docket_ids": ["Docket No. 2026-0001"],
+      "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/11/01/2026-10001.txt",
+      "html_url": "https://www.federalregister.gov/documents/2026/11/01/2026-10001/artificial-intelligence-rule",
+      "pdf_url": "https://www.govinfo.gov/content/pkg/FR-2026-11-01/pdf/2026-10001.pdf",
+      "agencies": [
+        {"name": "Commerce Department", "slug": "commerce-department", "id": 54}
+      ],
+      "correction_of": null,
+      "corrections": [],
+      "abstract": "A rule about artificial intelligence."
+    },
+    {
+      "document_number": "2026-10002",
+      "title": "Proposed Semiconductor Rule",
+      "type": "Proposed Rule",
+      "publication_date": "2026-11-01",
+      "effective_on": null,
+      "comments_close_on": "2026-12-15",
+      "citation": "91 FR 10002",
+      "docket_ids": null,
+      "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/11/01/2026-10002.txt",
+      "html_url": "https://www.federalregister.gov/documents/2026/11/01/2026-10002/proposed-semiconductor-rule",
+      "pdf_url": "https://www.govinfo.gov/content/pkg/FR-2026-11-01/pdf/2026-10002.pdf",
+      "agencies": [
+        {"name": "Commerce Department", "slug": "commerce-department", "id": 54}
+      ],
+      "correction_of": null,
+      "corrections": [],
+      "abstract": "A proposed rule about semiconductors."
+    },
+    {
+      "document_number": "2026-10003",
+      "title": "Notice About Data Centers",
+      "type": "Notice",
+      "publication_date": "2026-11-02",
+      "effective_on": null,
+      "comments_close_on": null,
+      "citation": null,
+      "docket_ids": [],
+      "raw_text_url": null,
+      "html_url": "https://www.federalregister.gov/documents/2026/11/02/2026-10003/notice-about-data-centers",
+      "pdf_url": "https://www.govinfo.gov/content/pkg/FR-2026-11-02/pdf/2026-10003.pdf",
+      "agencies": [
+        {"name": "Federal Communications Commission", "slug": "federal-communications-commission", "id": 161}
+      ],
+      "correction_of": null,
+      "corrections": [],
+      "abstract": "A notice about data centers."
+    }
+  ]
+}

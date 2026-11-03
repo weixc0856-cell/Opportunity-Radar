@@ -1,0 +1,64 @@
+{
+  "status": "REQUEST_SUCCEEDED",
+  "message": [],
+  "Results": {
+    "series": [
+      {
+        "seriesID": "CES0000000001",
+        "data": [
+          {"year": "2026", "period": "M09", "periodName": "September", "latest": "true", "value": "159044", "footnotes": [{"code": "P", "text": "preliminary"}]},
+          {"year": "2026", "period": "M08", "periodName": "August", "latest": "false", "value": "158846", "footnotes": [{}]}
+        ]
+      },
+      {
+        "seriesID": "LNS14000000",
+        "data": [
+          {"year": "2026", "period": "M09", "periodName": "September", "latest": "true", "value": "4.2", "footnotes": [{}]}
+        ]
+      },
+      {
+        "seriesID": "CES0500000003",
+        "data": [
+          {"year": "2026", "period": "M09", "periodName": "September", "latest": "true", "value": "37.81", "footnotes": [{"code": "P", "text": "preliminary"}]}
+        ]
+      },
+      {
+        "seriesID": "CUSR0000SA0",
+        "data": [
+          {"year": "2026", "period": "M09", "periodName": "September", "latest": "true", "value": "336.298", "footnotes": [{}]}
+        ]
+      },
+      {
+        "seriesID": "CUUR0000SA0",
+        "data": [
+          {"year": "2026", "period": "M09", "periodName": "September", "latest": "true", "value": "336.940", "footnotes": [{}]},
+          {"year": "2026", "period": "M08", "periodName": "August", "latest": "false", "value": "-", "footnotes": [{"code": "N", "text": "not available"}]}
+        ]
+      },
+      {
+        "seriesID": "JTS000000000000000JOL",
+        "data": [
+          {"year": "2026", "period": "M08", "periodName": "August", "latest": "true", "value": "7079", "footnotes": [{"code": "P", "text": "preliminary"}]}
+        ]
+      },
+      {
+        "seriesID": "JTS000000000000000HIL",
+        "data": [
+          {"year": "2026", "period": "M08", "periodName": "August", "latest": "true", "value": "5192", "footnotes": [{"code": "P", "text": "preliminary"}]}
+        ]
+      },
+      {
+        "seriesID": "JTS000000000000000QUL",
+        "data": [
+          {"year": "2026", "period": "M08", "periodName": "August", "latest": "true", "value": "3066", "footnotes": [{"code": "P", "text": "preliminary"}]}
+        ]
+      },
+      {
+        "seriesID": "PRS85006092",
+        "data": [
+          {"year": "2026", "period": "Q02", "periodName": "2nd Quarter", "latest": "true", "value": "1.4", "footnotes": [{}]}
+        ]
+      }
+    ]
+  }
+}

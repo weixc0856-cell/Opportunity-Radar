@@ -1,0 +1,6 @@
+﻿query_id,query,timespan,max_records,language,country,enabled,notes
+ai-infra,"(""artificial intelligence"" OR ""data center"" OR semiconductor OR chip)",7d,250,,,true,"AI, compute and semiconductor discovery"
+energy-industry,"(""critical minerals"" OR battery OR ""electric vehicle"" OR ""power grid"")",7d,250,,,true,"Energy, battery, EV and grid discovery"
+manufacturing-supply,"(factory OR manufacturing OR ""supply chain"" OR robotics)",7d,250,,,true,"Manufacturing, supply chain and robotics discovery"
+policy-trade,"(tariff OR ""export control"" OR ""industrial policy"" OR sanctions)",7d,250,,,true,Trade and industrial policy discovery
+capital-markets,"(merger OR acquisition OR ""private equity"" OR ""venture capital"")",7d,250,,,true,"Capital markets, M&A and private capital discovery"
