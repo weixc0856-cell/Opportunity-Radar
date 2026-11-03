@@ -49,7 +49,11 @@
     attaches R1 context to the digest, and the
     digest prints one card per event instead of one per article.
 12. SEC/EIA keep their own database and entry points (`ingest/`); they share the R1 table contract but
-    never write to the RSS database.
+    never write to the RSS database. `deploy/windows/run-sources.ps1` runs SEC, EIA, Federal Register
+    and BLS before the daily CLI, each into its own store; `reports/sources/latest.json` records one
+    status per source (`ok` / `not_configured` / `failed`, plus GDELT `frozen` on HTTP 429) and the
+    digest prints that status line. Only statuses cross the boundary — never observations, quotes or
+    claims from those sources.
 13. The claim pipeline (`docs/CLAIM_PIPELINE.md`) has six offline nodes. `article_text.py` (N0)
     normalises the title and body into text with paragraph and sentence IDs, document offsets and
     raw-HTML spans; `numeric_candidates.py` (N1) lists every numeric expression as an atom,

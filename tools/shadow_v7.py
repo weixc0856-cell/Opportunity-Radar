@@ -1,4 +1,4 @@
-"""Shadow-run the v7 prompt (structured claims) against the v6 analyses already stored.
+"""Compare the production v7 prompt (structured claims) against stored v6 analyses.
 
 It never touches the production database or the production prompt: articles come from FreshRSS,
 the comparison comes from a copy of the stored v6 analysis, and everything lands as JSON under
@@ -106,7 +106,7 @@ def claim_metrics(claims, article, deviations):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Shadow-run prompt v7 against stored v6 analyses')
+    parser = argparse.ArgumentParser(description='Compare prompt v7 against stored v6 analyses')
     parser.add_argument('--limit', type=int, default=8)
     parser.add_argument('--db', default='data/opportunity_radar.sqlite3')
     parser.add_argument('--out', default='')
@@ -256,7 +256,7 @@ def summarise(rows, version):
 
 def render(summary):
     lines = [
-        f"# v7 影子运行（{summary['prompt_version']}）", '',
+        f"# V6/V7 对照运行（{summary['prompt_version']}）", '',
         f"- 文章：{summary['articles']} 篇，成功 {summary['analysed']}，失败 {summary['failed']}",
         f"- 耗时：{summary['seconds_total']} 秒",
         f"- Token 预算：{summary['token_budget']}；模型调用 {summary['model_calls']} 次；"

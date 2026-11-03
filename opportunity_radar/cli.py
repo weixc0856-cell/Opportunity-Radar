@@ -10,9 +10,9 @@ from .scoring import score_article, RULES_VERSION, DEFAULT_LANE_WEIGHTS, DEFAULT
 from .lanes import LANES
 from .source_policy import load_sources, is_approved
 from .store import Store
-from .unified import SchemaVersionError
+from .unified import SchemaVersionError, SCHEMA_VERSION as UNIFIED_SCHEMA_VERSION
 from .analyzer import (PROMPT_VERSION, PROMPT_HASH, CONNECT_RESET, CONNECT_REFUSED,
-                       TIMEOUT, UNKNOWN)
+                       TIMEOUT, UNKNOWN, analysis_input_hash)
 from .source_audit import audit_sources
 from .sampling import parse_window, filter_articles
 from .fulltext import apply_article_bodies
@@ -100,7 +100,7 @@ def evaluate(article,analysis,weights=None,thresholds=None,model='',source=None,
           'source_id':getattr(source,'source_id','') if source is not None else '',
           'lane':sc['lane'],'evidence_state':sc['evidence_state'],'evidence_basis':sc['evidence_basis'],
           'content_basis_estimate':sc['content_basis_estimate'],
-          'input_hash':hashlib.sha256(f"{article.url}\n{article.title}\n{article.summary}".encode()).hexdigest(),
+          'input_hash':analysis_input_hash(article.url,article.title,article.summary,model),
           'source_content_hash':hashlib.sha256(article.summary.encode()).hexdigest(),
           'title_hash':hashlib.sha256(article.title.encode()).hexdigest(),
           'output_hash':hashlib.sha256(json.dumps(analysis,ensure_ascii=False,sort_keys=True).encode()).hexdigest()}
@@ -405,6 +405,27 @@ def _render_only(store,s,cfg):
     subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html,archive=False)
     print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
 
+def _source_sync_note(report_dir):
+    """Status of the isolated source sync that the launcher ran before this CLI.
+
+    Only statuses are read here. SEC/EIA observations never enter the RSS database, the
+    prompt or the report body; a failed or unconfigured source must still be visible
+    instead of looking like a day with no news.
+    """
+    path=Path(report_dir)/'sources'/'latest.json'
+    try:
+        data=json.loads(path.read_text(encoding='utf-8'))
+    except (OSError,ValueError):
+        return None
+    if not isinstance(data,dict): return None
+    sources={}
+    for name,row in (data.get('sources') or {}).items():
+        if isinstance(row,dict):
+            sources[str(name)]={'status':str(row.get('status') or 'unknown'),
+                                'reason':str(row.get('reason') or '')}
+    return {'status':str(data.get('status') or 'unknown'),
+            'started_at':str(data.get('started_at') or ''),'sources':sources}
+
 def _period_due(report_dir, prefix, days):
     files = sorted(Path(report_dir).glob(f'{prefix}-*.txt'),
                    key=lambda path: path.stat().st_mtime, reverse=True)
@@ -479,8 +500,16 @@ def main(argv=None):
     try:
         store=Store(s.db_path, migrate=False)
     except SchemaVersionError as exc:
-        print(f'Database schema check failed: {exc}', file=sys.stderr)
-        return 4
+        if Path(s.db_path).exists():
+            # An existing database below the code schema must be migrated explicitly.
+            print(f'Database schema check failed: {exc}', file=sys.stderr)
+            return 4
+        # A missing database is a fresh store, not an incompatible one: create it with the
+        # current schema. This is what makes a clean install and an isolated E2E run work;
+        # it never touches an existing older database.
+        logging.info('Creating a new database at %s with schema v%s', s.db_path,
+                     UNIFIED_SCHEMA_VERSION)
+        store=Store(s.db_path)
     registry=load_sources()
     audit=audit_sources(registry)
     audit_errors=[x for x in audit if x['severity']=='error']
@@ -543,7 +572,7 @@ def main(argv=None):
             key=Store.key(a.url)
             was_analyzed=store.analyzed(key)
             previous_input_hash=store.analysis_input_hash(key) if was_analyzed else None
-            current_input_hash=hashlib.sha256(f"{a.url}\n{a.title}\n{a.summary}".encode()).hexdigest()
+            current_input_hash=analysis_input_hash(a.url,a.title,a.summary,s.llm_model)
             new_count+=store.save_article(a,key,source_id=getattr(source_by_feed.get(a.feed_id),'source_id',''))
             if was_analyzed and previous_input_hash==current_input_hash:
                 skipped+=1; continue
@@ -625,6 +654,8 @@ def main(argv=None):
         attach_conflicts(store,stats)
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
         stats['pipeline']=pipe
+        sync=_source_sync_note(s.report_dir)
+        if sync: stats['source_sync']=sync
         if pages_fetched: stats['full_text_fetched']=pages_fetched
         if win_start or win_end:
             stats['sample_window']={'since':s.sample_since,'until':s.sample_until,

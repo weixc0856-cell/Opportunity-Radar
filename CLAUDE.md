@@ -54,7 +54,7 @@ R0–R6 已进入同一生产管线。每日 `cli` 在分析后自动执行 R1 �
 实体/谱系、事件候选、`verify` 核验、Opportunity 发现、经济数据同步与 R6 质量快照。
 生产库已迁移到 schema v9；历史 skeleton Claim 的 `period` 已修正，`source_id` 已回填。
 Opportunity 只创建 `signal_detected`，不自动声称 problem/buyer/payment 已验证。
-分析器提示词仍是 v6；`prompts/analyst_v7.md` 仍是影子，未切换。
+生产分析器使用 V7（`OR_PROMPT_PATH=prompts/analyst_v7.md`）；V6 保留为回滚版本。
 日报每日 08:00，周报/月报由 `--period auto` 按 7/30 天节奏生成。
 
 ## 文档地图

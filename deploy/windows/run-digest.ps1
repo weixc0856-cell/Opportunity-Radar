@@ -42,6 +42,16 @@ try {
   if ($modelOut) { Write-RunLog "start-model`r`n$modelOut" }
   if ($LASTEXITCODE -ne 0) { $stepExit = $LASTEXITCODE; throw "local llama-server failed to start with exit code $LASTEXITCODE" }
 
+  # Approved non-RSS sources, each into its own database, before the CLI reads them.
+  # A source failure is recorded and the digest continues: an outage must stay visible,
+  # not become a quiet day of RSS news, and it must not silently block the digest either.
+  $phase = 'sources'
+  $sourceScript = Join-Path $ProjectRoot "deploy\windows\run-sources.ps1"
+  $sourceOut = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $sourceScript 2>&1 | Out-String).Trim()
+  $sourceCode = $LASTEXITCODE
+  if ($sourceOut) { Write-RunLog "run-sources`r`n$sourceOut" }
+  if ($sourceCode -ne 0) { Write-RunLog "WARNING: source sync reported a failure or missing configuration (exit $sourceCode); see reports\sources\latest.json" }
+
   # Run the digest and write raw UTF-8 output, avoiding PowerShell's mixed-encoding redirection.
   $phase = 'cli'
   $env:PYTHONIOENCODING = 'utf-8'

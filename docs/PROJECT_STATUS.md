@@ -10,7 +10,7 @@
 |---|---|
 | 生产库 | `data/opportunity_radar.sqlite3` |
 | schema | **v9**（31 张表，含 Opportunity 四表） |
-| SHA-256（迁移 + dry-run 后） | `13009299…30e2` |
+| SHA-256（run 19 结束后） | `c6f19cf2…cad16` |
 | 迁移备份 | `data/archive/final-migration-2026-11-03/pre-v9-backup.sqlite3`（v5，SHA-256 `30a55fef…e3f`） |
 | 迁移演练 | `data/archive/final-migration-2026-11-03/migration-rehearsal.sqlite3`（v9，行数/外键/完整性通过） |
 
@@ -18,17 +18,17 @@
 
 | 表 | 行数 | 说明 |
 |---|---:|---|
-| `articles` | 150 | 已绑定 `source_id` 150/150 |
-| `analyses` | 132 | v5 结构化分析 |
-| `events` / `event_articles` | 132 / 132 | 一文章一事件；无多文章事件 |
-| `evidences` | 303 | 全部有来源、引文与定位 |
-| `claims` | 301 | `skeleton` 299（全部 `unverifiable`）+ `n5` 2（`verified`） |
-| `claim_evidence` | 305 | 每条 Claim 至少一条证据 |
-| `entities` / `entity_mentions` | 25 / 81 | 组织、政府、地点；定位 81/81 |
+| `articles` | 153 | 已绑定 `source_id` 153/153 |
+| `analyses` | 135 | v5 结构化分析（V7 提示词） |
+| `events` / `event_articles` | 135 / 135 | 一文章一事件；无多文章事件 |
+| `evidences` | 338 | 全部有来源、引文与定位 |
+| `claims` | 323 | `skeleton` 321（全部 `unverifiable`）+ `n5` 2（`verified`） |
+| `claim_evidence` | 346 | 每条 Claim 至少一条证据 |
+| `entities` / `entity_mentions` | 27 / 87 | 组织、政府、地点；定位 87/87 |
 | `event_links` | 5 | 全部 `candidate`，不合并 |
-| `opportunities` | 58 | 全部 `signal_detected`，来自 evidence-backed B 种子 |
-| `opportunity_links` | 603 | article/event/evidence/claim/entity 追溯 |
-| `runs` | 18 | 含本次统一管线 dry-run |
+| `opportunities` | 66 | 全部 `signal_detected`，来自 evidence-backed B 种子 |
+| `opportunity_links` | 684 | article/event/evidence/claim/entity 追溯 |
+| `runs` | 19 | 含 V7 全管线 dry-run（run 19） |
 | `deliveries` | 29 | 27 sent + 2 skipped |
 
 独立库：
@@ -57,6 +57,12 @@
 | 经济数据 | `economic.refresh` | economic.sqlite3 | 已接通，BLS/EIA → 观测/修订/派生 |
 | 质量快照 | `quality.record` | quality.sqlite3 + reports/quality | 已接通 |
 
+每日任务在 CLI 之前先运行 `deploy/windows/run-sources.ps1`：SEC、EIA、Federal Register、BLS
+各自写入独立库（`data/ingest/`、`data/pilot/`），不写 RSS 业务表、不进入 LLM 与日报正文；
+GDELT 记录为 `frozen`（HTTP 429），不自动重试。每个源的状态写入
+`reports/sources/latest.json`，失败或未配置会打印在日报附录的“外部数据源同步”一行，并写入
+`scheduler-run.log`。SEC 目前缺少 `OR_INGEST_SEC_USER_AGENT`，状态是 `not_configured`。
+
 N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上限、跳过数与每篇状态写入
 `stats.pipeline.claim_pipeline`。未通过的 Claim 不写生产表，原因保留在管线结果。
 
@@ -66,9 +72,9 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
 |---|---|---|---|
 | R0 重试/熔断/覆盖率/HOLD | `analyzer.py`、`publication.py`、`cli.py` | 单元测试 + `tools/e2e_verify.py` 基线 + 生产 run 15/16 | **PASS_VERIFIED（历史真实运行）** |
 | R1 Event/Evidence/Claim | `unified.py`、`linking.py`、`unified_main.py` | 生产库 117 events / 253 evidences / 253 claims；审计 PARTIAL（0 ERROR） | **PASS_VERIFIED** |
-| R2 主张核验 | `verify.py`、`claim_contract.py`、N0–N5 | 全量 1021 测试；真实 BEA 文章 N5 8 条 Claim 全部 `verified` | **PASS_VERIFIED** |
-| R2 v7 提示词 | `prompts/analyst_v7.md` | 影子运行，未切换 | **PARTIAL（影子）** |
-| R3 编辑优先级 | `scoring.py` P0–P3/REJECT | 单元测试 + 日报排序字段 | **PASS_STATIC** |
+| R2 主张核验 | `verify.py`、`claim_contract.py`、N0–N5 | 全量 1032 测试；真实 BEA 文章 N5 8 条 Claim 全部 `verified` | **PASS_VERIFIED** |
+| R2 v7 提示词 | `prompts/analyst_v7.md` | 生产分析器；V6 保留回滚；run 19 以 V7 完成全管线 dry-run | **PASS_VERIFIED** |
+| R3 编辑优先级 | `scoring.py` P0–P3/REJECT | 单元测试 + run 19 日报按 P0/P1 排序并打印优先级依据 | **PASS_VERIFIED（排序）** |
 | R4 周报/月报 | `period_report.py`、`cli --period` | 生成 weekly/monthly 文本+JSON；按文章发布时间取数 | **PASS_VERIFIED（生成）** |
 | R5 经济数据引擎 | `economic.py` | 11 datasets / 1,005 observations / 1,804 derived；修订追加测试 | **PASS_VERIFIED（同步/派生）** |
 | R6 质量与回测 | `quality.py` | 指标快照 + 30/90 天回测（18 runs，77.78% success）；版本对比；聚类/阅读指标 `NOT_MEASURED` | **PARTIAL（可测项 PASS）** |
@@ -85,28 +91,43 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   15 条谱系仅 `declared`、38 个事件无证据（均为 v4 分析跳过）。
 - **N0–N5 真实验证**：BEA Personal Income 文章经真实 CPU-only 模型完成 N0–N5，
   8 条 Claim / 7 条 Evidence 写入隔离副本，`verify` 后 **8/8 verified**，0 rejected。
-- **模型吞吐**：CPU-only（`-ngl 0`，64K）实测 **10.85 tok/s**；GPU/MoE 分层实测
-  0.8 tok/s，已改回 CPU-only。
+- **模型吞吐**：CPU-only（`-ngl 0`，64K）实测 **10–13 tok/s**（run 19 全程 10.5–13.2）；
+  GPU/MoE 分层实测 0.8 tok/s，已改回 CPU-only。run 19 总时长 54 分钟（20 篇分析 + N0–N5 8 篇），
+  在计划任务 180 分钟上限内。
 - **依赖**：`acceptance` 8/8（config、sources、FreshRSS 27 feeds、model、sqlite、
   report、mail_config、scheduler）。
-- **测试**：全量 **1023 项通过**（1 项环境跳过）。
-- **真实每日 dry-run**：运行 18（16:29–16:56）完成；取 20 / 分析 11 / 失败 0 / 覆盖率 1.0 / PASS；统一管线 9 步全部成功；N0–N5 处理 8 篇，写入 2 条 Claim；Opportunity +10；质量快照写入；未发送邮件（dry-run）。
+- **测试**：全量 **1032 项通过**（1 项环境跳过，2026-11-03）。
+- **端到端（2026-11-03）**：`tools/e2e_verify.py --limit 3` → `pass`。happy 运行：3 篇分析、
+  覆盖率 1.0、PASS、文本/HTML/归档/哈希/计数全部一致；fault 运行（非法 category）：3 条失败
+  入库、覆盖率 0、HOLD、0 投递、报告明确写出失败、退出码 1。E2E 同时验证了“缺失数据库按当前
+  schema 创建”的路径。
+- **真实每日 dry-run**：运行 18（16:29–16:56）完成；取 20 / 分析 11 / 失败 0 / 覆盖率 1.0 / PASS。
+- **V7 全管线 dry-run（run 19，18:01–18:55）**：V7 生产提示词；取 20 / 分析 20 / 失败 0 /
+  覆盖率 1.0 / PASS；9 个管线步骤全部 ok，0 警告、0 阻断；R1 回填 35 Evidence / 22 Claim；
+  N0–N5 处理 8 篇（1 篇已处理、1 篇无数字候选、0 失败），本批 8 篇均为非经济数字段落，
+  未产出 r2-v4 Claim；实体 70 条 mention；Opportunity 新建 8、已有 51；经济库同步成功；
+  质量快照 `PASS_MEASURED`；未发送邮件（dry-run），退出码 0。
 
 ## 5. 当前限制（不掩盖）
 
-1. **事件聚合**：117 events / 117 articles，0 个多文章事件；独立来源佐证 0；转载
+1. **事件聚合**：135 events / 135 articles，0 个多文章事件；独立来源佐证 0；转载
    `syndication_group` 仍为空。这是来源覆盖与正文相似度问题，不是模型问题。
 2. **N2/N3 语义参考**：只有 10 篇人工参考；不能外推到全部语料。Google/Intel title-only
    与 Personal Income 0.2% DPI 仍有已知缺口。
-3. **v7 提示词**：仍是影子；生产分析器是 v6。N0–N5 使用 r2-v4 契约。
+3. **v7 提示词**：已切换为生产分析器；V6 仅保留回滚。N0–N5 使用 r2-v4 契约。
 4. **Opportunity**：只有 `signal_detected`；problem/buyer 是模型提示，不是确认事实；
-   58 行没有经过人工 `problem_supported`/`buyer_identified`/`payment_verified` 提升。
+   66 行没有经过人工 `problem_supported`/`buyer_identified`/`payment_verified` 提升。
 5. **来源覆盖**：15 个启用 RSS 源；SEC/EIA 独立；GDELT 仍被 429 阻断；Federal Register
-   与 BLS 仍是独立 Pilot，不进入日报。
+   与 BLS 每日同步到独立 Pilot 库，但数据不进入日报正文。SEC 缺少
+   `OR_INGEST_SEC_USER_AGENT`，当前状态 `not_configured`。
 6. **R6**：事件聚类 precision/recall 无可信标注基准，标 `NOT_MEASURED`；N1 benchmark
    是冻结静态结果，不是每日重跑。
 7. **全文抓取**：所有来源 `full_text_fetch=none`；E2 只来自已声明 `full_text` 的来源。
 8. **邮件**：HOLD 不发订阅/告警邮件；失败无自动重试。
+9. **主张结构**：323 条 Claim 中 321 条是 R1 `skeleton`（无 period、无数值，全部
+   `unverifiable`），只有 2 条是 N0–N5 的 `n5` Claim。run 19 的 8 篇 N0–N5 输入都是
+   非经济数字段落（HN/论坛/版本号），未产出 r2-v4 Claim。数值主张依赖 RSS 摘要本身包含
+   数字；全文抓取仍全部关闭。
 
 ## 6. 运行方式
 

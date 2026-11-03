@@ -16,6 +16,7 @@ from . import eia, http, rights
 from .config import IngestConfigError, IngestSettings
 from .http import IngestError
 from .store import IngestStore, now, write_json
+from ..config import load_dotenv
 
 DEFAULT_START = '2024-01'
 DEFAULT_END = '2026-08'
@@ -100,6 +101,8 @@ def main(argv=None):
     parser.add_argument('--start', default=DEFAULT_START)
     parser.add_argument('--end', default=DEFAULT_END)
     args = parser.parse_args(argv)
+    # Scheduled runs start from a bare shell; .env is the project's only config file.
+    load_dotenv()
     settings = IngestSettings.from_env()
     problems = settings.validate_eia()
     if problems:

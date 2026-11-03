@@ -70,7 +70,7 @@ def gpu_memory_mb(pid):
     """Dedicated GPU memory of one process, from the Windows GPU performance counters."""
     if not pid:
         return None
-    command = ("((Get-Counter '\GPU Process Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue)"
+    command = (r"((Get-Counter '\GPU Process Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue)"
                ".CounterSamples | Where-Object { $_.InstanceName -like '*pid_%d_*' } | "
                "Measure-Object -Property CookedValue -Sum).Sum" % pid)
     out = subprocess.run(['powershell', '-NoProfile', '-Command', command], capture_output=True, text=True)

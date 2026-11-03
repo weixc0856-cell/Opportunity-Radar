@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = ROOT / 'deploy' / 'windows' / 'install-task.ps1'
 RUN = ROOT / 'deploy' / 'windows' / 'run-digest.ps1'
+SOURCES = ROOT / 'deploy' / 'windows' / 'run-sources.ps1'
 
 
 def text_of(path):
@@ -100,6 +101,33 @@ class RunDigestTests(unittest.TestCase):
                  text.index('start-model.ps1'),
                  text.index("'opportunity_radar.cli'")]
         self.assertEqual(order, sorted(order))
+
+
+class SourceSyncTests(unittest.TestCase):
+    def test_the_source_sync_runs_before_the_cli_and_never_blocks_it(self):
+        text = text_of(RUN)
+        self.assertIn('run-sources.ps1', text)
+        self.assertLess(text.index('run-sources.ps1'), text.index("'opportunity_radar.cli'"),
+                        'the economic engine must read sources synced by the same run')
+        body = text[text.index('$sourceOut'):text.index("$phase = 'cli'")]
+        self.assertIn('WARNING: source sync reported', body)
+        self.assertNotIn('throw', body, 'a source outage must not stop the digest')
+
+    def test_every_source_has_a_status_and_gdelt_is_not_run(self):
+        text = text_of(SOURCES)
+        for name in ("'sec'", "'eia'", "'federal-register'", "'bls'", "'gdelt'"):
+            self.assertIn(name, text)
+        steps_block = text.split('$steps = @(')[1].split('$results =')[0]
+        self.assertNotIn("'gdelt'", steps_block,
+                         'GDELT is frozen and must not be launched by the scheduler')
+        self.assertIn("'frozen'", text)
+
+    def test_pilot_sources_are_live_and_missing_config_is_not_success(self):
+        text = text_of(SOURCES)
+        self.assertIn("'federal-register','--live'", text)
+        self.assertIn("'bls','--live'", text)
+        self.assertIn("2 { 'not_configured' }", text)
+        self.assertIn("default { 'failed' }", text)
 
 
 if __name__ == '__main__':

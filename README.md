@@ -31,7 +31,7 @@
 5. 启动模型：`.\deploy\windows\start-model.ps1`（参数在脚本顶部；`-Foreground` 前台运行）。
    - 本地 LLM 只用 **8080** 一个端口。若 8080 已被正在开发的项目占用，脚本会等待并在日志 `reports\model-defer.log` 记录，不会另开端口或 kill 别人的进程。
    - 定时任务跑完后会停止自己启动的 llama-server，把 8080 释放给下一个使用者。
-   项目实例默认 **CPU-only**（`-ngl 0`，64K，约 19 GB 内存），实测约 10.8 tok/s；
+   项目实例默认 **CPU-only**（`-ngl 0`，64K，约 19 GB 内存），实测 10–13 tok/s；
    8 GB A750 留给 ComfyUI。GPU/MoE 分层模式在同一机器上实测约 0.8 tok/s，不要用于定时任务。
 6. 试跑：`python -m opportunity_radar.cli --dry-run`。真实运行：`.\deploy\windows\run-digest.ps1`。
 7. 注册每日任务：`.\deploy\windows\install-task.ps1`。
@@ -72,8 +72,9 @@ Federal Register / BLS Pilot ──> 独立 Pilot 库 ──> 经济数据引擎
   （仅线索，不作为已核实事实）”。文本、HTML 和邮件共用同一 `event_summary_lines`，归档 JSON 保留原始
   `event.evidence_status` 和 `event_context`。事件上下文不可用时，输出明确区分 `NOT_FOUND`、`UNAVAILABLE`、
   `READ_FAILED` 和 `SCHEMA_UNSUPPORTED`；文章自己的证据等级保留，但不会升级成事件级核验状态。
-  schema v9 代码已定义 Opportunity 四表，但生产库仍是 v5、没有 Opportunity 行；B 通道“值得验证的商业机会”
-  仍是文章级候选，不是已验证机会实体。
+  生产库已是 schema v9；Opportunity 四表有 `signal_detected` 行（来自 evidence-backed B 种子），
+  但没有 problem/buyer/payment 的人工提升。B 通道“值得验证的商业机会”本身仍是文章级候选，
+  与 Opportunity 不是同一个概念。
   HTML 与文本都渲染 v5 facts/inferences/gaps/actions。卡片下依次给出：
   - `事件结构`：同事件报道 N 篇 · 报道来源 N 个 · 来源族 N 个 · 独立佐证：是/否（单篇单族时不打印）；
   - `事实主张`：事件关联的主张，逐条标注类型（事实/推断/…）与核验状态，并给出证据 ID、定位
@@ -141,9 +142,9 @@ python -m opportunity_radar.verify --db <库> --audit            # 哪些检查�
 python -m opportunity_radar.verify --db <库> --conflicts        # 记录到的冲突，双方数值与依据
 ```
 
-结构化提示词 `prompts/analyst_v7.md` 已存在，但**只在影子运行中使用**（`tools/shadow_v7.py`），
-生产分析器仍用 v6。N0–N5 与 `verify` 已通过统一管线接入每日运行；`verified` 只表示主张与其
-证据一致，不等于事实为真。
+生产分析器使用 `prompts/analyst_v7.md`（`OR_PROMPT_PATH`）。v6 文件保留仅用于回滚；
+`tools/shadow_v7.py` 已改为 V6/V7 对照工具，不再是第二套生产版本。N0–N5 与 `verify` 通过
+统一管线接入每日运行；`verified` 只表示主张与其证据一致，不等于事实为真。
 
 主张提取流水线（离线、只读）：
 
@@ -173,7 +174,7 @@ N4 确定性地标准化数值/单位/数量级/币种/期间/baseline，并保�
 只记录不补造。
 节点运行写入独立的追加式留存（`data/claim-pipeline/node_runs.sqlite3`）；通过 r2-v4 契约与
 证据定位检查的 N5 Claim 由 `pipeline.py` 写入生产 `claims`/`evidences`（`extractor='n5'`），
-随后由 `verify.py` 核验，未通过的不写入。七夹具与 50 篇真实 RSS 影子运行已完成（Batch 12）；
+随后由 `verify.py` 核验，未通过的不写入。七夹具与 50 篇真实 RSS 运行已完成（Batch 12）；
 Batch 13 完成 N2 经济相关性、N3 期间关联与 N5 语义去重（14 篇回归）；Batch 14 修复 N3
 rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 的 GDP subject、贸易 predicate
 与 `$0.1bn` economic relevance；Batch 16 只改 N5，把变化关系的终点 level 折回 change（10 篇参考集），
@@ -190,7 +191,7 @@ N5 Claim 仍非已核实事实。
 
 - 七张核心表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`、
   `claim_corrections`；实体层：`entities`、`entity_aliases`、`entity_mentions`、`entity_relations`、`event_links`。
-- 机会层（schema v9，当前空表）：`opportunities`、`opportunity_links`、`opportunity_hypotheses`、
+- 机会层（schema v9；生产已有 `signal_detected` 行）：`opportunities`、`opportunity_links`、`opportunity_hypotheses`、
   `opportunity_revisions`。最小数据访问在 `opportunity.py`，append-only revision；每日管线从
   evidence-backed B 种子创建 `signal_detected`，不自动声称 problem/buyer/payment 已验证。
   `b-candidates` 只读生成 B 种子映射：证据型种子、仅信号种子、映射不足、疑似重复簇和人工复核状态；
@@ -286,6 +287,9 @@ R5 经济库位于 `data/economic/economic.sqlite3`：`datasets` / `observations
 - 计划任务：`.\deploy\windows\install-task.ps1`（每日 08:00）。启动器 `run-digest.ps1` 记录运行 ID、
   各阶段、CLI 进程号与退出码；启动器被外部终止时会留下 `reports/launcher-inflight.json`，
   下次运行会报出这条未完成记录。任务的电源设置显式关闭了"使用电池时停止"。
+- 外部数据源：启动器先运行 `run-sources.ps1`（SEC、EIA、Federal Register、BLS，各自独立库）；
+  状态写入 `reports/sources/latest.json`，失败或未配置会出现在日报附录，GDELT 记为 `frozen`。
+  这些源的数据不进入 RSS 业务表、提示词或日报正文。
 - 管理后台：`.\deploy\windows\start-admin.ps1` → `http://127.0.0.1:8090`，只监听回环地址，
   没有多用户认证。
 - 邮件：端口 465 用 `OR_SMTP_SECURITY=ssl`，587 用 `starttls`；需要授权码而不是登录密码。

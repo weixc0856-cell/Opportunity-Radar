@@ -14,6 +14,7 @@ from .config import IngestConfigError, IngestSettings
 from .http import IngestError
 from .sec import ConceptRequest, SecClient, assign_filing_relations, normalize_concept, plan_selection
 from .store import IngestStore, now, write_json
+from ..config import load_dotenv
 
 
 def run(settings, store, limit=None, client=None):
@@ -89,6 +90,8 @@ def main(argv=None):
     parser.add_argument('--limit', type=int, default=None)
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
+    # Scheduled runs start from a bare shell; .env is the project's only config file.
+    load_dotenv()
     settings = IngestSettings.from_env()
     problems = settings.validate_sec()
     if problems:

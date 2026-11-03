@@ -3,8 +3,12 @@ from opportunity_radar.analyzer import load_prompt, PROMPT_VERSION, SYSTEM
 
 class Tests(unittest.TestCase):
  def test_prompt_file_is_versioned_and_loaded(self):
-  version,text=load_prompt()
+  # The v6 file is the documented rollback prompt; production selects v7 via OR_PROMPT_PATH.
+  version,text=load_prompt('prompts/analyst.md')
   self.assertEqual(version,'6');self.assertIn('untrusted data',text);self.assertIn('facts',text);self.assertIn('actionability',text)
+ def test_production_prompt_is_v7_with_structured_claims(self):
+  version,text=load_prompt('prompts/analyst_v7.md')
+  self.assertEqual(version,'7');self.assertIn('claims',text)
  def test_shared_contracts_are_in_runtime_prompt(self):
   version,text=load_prompt()
   self.assertIn('Chinese Business Briefing Style Guide',text)

@@ -18,7 +18,7 @@ N5：`$105.6bn` 的终点 level 折回 change，Claim 18→17，严格精确率 
 `docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`、
 `docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md` 与
 `docs/archive/R2_BATCH16_N5_SEMANTIC_ASSEMBLY_2026-11-02.md`。
-生产分析器提示词仍是 v6；`prompts/analyst_v7.md` 仍是影子，未切换。N0–N5 使用
+生产分析器使用 V7（`OR_PROMPT_PATH=prompts/analyst_v7.md`）；V6 仅保留回滚。N0–N5 使用
 `n2-v3` / `n3-v3` / `n4-v2` / `n5-v3` 与契约 `r2-v4`。
 
 - N0/N1：`docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`
@@ -174,7 +174,7 @@ execution_status、executed_at、params_json、tools_json、output_json。`INSER
   没有修改既有单位、换算或核验规则。
 - N5 产出 r2-v4 Claim；通过契约与证据检查后由 `pipeline.py` 写入生产 `claims`/`evidences`，
   再由 `verify.py` 核验。`verified` 仍只表示主张与其证据一致，不是已核实事实。
-- v7 未启用；生产仍是 v6；G6 未批准。
+- V7 已启用为生产分析器；V6 仅保留回滚。N0–N5 契约仍为 r2-v4。
 
 ## 11. 已知限制
 
@@ -187,7 +187,7 @@ execution_status、executed_at、params_json、tools_json、output_json。`INSER
 6. N2/N3 语义准确率没有全量人工基准；候选覆盖率、处置完整性与 Claim 数量都不是语义准确率。
 7. 七个夹具与 50 篇真实语料影子运行均已完成（Batch 12）；Batch 13 只对受影响文章做回归，
    没有重跑 50 篇，不能把回归结果当作新的全量通过率。
-8. v7 与 G6 未推进。
+8. V7 已切换为生产；G6 的 N0–N5 生产 Claim 链已接通。
 
 ## 12. 运行
 

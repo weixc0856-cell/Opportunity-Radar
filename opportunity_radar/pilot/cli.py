@@ -21,6 +21,7 @@ from .report import (
     write_gdelt_summary,
 )
 from .rights import PilotRightsError, assert_source_allowed
+from ..config import load_dotenv
 from .store import PilotStore
 
 
@@ -297,6 +298,8 @@ def build_parser():
 
 
 def main(argv=None):
+    # Scheduled runs start from a bare shell; .env is the project's only config file.
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

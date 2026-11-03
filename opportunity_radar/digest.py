@@ -535,6 +535,12 @@ def render_digest(items,stats,date_label=None):
     quality=Counter(_evidence_text(x) for x in items)
     q=', '.join(f'{k} {v}' for k,v in quality.most_common()) or '无'
     lines.append('   数据质量：证据等级分布 '+q+'。仅标题或无法定位的摘录不能作为已验证需求。')
+    sync=stats.get('source_sync')
+    if sync:
+        rows=[f"{name} {row.get('status')}"+(f"（{row.get('reason')}）" if row.get('reason') else '')
+              for name,row in (sync.get('sources') or {}).items()]
+        lines.append(f"   外部数据源同步（{str(sync.get('started_at') or '')[:10] or '时间未记录'}）："
+                     +(', '.join(rows) or '无记录')+'. 各源独立入库，不进入本报告的证据与主张。')
     lines+=_source_audit_note(stats)
     lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'}（{stats.get('prompt_hash') or 'hash未记录'}）· 规则 {stats.get('rules_version','v2')}")
     evs=[e for x in items for e in (x.get('evidence') or [])]

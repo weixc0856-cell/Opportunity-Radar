@@ -18,7 +18,7 @@ def source(**overrides):
 
 class SourceAuditTests(unittest.TestCase):
     def test_current_repository_registry_is_safe_by_default(self):
-        sources = load_sources()
+        sources = load_sources('config/sources.csv')
         self.assertTrue(sources)
         self.assertFalse(any(s.enabled for s in sources))
         self.assertTrue(any(i['code'] == 'no_enabled_sources' for i in audit_sources(sources, date(2026, 10, 20))))
