@@ -9,6 +9,7 @@ from .render_html import render_html
 from .scoring import score_article, RULES_VERSION, DEFAULT_LANE_WEIGHTS, DEFAULT_LANE_THRESHOLDS
 from .lanes import LANES
 from .source_policy import load_sources, is_approved
+from . import display
 from .store import Store
 from .unified import SchemaVersionError, SCHEMA_VERSION as UNIFIED_SCHEMA_VERSION
 from .analyzer import (PROMPT_VERSION, PROMPT_HASH, CONNECT_RESET, CONNECT_REFUSED,
@@ -402,6 +403,7 @@ def _render_only(store,s,cfg):
     stats['prompt_version']=next((x['meta'].get('prompt_version') for x in items if x.get('meta',{}).get('prompt_version')),'')
     stats['prompt_hash']=next((x['meta'].get('prompt_hash') for x in items if x.get('meta',{}).get('prompt_hash')),'')
     stats['empty_reason']=empty_reason(stats)
+    stats['watchlist']=build_watchlist(store, None)
     subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html,archive=False)
     print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
 
@@ -425,6 +427,98 @@ def _source_sync_note(report_dir):
                                 'reason':str(row.get('reason') or '')}
     return {'status':str(data.get('status') or 'unknown'),
             'started_at':str(data.get('started_at') or ''),'sources':sources}
+
+WATCH_LIST_LIMIT = 8
+
+
+def build_watchlist(store, pipe, limit=WATCH_LIST_LIMIT):
+    """Weak-but-useful material the digest must still show.
+
+    Discovery already keeps it: skeleton claims, `signal_detected` Opportunities,
+    unconfirmed event links and numbers that N2-N5 could not turn into a claim. This only
+    collects it for presentation; it changes no score, no gate and no stored row.
+    """
+    watch = {'limit': limit,
+             'opportunities': {'count': 0, 'items': []},
+             'numeric_without_claims': {'count': 0, 'items': []},
+             'candidate_links': {'count': 0, 'items': []},
+             'cap_unprocessed': 0}
+    titles = {}
+    try:
+        with store.connect() as conn:
+            opportunities = [dict(row) for row in conn.execute(
+                """SELECT o.title, o.confidence, o.validation_state,
+                          (SELECT COUNT(*) FROM opportunity_links l
+                            WHERE l.opportunity_id=o.opportunity_id) AS links
+                     FROM opportunities o
+                    WHERE o.validation_state='signal_detected'
+                    ORDER BY o.confidence DESC, links DESC, o.first_seen_at DESC""")]
+            titles = {row['article_key']: row['title'] for row in
+                      conn.execute('SELECT article_key, title FROM articles')}
+            links = [dict(row) for row in conn.execute(
+                """SELECT l.basis, l.confidence, l.status,
+                          e1.title_norm AS left_title, e2.title_norm AS right_title
+                     FROM event_links l
+                     LEFT JOIN events e1 ON e1.event_id=l.left_key
+                     LEFT JOIN events e2 ON e2.event_id=l.right_key
+                    WHERE l.left_kind='event' AND l.right_kind='event'
+                      AND l.status='candidate'
+                    ORDER BY l.created_at DESC""")]
+    except Exception:
+        # An old database without these tables must not break the digest.
+        logging.exception('Watchlist query failed; the weak-signal section stays empty')
+        return watch
+
+    # The same article re-analysed can yield a second `signal_detected` row because the
+    # canonical key contains the model's problem statement. Rows are kept; the report groups
+    # them by title so a repeated weak signal does not crowd out other articles.
+    items, by_title = [], {}
+    for row in opportunities:
+        tier, reason = display.opportunity_tier(row)
+        title = str(row.get('title') or '')[:160]
+        key = ' '.join(title.lower().split())
+        if key in by_title:
+            by_title[key]['duplicates'] += 1
+            continue
+        item = {'title': title,
+                'confidence': float(row.get('confidence') or 0.0),
+                'validation_state': row.get('validation_state') or '',
+                'links': int(row.get('links') or 0),
+                'duplicates': 0, 'tier': tier, 'reason': reason}
+        by_title[key] = item
+        items.append(item)
+    watch['opportunities'] = {'count': len(items), 'records': len(opportunities),
+                              'items': items[:limit]}
+
+    step = ((pipe or {}).get('steps') or {}).get('claim_pipeline') or {}
+    result = step.get('result') or {}
+    numeric, seen = [], set()
+    for detail in result.get('details') or []:
+        key = str(detail.get('article_key') or '')
+        if not key or key in seen or detail.get('error'):
+            continue
+        n1 = int(detail.get('n1_candidates') or 0)
+        claims = int(detail.get('claims') or 0)
+        if n1 <= 0 or claims > 0:
+            continue
+        seen.add(key)
+        numeric.append({'article_key': key,
+                        'title': str(titles.get(key) or key[:16])[:160],
+                        'candidates': n1, 'tier': 'L2', 'reason': 'no_claim'})
+    watch['numeric_without_claims'] = {'count': len(numeric), 'items': numeric[:limit]}
+    watch['cap_unprocessed'] = int(result.get('unprocessed') or 0)
+
+    links_out = []
+    for row in links:
+        tier, reason = display.link_tier(row)
+        links_out.append({'left': str(row.get('left_title') or '')[:100],
+                          'right': str(row.get('right_title') or '')[:100],
+                          'basis': str(row.get('basis') or ''),
+                          'confidence': float(row.get('confidence') or 0.0),
+                          'tier': tier, 'reason': reason})
+    watch['candidate_links'] = {'count': len(links_out), 'items': links_out[:limit]}
+    return watch
+
 
 def _period_due(report_dir, prefix, days):
     files = sorted(Path(report_dir).glob(f'{prefix}-*.txt'),
@@ -654,6 +748,7 @@ def main(argv=None):
         attach_conflicts(store,stats)
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
         stats['pipeline']=pipe
+        stats['watchlist']=build_watchlist(store, pipe)
         sync=_source_sync_note(s.report_dir)
         if sync: stats['source_sync']=sync
         if pages_fetched: stats['full_text_fetched']=pages_fetched

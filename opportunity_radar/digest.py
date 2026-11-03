@@ -7,6 +7,7 @@ from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES, state_of
 from .publication import disclosure, headline_notice
 from .unified import (EVENT_CONTEXT_AVAILABLE, EVENT_CONTEXT_LABEL)
 from .lanes import LANES, LANE_LABEL, LANE_PROMISE, item_lane as _lane
+from . import display
 
 STATUS_LABEL={'priority':'优先验证','watch':'持续观察','filtered':'已过滤'}
 REASON_LABEL={'hiring':'招聘/企业动态','no_business_signal':'无商业信号','insufficient_evidence':'证据不足，无法进入简报','content_insufficient':'内容不足，无法核实','low_score':'分数未达门槛'}
@@ -135,7 +136,8 @@ def _claim_lines(event):
         where=_locator_text(item.get('locator_json'))
         source=item.get('evidence_source_id') or ''
         detail='；'.join(part for part in (where, source) if part)
-        lines.append(f"     · [{kind}·{state}] 「{text}」 ← 证据 {pointer}"+(f"（{detail}）" if detail else ''))
+        tier,_reason=display.claim_tier(item)
+        lines.append(f"     · [{kind}·{state}·{tier}] 「{text}」 ← 证据 {pointer}"+(f"（{detail}）" if detail else ''))
     if len(items)>2: lines.append(f"     · 另有 {len(items)-2} 条主张，见归档 JSON")
     return lines
 
@@ -520,7 +522,9 @@ def render_digest(items,stats,date_label=None):
     ev=evidence_breakdown(items)
     lines.append('   证据强度：'+('，'.join(f"{STATE_LABEL.get(e['state'],e['state'])} {e['count']}" for e in ev) or '无'))
     lines.append('   '+denominator_note(stats))
-    lines+=['','五、附录','   来源分布：'+(', '.join(f'{k} {v}' for k,v in Counter(x.get('source_name','Unknown') for x in items).most_common()) or '无')]
+    watch_lines=_watch_lines(stats)
+    lines+=watch_lines
+    lines+=['',('六' if watch_lines else '五')+'、附录','   来源分布：'+(', '.join(f'{k} {v}' for k,v in Counter(x.get('source_name','Unknown') for x in items).most_common()) or '无')]
     if deferred:
         lines.append(f'   本期未纳入分发（来源单期配额）：{len(deferred)} 条，原始判断保留如下')
         for x in sorted(deferred,key=lambda v:(-v.get('score',0),v.get('title',''))):
@@ -552,6 +556,49 @@ def render_digest(items,stats,date_label=None):
     lines.append(_rules_line(stats))
     lines.append('   免责声明：初筛分数只表示相对优先级；营收、利润、市场规模和法律许可等主张必须核对原始来源及独立证据。')
     return subject,'\n'.join(lines)
+
+def _watch_lines(stats):
+    """Everything the digest did not promote, still visible with its reason.
+
+    A weak signal is not a fact and never enters the publication gate; it is kept so a
+    later run, a corroborating source or a human reviewer can act on it.
+    """
+    watch=stats.get('watchlist')
+    if not watch: return []
+    limit=int(watch.get('limit') or 8)
+    lines=['','五、待观察信号（弱信号 / 未确认）',
+           '   口径：这些条目保留在库中并参与追溯，不进入主阅读区；弱信号不等于事实，也不计入发布门禁。']
+    opps=watch.get('opportunities') or {}; opp_items=opps.get('items') or []
+    records=int(opps.get('records') or opps.get('count') or 0)
+    titles=int(opps.get('count') or 0)
+    extra_note=(f"，原始 {records} 条记录（同一文章重分析会生成多条）" if records>titles else '')
+    lines.append(f"   1. 低置信 Opportunity：{titles} 个标题{extra_note}"
+                 '（仅 signal_detected，未经问题/买方/付费验证）')
+    for item in opp_items[:limit]:
+        dup=(f" · 同标题 {(item.get('duplicates') or 0)+1} 条" if item.get('duplicates') else '')
+        lines.append(f"      - [{display.label(item.get('tier'),item.get('reason'))}] {item.get('title')}"
+                     f"（confidence {float(item.get('confidence') or 0):.2f} · 追溯链接 {item.get('links')}{dup}）")
+    if int(opps.get('count') or 0) > len(opp_items):
+        lines.append(f"      - 另有 {int(opps.get('count') or 0)-len(opp_items)} 条，见归档 JSON")
+    nums=watch.get('numeric_without_claims') or {}; num_items=nums.get('items') or []
+    lines.append(f"   2. 有数字但未形成可核验主张：{int(nums.get('count') or 0)} 篇")
+    for item in num_items[:limit]:
+        lines.append(f"      - [{display.label(item.get('tier'),item.get('reason'))}] {item.get('title')}"
+                     f"（数字候选 {item.get('candidates')} 个）")
+    if int(nums.get('count') or 0) > len(num_items):
+        lines.append(f"      - 另有 {int(nums.get('count') or 0)-len(num_items)} 篇，见归档 JSON")
+    links=watch.get('candidate_links') or {}; link_items=links.get('items') or []
+    lines.append(f"   3. 可能相关事件（未确认合并）：{int(links.get('count') or 0)} 对。未经确认，不作为同一事件")
+    for item in link_items[:limit]:
+        basis=item.get('basis') or ''
+        lines.append(f"      - [{display.label(item.get('tier'),item.get('reason'))}] {item.get('left')} ↔ {item.get('right')}"
+                     f"（依据 {basis} · {float(item.get('confidence') or 0):.2f}）")
+    if int(links.get('count') or 0) > len(link_items):
+        lines.append(f"      - 另有 {int(links.get('count') or 0)-len(link_items)} 对，见归档 JSON")
+    cap=int(watch.get('cap_unprocessed') or 0)
+    if cap:
+        lines.append(f"   4. N0–N5 本轮上限外：{cap} 篇已分析文章未进入主张提取，下一轮继续（不是丢弃）。")
+    return lines
 
 def _rules_line(stats):
     lane_weights=stats.get('lane_weights') or {}

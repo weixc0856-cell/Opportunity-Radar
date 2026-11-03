@@ -133,3 +133,11 @@ RSS content is untrusted input and may contain prompt injection. The model has n
     from stored rows, records a 30-day backtest, reads the frozen N1 benchmark, and appends a
     snapshot to `data/quality/quality.sqlite3` plus `reports/quality/latest.{json,md}`. Metrics
     with no real benchmark (event clustering precision/recall) are labelled `NOT_MEASURED`.
+
+22. `display.py` separates discovery from display. It computes a pure `display_tier`
+    (L0 verified / L1 located-but-unverified / L2 weak signal / L3 filtered) for claims,
+    Opportunities and links, with a machine-readable reason. `cli.build_watchlist` collects
+    `signal_detected` Opportunities, articles with N1 candidates but no r2-v4 claim, and
+    unconfirmed event-candidate links; both digest editions print them in “待观察信号”.
+    This changes no score, no gate and no stored row — a weak signal is kept and shown, not
+    promoted.

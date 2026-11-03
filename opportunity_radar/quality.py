@@ -120,6 +120,16 @@ def metrics(db_path=DEFAULT_DB):
                                                          'rules_version': key[2],
                                                          'analyses': 0})
             entry['analyses'] += 1
+        signal_detected = (_scalar(
+            conn, "SELECT COUNT(*) FROM opportunities WHERE validation_state='signal_detected'")
+            if 'opportunities' in tables else None)
+        candidate_event_links = (_scalar(
+            conn, """SELECT COUNT(*) FROM event_links
+                    WHERE left_kind='event' AND right_kind='event' AND status='candidate'""")
+            if 'event_links' in tables else None)
+        located_unverified = _scalar(
+            conn, """SELECT COUNT(*) FROM claims
+                    WHERE verification_state<>'verified' AND locator_json NOT IN ('','{}')""")
         return {
             'status': 'PASS_MEASURED',
             'measured_at': datetime.now(timezone.utc).isoformat(),
@@ -147,6 +157,11 @@ def metrics(db_path=DEFAULT_DB):
                      'gate_escape_rate_pct': _pct(hold_deliveries, hold_runs)},
             'source_yield': source_yield,
             'versions': versions,
+            # Discovery-layer counts. They make "how much is kept but not promoted"
+            # measurable, so the weak-signal block can be checked against the database.
+            'display': {'signal_detected_opportunities': signal_detected,
+                        'candidate_event_links': candidate_event_links,
+                        'located_unverified_claims': located_unverified},
         }
     finally:
         conn.close()
@@ -241,7 +256,10 @@ def record(db_path=DEFAULT_DB, out_dir=DEFAULT_REPORT_DIR, quality_db=DEFAULT_QU
                  f" success {b['run_success_rate_pct']}%",
                  f"- backtest: 90d · {b90['runs']} runs ·"
                  f" success {b90['run_success_rate_pct']}%",
-                 f"- benchmark: {n.get('status')}"]
+                 f"- benchmark: {n.get('status')}",
+                 f"- display: signal_detected {m['display']['signal_detected_opportunities']}"
+                 f" · candidate event links {m['display']['candidate_event_links']}"
+                 f" · located-but-unverified claims {m['display']['located_unverified_claims']}"]
     else:
         lines = ['# Opportunity Radar quality snapshot', '',
                  f"- status: {m.get('status')}", f"- reason: {m.get('reason')}"]

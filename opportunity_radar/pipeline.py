@@ -193,7 +193,8 @@ def run_claim_pipeline(db_path, articles, analyzed_keys, settings, limit=None,
                     'ok' if n2.get('status') in ('success', 'partial') else 'failed')
             if n2.get('status') not in ('success', 'partial'):
                 failed += 1
-                details.append({'article_key': article_key, 'error': 'n2 ' + str(n2.get('status'))})
+                details.append({'article_key': article_key, 'error': 'n2 ' + str(n2.get('status')),
+                                'n1_candidates': len(n1.get('candidates') or [])})
                 continue
             n3_runner = semantic_common.JsonRunner(client, n3_relationships.SYSTEM_PROMPT,
                                                    n3_relationships.SCHEMA, 2400, retries=1)
@@ -224,6 +225,7 @@ def run_claim_pipeline(db_path, articles, analyzed_keys, settings, limit=None,
             evidences_written += promoted['evidences']
             processed += 1
             details.append({'article_key': article_key,
+                            'n1_candidates': len(n1.get('candidates') or []),
                             'n2': n2.get('status'), 'n3': n3.get('status'),
                             'n4': n4.get('status'), 'n5': n5.get('status'),
                             'claims': promoted['claims'], 'rejected': promoted['rejected'][:5]})
@@ -232,10 +234,17 @@ def run_claim_pipeline(db_path, articles, analyzed_keys, settings, limit=None,
             logger.warning('Claim pipeline failed for %s: %s', article.url, exc, exc_info=True)
             details.append({'article_key': article_key,
                             'error': f'{type(exc).__name__}: {exc}'[:300]})
+    # Articles this run could have processed but did not reach because of the per-run cap.
+    # They are already analysed; the next run picks them up. Counted, never hidden.
+    considered = sum(1 for article in articles
+                     if Store.key(article.url) not in already
+                     and Store.key(article.url) in analysed)
+    unprocessed = max(0, considered - processed - skipped_no_numbers - failed)
     status = 'success' if not failed else ('partial' if processed else 'failed')
     return {'status': status, 'limit': limit, 'processed': processed,
             'skipped_already_processed': skipped_existing,
             'skipped_no_numeric_candidates': skipped_no_numbers,
+            'unprocessed': unprocessed,
             'failed': failed, 'claims_written': claims_written,
             'evidences_written': evidences_written, 'details': details[:20]}
 

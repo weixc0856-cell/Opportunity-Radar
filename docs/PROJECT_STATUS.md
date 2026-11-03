@@ -72,7 +72,7 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
 |---|---|---|---|
 | R0 重试/熔断/覆盖率/HOLD | `analyzer.py`、`publication.py`、`cli.py` | 单元测试 + `tools/e2e_verify.py` 基线 + 生产 run 15/16 | **PASS_VERIFIED（历史真实运行）** |
 | R1 Event/Evidence/Claim | `unified.py`、`linking.py`、`unified_main.py` | 生产库 117 events / 253 evidences / 253 claims；审计 PARTIAL（0 ERROR） | **PASS_VERIFIED** |
-| R2 主张核验 | `verify.py`、`claim_contract.py`、N0–N5 | 全量 1032 测试；真实 BEA 文章 N5 8 条 Claim 全部 `verified` | **PASS_VERIFIED** |
+| R2 主张核验 | `verify.py`、`claim_contract.py`、N0–N5 | 全量 1043 测试；真实 BEA 文章 N5 8 条 Claim 全部 `verified` | **PASS_VERIFIED** |
 | R2 v7 提示词 | `prompts/analyst_v7.md` | 生产分析器；V6 保留回滚；run 19 以 V7 完成全管线 dry-run | **PASS_VERIFIED** |
 | R3 编辑优先级 | `scoring.py` P0–P3/REJECT | 单元测试 + run 19 日报按 P0/P1 排序并打印优先级依据 | **PASS_VERIFIED（排序）** |
 | R4 周报/月报 | `period_report.py`、`cli --period` | 生成 weekly/monthly 文本+JSON；按文章发布时间取数 | **PASS_VERIFIED（生成）** |
@@ -96,7 +96,7 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   在计划任务 180 分钟上限内。
 - **依赖**：`acceptance` 8/8（config、sources、FreshRSS 27 feeds、model、sqlite、
   report、mail_config、scheduler）。
-- **测试**：全量 **1032 项通过**（1 项环境跳过，2026-11-03）。
+- **测试**：全量 **1043 项通过**（1 项环境跳过，2026-11-03）。
 - **端到端（2026-11-03）**：`tools/e2e_verify.py --limit 3` → `pass`。happy 运行：3 篇分析、
   覆盖率 1.0、PASS、文本/HTML/归档/哈希/计数全部一致；fault 运行（非法 category）：3 条失败
   入库、覆盖率 0、HOLD、0 投递、报告明确写出失败、退出码 1。E2E 同时验证了“缺失数据库按当前
@@ -107,6 +107,14 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   N0–N5 处理 8 篇（1 篇已处理、1 篇无数字候选、0 失败），本批 8 篇均为非经济数字段落，
   未产出 r2-v4 Claim；实体 70 条 mention；Opportunity 新建 8、已有 51；经济库同步成功；
   质量快照 `PASS_MEASURED`；未发送邮件（dry-run），退出码 0。
+
+### 发现层与展示层分离
+
+`display.py` 为 Claim / Opportunity / 关联计算 `L0–L3` 展示等级与原因；日报在“数据概览”之后
+固定输出“待观察信号（弱信号 / 未确认）”：低置信 Opportunity、有数字候选但无 r2-v4 Claim 的
+文章、未确认的事件候选关联，以及 N0–N5 上限外的文章数。发现层不删除任何条目；该区块不改变
+评分、发布门禁或存储。质量快照新增 `display` 计数（signal_detected、候选事件关联、有定位但
+未核验的 Claim），用于检查“有用信息在哪一层被降级”。
 
 ## 5. 当前限制（不掩盖）
 

@@ -11,6 +11,7 @@ from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_no
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL,summarize
 from .evidence import STATE_LABEL,STATE_MEANING,EVIDENCE_STATES
 from .lanes import LANES,LANE_LABEL,LANE_PROMISE
+from . import display
 
 INK='#1f2328'; MUTED='#6b7280'; RULE='#d9d9d9'; ORANGE='#d9730d'; SOFT='#fbf7f2'; FAINT='#f3f4f6'
 FONT="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif"
@@ -149,6 +150,48 @@ def _audit_html(stats):
     rows+= [f"[{i.get('severity','info')}] {i.get('source_id','')} · {i.get('code','')}：{i.get('message','')}" for i in issues[:12]]
     return '<br>'.join(_e(r) for r in rows)
 
+def _watch_block(watch):
+    """Weak signals in the HTML edition: same content and reasons as the text report."""
+    limit=int(watch.get('limit') or 8)
+    total=int((watch.get('opportunities') or {}).get('count') or 0) +           int((watch.get('numeric_without_claims') or {}).get('count') or 0) +           int((watch.get('candidate_links') or {}).get('count') or 0)
+    if total==0 and not watch.get('cap_unprocessed'):
+        return (f'<div style="font-size:13px;color:#4b5563;">本轮没有降级信号。</div>')
+    out=[f'<div style="font-size:11.5px;color:{MUTED};line-height:1.7;margin-bottom:8px;">'
+         '口径：这些条目保留在库中并参与追溯，不进入主阅读区；弱信号不等于事实，也不计入发布门禁。</div>']
+    def group(title,count,items,line):
+        shown=items[:limit]
+        rows=''.join(line(i) for i in shown) or '<div>无。</div>'
+        more=(f'<div style="font-size:11.5px;color:{MUTED};margin-top:6px;">另有 {count-len(shown)} 条，见归档 JSON。</div>'
+              if count>len(shown) else '')
+        return (f'<div style="margin-top:14px;"><div style="font-size:13px;font-weight:700;color:{INK};">{_e(title)}：{count}</div>'
+                f'<div style="font-size:12.5px;line-height:1.8;color:#4b5563;margin-top:4px;">{rows}</div>{more}</div>')
+    opps=watch.get('opportunities') or {}
+    records=int(opps.get('records') or opps.get('count') or 0)
+    titles=int(opps.get('count') or 0)
+    title_note=(f'（原始 {records} 条记录，同一文章重分析会生成多条）' if records>titles else '')
+    out.append(group('低置信 Opportunity（仅 signal_detected，未经问题/买方/付费验证）'+title_note,
+                     titles, opps.get('items') or [],
+                     lambda i: f'<div>[{_e(display.label(i.get("tier"),i.get("reason")))}] {_e(i.get("title"))}'
+                               f' · confidence {float(i.get("confidence") or 0):.2f} · 追溯链接 {i.get("links")}'
+                               + (f' · 同标题 {(i.get("duplicates") or 0)+1} 条' if i.get("duplicates") else '')
+                               + '</div>'))
+    nums=watch.get('numeric_without_claims') or {}
+    out.append(group('有数字但未形成可核验主张',
+                     int(nums.get('count') or 0), nums.get('items') or [],
+                     lambda i: f'<div>[{_e(display.label(i.get("tier"),i.get("reason")))}] {_e(i.get("title"))}'
+                               f'（数字候选 {i.get("candidates")} 个）</div>'))
+    links=watch.get('candidate_links') or {}
+    out.append(group('可能相关事件（未确认合并，不作为同一事件）',
+                     int(links.get('count') or 0), links.get('items') or [],
+                     lambda i: f'<div>[{_e(display.label(i.get("tier"),i.get("reason")))}] {_e(i.get("left"))} ↔ {_e(i.get("right"))}'
+                               f'（依据 {_e(i.get("basis"))} · {float(i.get("confidence") or 0):.2f}）</div>'))
+    cap=int(watch.get('cap_unprocessed') or 0)
+    if cap:
+        out.append(f'<div style="margin-top:14px;font-size:12.5px;line-height:1.8;color:#4b5563;">'
+                   f'N0–N5 本轮上限外：{cap} 篇已分析文章未进入主张提取，下一轮继续（不是丢弃）。</div>')
+    return ''.join(out)
+
+
 def render_html(items,stats,date_label=None):
     date_label=date_label or datetime.now().astimezone().strftime('%Y-%m-%d')
     counts=stats.get('counts',{}); strong=sum(1 for x in items if _pay_strong(x))
@@ -208,6 +251,10 @@ def render_html(items,stats,date_label=None):
         parts.append(f'<div style="font-size:11px;color:{MUTED};margin-top:6px;line-height:1.6;">'
                      f"样本窗口：{_e(window.get('since') or '(无下界)')} 至 {_e(window.get('until') or '(无上界)')} UTC"
                      f"（池 {_e(window.get('pool'))} → 窗口内 {_e(window.get('in_window'))} → 取 {_e(window.get('sampled'))}）</div>")
+    watch=stats.get('watchlist')
+    if watch:
+        parts.append(_section(f'{n:02d}','待观察信号（弱信号 / 未确认）')); n+=1
+        parts.append(_watch_block(watch))
     parts.append(_section(f'{n:02d}','战略含义与附录'))
     parts.append(f'<div style="font-size:13.5px;line-height:1.85;color:{INK};">{_e(strategic_note(items))}</div>')
     sources=', '.join(f'{k} {v}' for k,v in Counter(x.get('source_name','Unknown') for x in items).most_common()) or '无'
