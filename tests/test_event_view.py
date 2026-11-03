@@ -4,7 +4,9 @@ The rendering rules matter because they decide what a reader sees: two reports o
 event must read as one item with the other reports listed, and the source counts must be
 the ones the R1 tables can actually support.
 """
+import json
 import logging
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,11 +83,28 @@ class SummaryLineTests(unittest.TestCase):
         self.assertIn('独立来源单元 2 个', text)
         self.assertIn('独立佐证：是', text)
 
+    def test_an_evidence_backed_event_is_labeled_without_overclaiming(self):
+        block = event_block(evidence_status='EVIDENCE_BACKED')
+        text = ' '.join(event_summary_lines(item('A', 50, event=block)))
+        self.assertIn('证据状态：有证据', text)
+        self.assertIn('不等于主张已核验', text)
+
+    def test_an_insufficient_evidence_event_is_labeled_explicitly(self):
+        block = event_block(evidence_status='INSUFFICIENT_EVIDENCE')
+        text = ' '.join(event_summary_lines(item('A', 50, event=block)))
+        self.assertIn('证据状态：证据不足', text)
+        self.assertIn('不能作为已核实事实', text)
+
     def test_an_event_without_evidence_is_not_presented_as_verified(self):
         block = event_block(evidence_status='NO_EVIDENCE')
         text = ' '.join(event_summary_lines(item('A', 50, event=block)))
         self.assertIn('证据状态：无证据', text)
-        self.assertNotIn('已核实', text)
+        self.assertIn('仅线索', text)
+        self.assertIn('不作为已核实事实', text)
+        html = render_html([item('A', 50, event=block)],
+                           {'counts': {'priority': 0, 'watch': 0, 'filtered': 0}}, '2026-11-01')
+        self.assertIn('证据状态：无证据', html)
+        self.assertIn('仅线索', html)
 
     def test_candidates_are_labelled_as_candidates(self):
         block = event_block(candidate_links=3, link_items=[link(link_id=f'lnk-{i}') for i in range(3)])
@@ -135,6 +154,7 @@ class AttachTests(unittest.TestCase):
         self.assertEqual(items[0]['event']['event_id'], items[1]['event']['event_id'])
         self.assertEqual(len(items[0]['event']['members']), 2)
         self.assertIn('source_families', items[0]['event'])
+        self.assertEqual(items[0]['event_context']['status'], 'AVAILABLE')
 
     def test_a_failure_never_stops_the_digest(self):
         logging.disable(logging.CRITICAL)   # the failure is logged on purpose
@@ -143,12 +163,76 @@ class AttachTests(unittest.TestCase):
         with mock.patch('opportunity_radar.unified.UnifiedStore', side_effect=RuntimeError('boom')):
             self.assertEqual(cli.attach_event_context(self.store, items, write=True), 0)
         self.assertNotIn('event', items[0])
+        self.assertEqual(items[0]['event_context']['status'], 'READ_FAILED')
+
+    def test_no_evidence_event_does_not_label_article_facts_as_event_facts(self):
+        block = event_block(evidence_status='NO_EVIDENCE')
+        it = item('A', 80, event=block)
+        it['analysis'] = {'schema_version': 5,
+                          'facts': [{'status': 'located', 'text': 'article fact', 'quote': 'article fact',
+                                     'evidence_id': 'e1', 'actor': '', 'source_url': ''}],
+                          'inferences': [{'status': 'supported', 'text': 'article inference',
+                                          'basis': [1], 'confidence': 'low'}],
+                          'gaps': [], 'actions': []}
+        stats = {'counts': {'priority': 1, 'watch': 0, 'filtered': 0}}
+        _, body = render_digest([it], stats, '2026-11-01')
+        html = render_html([it], stats, '2026-11-01')
+        self.assertIn('文章内可定位文本（不代表事件已核实）', body)
+        self.assertIn('article fact', body)
+        self.assertIn('article inference', body)
+        self.assertNotIn('   事实（可在原文定位）', body)
+        self.assertIn('文章内可定位文本（不代表事件已核实）', html)
+        self.assertIn('article inference', html)
+
+    def test_event_context_unavailable_is_explicit_in_text_html_and_json(self):
+        it = item('A', 80)
+        it['event_context'] = {'status': 'SCHEMA_UNSUPPORTED', 'reason': 'no such table'}
+        stats = {'counts': {'priority': 1, 'watch': 0, 'filtered': 0}}
+        subject, body = render_digest([it], stats, '2026-11-01')
+        html = render_html([it], stats, '2026-11-01')
+        self.assertIn('事件上下文不可用（schema 不支持）', body)
+        self.assertIn('不是事件级核验结论', body)
+        self.assertIn('事件上下文不可用（schema 不支持）', html)
+        cli._write(str(self.dir / 'reports'), subject, body, html, items=[it], stats=stats)
+        archived = next((self.dir / 'reports' / 'archive').rglob('*.items.json'))
+        payload = json.loads(archived.read_text(encoding='utf-8'))
+        self.assertEqual(payload['items'][0]['event_context']['status'], 'SCHEMA_UNSUPPORTED')
+        self.assertFalse(payload['items'][0].get('event'))
+
+    def test_event_evidence_status_is_preserved_in_json_archive(self):
+        block = event_block(evidence_status='NO_EVIDENCE')
+        it = item('A', 80, event=block)
+        stats = {'counts': {'priority': 1, 'watch': 0, 'filtered': 0}}
+        subject, body = render_digest([it], stats, '2026-11-01')
+        html = render_html([it], stats, '2026-11-01')
+        cli._write(str(self.dir / 'reports'), subject, body, html,
+                   items=[it], stats=stats)
+        archived = next((self.dir / 'reports' / 'archive').rglob('*.items.json'))
+        payload = json.loads(archived.read_text(encoding='utf-8'))
+        self.assertEqual(payload['items'][0]['event']['evidence_status'], 'NO_EVIDENCE')
+
+    def test_a_missing_database_is_marked_unavailable_not_no_evidence(self):
+        items = [{'url': 'https://example.org/x', 'title': 'x'}]
+        missing = Store(str(self.dir / 'missing.sqlite3'), read_only=True)
+        self.assertEqual(cli.attach_event_context(missing, items, write=False), 0)
+        self.assertEqual(items[0]['event_context']['status'], 'UNAVAILABLE')
+
+    def test_missing_event_tables_degrade_as_schema_unsupported(self):
+        bare = self.dir / 'bare.sqlite3'
+        with sqlite3.connect(bare) as conn:
+            conn.execute('CREATE TABLE articles(article_key TEXT PRIMARY KEY, title TEXT, url TEXT, '
+                         'published TEXT, source_name TEXT)')
+        bare_store = Store(str(bare), read_only=True)
+        items = [{'url': 'https://example.org/x', 'title': 'x'}]
+        self.assertEqual(cli.attach_event_context(bare_store, items, write=False), 0)
+        self.assertEqual(items[0]['event_context']['status'], 'SCHEMA_UNSUPPORTED')
 
     def test_render_only_lookups_do_not_create_events(self):
         from opportunity_radar.unified import UnifiedStore
         UnifiedStore(str(self.db))          # tables exist but are empty
         items = [{'url': 'https://example.org/unknown', 'title': 'unknown'}]
         self.assertEqual(cli.attach_event_context(self.store, items, write=False), 0)
+        self.assertEqual(items[0]['event_context']['status'], 'NOT_FOUND')
         with UnifiedStore(str(self.db)).connect() as conn:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM events').fetchone()[0], 0)
 

@@ -29,6 +29,8 @@
    `reviewed_at`、`freshrss_feed_id`，设 `enabled=true`。`python -m opportunity_radar.source_audit`
    检查登记完整性。
 5. 启动模型：`.\deploy\windows\start-model.ps1`（参数在脚本顶部；`-Foreground` 前台运行）。
+   - 本地 LLM 只用 **8080** 一个端口。若 8080 已被正在开发的项目占用，脚本会等待并在日志 `reports\model-defer.log` 记录，不会另开端口或 kill 别人的进程。
+   - 定时任务跑完后会停止自己启动的 llama-server，把 8080 释放给下一个使用者。
    默认 64K 上下文 + q8_0 KV（本机 8 GB 显卡实测约 7.3 GB）；GPU offload 与 CPU MoE 分层沿用原配置。
    交互式启动器 `D:\AI\start_server.bat` 的默认档位也已改为 64K。
 6. 试跑：`python -m opportunity_radar.cli --dry-run`。真实运行：`.\deploy\windows\run-digest.ps1`。
@@ -59,8 +61,12 @@ EIA API  ─┴─> 独立摄取库（原始快照 + 规范化事实）──> R
   `--render-only` 只刷新 latest，不新增归档，也不写数据库。
 - 结构：执行摘要 → 三个编辑通道（A 商业/科技/经济、B 商业机会、C 技术观察）→ 数据概览 → 附录。
 - **事件视图**：同属一个事件的报道只占一张卡片。事件证据状态分为 `EVIDENCE_BACKED`、
-  `NO_EVIDENCE`、`INSUFFICIENT_EVIDENCE`；无 Evidence 的事件仍保留，但卡片明确显示“证据状态：无证据”，
-  不表示已核实事实。卡片下依次给出：
+  `NO_EVIDENCE`、`INSUFFICIENT_EVIDENCE`；无 Evidence 的事件仍保留，但卡片明确显示“证据状态：无证据
+  （仅线索，不作为已核实事实）”。文本、HTML 和邮件共用同一 `event_summary_lines`，归档 JSON 保留原始
+  `event.evidence_status` 和 `event_context`。事件上下文不可用时，输出明确区分 `NOT_FOUND`、`UNAVAILABLE`、
+  `READ_FAILED` 和 `SCHEMA_UNSUPPORTED`；文章自己的证据等级保留，但不会升级成事件级核验状态。
+  当前没有独立 Opportunity 表；B 通道“值得验证的商业机会”是文章级候选，不是已验证机会实体。
+  HTML 与文本都渲染 v5 facts/inferences/gaps/actions。卡片下依次给出：
   - `事件结构`：同事件报道 N 篇 · 报道来源 N 个 · 来源族 N 个 · 独立佐证：是/否（单篇单族时不打印）；
   - `事实主张`：事件关联的主张，逐条标注类型（事实/推断/…）与核验状态，并给出证据 ID、定位
     （`summary@起-止`）与来源 ID；超过两条时提示"另有 N 条主张，见归档 JSON"；

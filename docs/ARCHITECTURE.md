@@ -40,7 +40,13 @@
     units separately; unknown families never count, and a recorded syndication group collapses its
     members into one unit. Event profiles also expose `EVIDENCE_BACKED` / `NO_EVIDENCE` /
     `INSUFFICIENT_EVIDENCE`; an event with no valid evidence remains visible but is not presented as
-    a verified fact. `cli.attach_event_context` attaches R1 context to the digest, and the
+    a verified fact. Text, HTML and email share `event_summary_lines`; the archived `items.json`
+    keeps the raw `event.evidence_status` and `event_context`. When event context is missing,
+    `cli.attach_event_context` records `NOT_FOUND`, `UNAVAILABLE`, `READ_FAILED` or
+    `SCHEMA_UNSUPPORTED`; the article evidence state is retained but never promoted to an event
+    state. HTML and text both render v5 facts, inferences, gaps and actions. There is no separate
+    Opportunity table: the B lane is an article-level candidate, not a stored, verified opportunity.
+    `cli.attach_event_context` attaches R1 context to the digest, and the
     digest prints one card per event instead of one per article.
 12. SEC/EIA keep their own database and entry points (`ingest/`); they share the R1 table contract but
     never write to the RSS database.

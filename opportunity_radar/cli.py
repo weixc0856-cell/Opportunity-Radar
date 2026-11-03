@@ -1,5 +1,5 @@
 from collections import Counter
-import argparse, hashlib, json, logging, os, re, sys
+import argparse, hashlib, json, logging, os, re, sqlite3, sys
 from pathlib import Path
 from .config import Settings, load_scoring, parse_backoff
 from .digest import render_digest, empty_reason
@@ -184,7 +184,7 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     txt=arch/f'{stamp}.txt'; html_path=arch/f'{stamp}.html'
     items_path=arch/f'{stamp}.items.json'; manifest_path=arch/f'{stamp}.manifest.json'
     _atomic_write(txt,text); _atomic_write(html_path,html)
-    payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','analysis','score','status','filter_reason',
+    payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','event_context','analysis','score','status','filter_reason',
                                              'source_id','intelligence_lines','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
                                              'classification','market_validation','risk_flag','verification_note',
                                              'evidence','evidence_integrity','components','meta','scoring')} for item in (items or [])]
@@ -200,23 +200,49 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     return str(txt),report_hash
 
 def attach_event_context(store, items, write=True):
-    """Group this issue's items by event and attach what the R1 tables know about each.
+    """Attach the event context without ever turning absence into evidence.
 
-    Deliberately optional: a database without the R1 tables, or any failure inside this
-    step, leaves the digest exactly as it was. Presentation must never be able to stop a
-    run that has already produced analyses.
+    Each item records an explicit runtime status: AVAILABLE, NOT_FOUND, UNAVAILABLE,
+    READ_FAILED or SCHEMA_UNSUPPORTED. Presentation can then distinguish "no event" from
+    "we could not read the event layer"; neither is mapped to EVIDENCE_BACKED/NO_EVIDENCE.
     """
     if not items:
         return 0
-    try:
-        from .linking import event_profile
-        from .unified import ArticleRef, UnifiedStore
-        uni = UnifiedStore(store.path, read_only=not write, migrate=False)
-        # Two passes: file every article first, then describe the events. Otherwise the
-        # first article of an event would report a membership of one.
-        placed_events = []
+    from .linking import event_profile
+    from .unified import (ArticleRef, EVENT_CONTEXT_AVAILABLE, EVENT_CONTEXT_NOT_FOUND,
+                          EVENT_CONTEXT_READ_FAILED, EVENT_CONTEXT_SCHEMA_UNSUPPORTED,
+                          EVENT_CONTEXT_UNAVAILABLE, SchemaVersionError, UnifiedStore)
+
+    def mark_all(status, reason):
         for item in items:
-            key = Store.key(item.get('url', ''))
+            item.pop('event', None)
+            item['event_context'] = {'status': status, 'reason': reason}
+
+    def mark(item, status, reason):
+        item.pop('event', None)
+        item['event_context'] = {'status': status, 'reason': reason}
+
+    if not Path(store.path).exists():
+        mark_all(EVENT_CONTEXT_UNAVAILABLE, 'database file is unavailable')
+        logging.warning('Event context unavailable: database file is unavailable')
+        return 0
+    try:
+        uni = UnifiedStore(store.path, read_only=not write, migrate=False)
+    except SchemaVersionError as exc:
+        mark_all(EVENT_CONTEXT_SCHEMA_UNSUPPORTED, str(exc))
+        logging.warning('Event context unavailable: schema check failed: %s', exc)
+        return 0
+    except Exception as exc:
+        mark_all(EVENT_CONTEXT_READ_FAILED, f'{type(exc).__name__}: {exc}')
+        logging.warning('Event context unavailable; the digest keeps its article view', exc_info=True)
+        return 0
+
+    # Two passes: file every article first, then describe the events. Otherwise the
+    # first article of an event would report a membership of one.
+    placed_events = []
+    for item in items:
+        key = Store.key(item.get('url', ''))
+        try:
             if write:
                 placed = uni.assign_article(ArticleRef(
                     key, item.get('url', ''), item.get('title', ''), item.get('published', ''),
@@ -224,19 +250,37 @@ def attach_event_context(store, items, write=True):
                 event_id = placed.get('event_id', '')
             else:
                 with uni.connect() as conn:
-                    row = conn.execute('SELECT event_id FROM event_articles WHERE article_key=?', (key,)).fetchone()
+                    row = conn.execute('SELECT event_id FROM event_articles WHERE article_key=?',
+                                       (key,)).fetchone()
                 event_id = row['event_id'] if row else ''
-            placed_events.append((item, event_id))
-        grouped = 0
-        for item, event_id in placed_events:
-            if not event_id:
-                continue
+        except sqlite3.OperationalError as exc:
+            status = (EVENT_CONTEXT_SCHEMA_UNSUPPORTED
+                      if 'no such table' in str(exc).lower() or 'no such column' in str(exc).lower()
+                      else EVENT_CONTEXT_READ_FAILED)
+            mark(item, status, str(exc))
+            continue
+        except Exception as exc:
+            mark(item, EVENT_CONTEXT_READ_FAILED, f'{type(exc).__name__}: {exc}')
+            continue
+        placed_events.append((item, event_id))
+
+    grouped = 0
+    for item, event_id in placed_events:
+        if not event_id:
+            mark(item, EVENT_CONTEXT_NOT_FOUND, 'no event assignment')
+            continue
+        try:
             item['event'] = event_profile(uni, event_id)
+            item['event_context'] = {'status': EVENT_CONTEXT_AVAILABLE, 'reason': ''}
             grouped += 1
-        return grouped
-    except Exception:
-        logging.warning('Event context unavailable; the digest keeps its article view', exc_info=True)
-        return 0
+        except sqlite3.OperationalError as exc:
+            status = (EVENT_CONTEXT_SCHEMA_UNSUPPORTED
+                      if 'no such table' in str(exc).lower() or 'no such column' in str(exc).lower()
+                      else EVENT_CONTEXT_READ_FAILED)
+            mark(item, status, str(exc))
+        except Exception as exc:
+            mark(item, EVENT_CONTEXT_READ_FAILED, f'{type(exc).__name__}: {exc}')
+    return grouped
 
 
 def attach_conflicts(store, stats, limit=5):

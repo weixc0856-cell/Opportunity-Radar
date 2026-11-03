@@ -5,6 +5,7 @@ from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_no
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL, summarize
 from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES, state_of
 from .publication import disclosure, headline_notice
+from .unified import (EVENT_CONTEXT_AVAILABLE, EVENT_CONTEXT_LABEL)
 from .lanes import LANES, LANE_LABEL, LANE_PROMISE, item_lane as _lane
 
 STATUS_LABEL={'priority':'优先验证','watch':'持续观察','filtered':'已过滤'}
@@ -68,6 +69,32 @@ CLAIM_KIND_LABEL={'fact':'事实','source_interpretation':'来源解释','system
                   'hypothesis':'假设','forecast':'预测','opinion':'观点'}
 CLAIM_STATE_LABEL={'unverified':'未核验','verified':'已核验','rejected':'已否决','unverifiable':'无法核验'}
 EVIDENCE_STATUS_LABEL={'EVIDENCE_BACKED':'有证据','NO_EVIDENCE':'无证据','INSUFFICIENT_EVIDENCE':'证据不足'}
+EVENT_EVIDENCE_NOTE={'EVIDENCE_BACKED':'事件有证据（不等于主张已核验）',
+                     'NO_EVIDENCE':'事件无证据（仅线索）',
+                     'INSUFFICIENT_EVIDENCE':'事件证据不足'}
+
+
+def event_evidence_note(event):
+    return EVENT_EVIDENCE_NOTE.get((event or {}).get('evidence_status'), '')
+
+
+def event_context_note(item):
+    status = (item.get('event_context') or {}).get('status')
+    if status and status != EVENT_CONTEXT_AVAILABLE:
+        return EVENT_CONTEXT_LABEL.get(status, status)
+    return ''
+
+
+def event_status_note(item):
+    return event_evidence_note(item.get('event') or {}) or event_context_note(item)
+
+
+def event_context_line(item):
+    note = event_context_note(item)
+    if not note:
+        return ''
+    return (f'   事件上下文：{note}；文章证据等级 {_evidence_text(item)} '
+            '不是事件级核验结论')
 
 
 def _locator_text(raw):
@@ -122,7 +149,8 @@ def event_summary_lines(x):
     """What the R1 tables add: the claims, their evidence, and the corroboration picture."""
     event = x.get('event') or {}
     if not event:
-        return []
+        line = event_context_line(x)
+        return [line] if line else []
     members = event.get('members') or []
     families = event.get('source_families') or []
     others = max(0, len(members) - 1)
@@ -130,7 +158,7 @@ def event_summary_lines(x):
     links = event.get('link_items') or []
     evidence_status = event.get('evidence_status')
     if (others == 0 and len(families) <= 1 and not links and not claims
-            and evidence_status in (None, 'EVIDENCE_BACKED')):
+            and evidence_status is None):
         return []
     verdict = '是' if event.get('independent_corroboration') else '否'
     outlets = len(event.get('member_sources') or []) or len(event.get('sources') or [])
@@ -138,7 +166,7 @@ def event_summary_lines(x):
     # A single report from a single family says nothing about corroboration; printing the
     # line anyway would train the reader to skip it.
     if (others or len(families) > 1 or links
-            or evidence_status in ('NO_EVIDENCE', 'INSUFFICIENT_EVIDENCE')):
+            or evidence_status in EVIDENCE_STATUS_LABEL):
         units = event.get('independent_source_units', event.get('corroborating_units'))
         unit_text = f" · 独立来源单元 {units} 个" if units is not None else ''
         syndicated = event.get('syndicated_article_count')
@@ -150,6 +178,9 @@ def event_summary_lines(x):
         elif status == 'UNKNOWN':
             status_text = ' · 独立性未知'
         evidence_text = (f" · 证据状态：{EVIDENCE_STATUS_LABEL[evidence_status]}"
+                         f"（{'仅线索，不作为已核实事实' if evidence_status == 'NO_EVIDENCE' else
+                              '不能作为已核实事实' if evidence_status == 'INSUFFICIENT_EVIDENCE' else
+                              '不等于主张已核验'}）"
                          if evidence_status in EVIDENCE_STATUS_LABEL else '')
         lines.append(f"   事件结构：同事件报道 {len(members)} 篇 · 报道来源 {outlets} 个 · "
                      f"来源族 {len(families)} 个{unit_text}{syndicated_text}{status_text}"
@@ -305,7 +336,7 @@ def _basis_label(inference):
     basis=[b for b in (inference or {}).get('basis') or [] if isinstance(b,int)]
     return '、'.join(f'F{b}' for b in basis) if basis else '—'
 
-def _v5_sections(x):
+def _v5_sections(x, event_status=None):
     """Facts, inferences, gaps and actions. Unverified claims never share a label with
     located ones: a quote the locator rejected is not evidence, and an inference with no
     located fact behind it is not a conclusion."""
@@ -318,7 +349,10 @@ def _v5_sections(x):
     unsupported=[i for i in inferences if i.get('status')!='supported']
     gaps=[g for g in a.get('gaps') or [] if isinstance(g,dict)]
     actions=[c for c in a.get('actions') or [] if isinstance(c,dict)]
-    lines=['   事实（可在原文定位）']
+    label=('   文章内可定位文本（不代表事件已核实）'
+           if event_status in ('NO_EVIDENCE', 'INSUFFICIENT_EVIDENCE')
+           else '   事实（可在原文定位）')
+    lines=[label]
     if located:
         for f in located:
             eid=f.get('evidence_id') or ''
@@ -384,7 +418,7 @@ def _card(i,x):
            f"   证据：{_evidence_text(x)} · 来源质量：{SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality',''))}"]
     if v5:
         lines.append(f"   排序分：{x.get('score',0)}/100（仅用于本期排序，不是结论）")
-        lines+=_v5_sections(x)
+        lines+=_v5_sections(x, (x.get('event') or {}).get('evidence_status'))
     else:
         lines+=[f"   初判：{_judgment(a)}"]
         lines+=_quote_lines(x.get('evidence') or [])
@@ -406,7 +440,8 @@ def executive_brief(items):
         out+=[f" {i}. [{lane}] {x.get('title','')}",
               f"    发生了什么：{str(x.get('analysis',{}).get('summary_zh','') or '').strip() or '未生成摘要'}",
               f"    为什么重要：{_why(x)}",
-              f"    可信度：{_evidence_text(x)} · {MARKET_LABEL.get(_market(x),'未评估')}"]
+              f"    可信度：{_evidence_text(x)} · {MARKET_LABEL.get(_market(x),'未评估')}"
+              + (f" · {event_status_note(x)}" if event_status_note(x) else "")]
     return out
 
 def render_digest(items,stats,date_label=None):

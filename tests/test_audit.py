@@ -40,6 +40,9 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(self.check(result, 'source.article_missing_source_id')['count'], 1)
         self.assertIn(result['status'], ('PARTIAL', 'FAIL'))
+        self.assertEqual(result['opportunity']['entity'], 'absent')
+        self.assertIn('event_context', result['event'])
+        self.assertEqual(result['event']['event_context']['runtime_statuses_persisted'], False)
 
     def test_audit_flags_published_by_from_source_name(self):
         with self.uni.connect() as conn:

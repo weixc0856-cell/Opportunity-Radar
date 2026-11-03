@@ -281,6 +281,17 @@ def _event_checks(conn):
                              len(accepted), _samples(accepted, ['link_id', 'left_key', 'right_key', 'status'])))
     event_total = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
     info['event_total'] = event_total
+    if _table(conn, 'articles'):
+        articles_total = conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]
+        with_event = conn.execute(
+            'SELECT COUNT(DISTINCT article_key) FROM event_articles').fetchone()[0]
+        info['event_context'] = {
+            'schema_supports_event_tables': True,
+            'articles_with_event': with_event,
+            'articles_without_event': articles_total - with_event,
+            'runtime_statuses_persisted': False,
+            'note': 'READ_FAILED/SCHEMA_UNSUPPORTED are runtime item statuses, not stored rows',
+        }
     if _table(conn, 'evidences'):
         rows = [dict(row) for row in conn.execute(
             '''SELECT ea.event_id, v.article_key, v.evidence_id, v.source_id, v.source_family,
@@ -468,9 +479,17 @@ def _chains(conn, limit=10):
                 missing.append(label)
         item['missing'] = missing
         item['complete'] = not missing
-    ordered = sorted(chains.values(),
-                     key=lambda item: (not item['complete'], len(item['missing']), item['article_key']))
-    return ordered[:limit]
+    complete = sorted((item for item in chains.values() if item['complete']),
+                      key=lambda item: item['article_key'])
+    incomplete = sorted((item for item in chains.values() if not item['complete']),
+                        key=lambda item: (len(item['missing']), item['article_key']))
+    if len(complete) + len(incomplete) <= limit:
+        return complete + incomplete
+    if complete and incomplete:
+        n_incomplete = min(len(incomplete), 3)
+        n_complete = max(1, limit - n_incomplete)
+        return complete[:n_complete] + incomplete[:min(n_incomplete, limit - n_complete)]
+    return (complete or incomplete)[:limit]
 
 
 def audit(db_path, source_registry=None, lineage_registry=None):
@@ -488,6 +507,12 @@ def audit(db_path, source_registry=None, lineage_registry=None):
         claim_checks = _evidence_claim_checks(conn)
         event_checks, event_info = _event_checks(conn)
         entity_checks, entity_info, limitations = _entity_checks(conn)
+        claim_info = {}
+        if _table(conn, 'claims'):
+            claim_info['claims_by_state'] = {row[0]: row[1] for row in conn.execute(
+                'SELECT verification_state, COUNT(*) FROM claims GROUP BY verification_state ORDER BY 2 DESC')}
+            claim_info['claims_by_extractor'] = {row[0]: row[1] for row in conn.execute(
+                'SELECT extractor, COUNT(*) FROM claims GROUP BY extractor ORDER BY 2 DESC')}
         checks = source_checks + claim_checks + event_checks + entity_checks
         errors = [item for item in checks if item['severity'] == 'ERROR' and item['count'] > 0]
         warnings = [item for item in checks if item['severity'] == 'WARN' and item['count'] > 0]
@@ -500,6 +525,18 @@ def audit(db_path, source_registry=None, lineage_registry=None):
             'source': source_info,
             'event': event_info,
             'entity': entity_info,
+            'claim': claim_info,
+            'opportunity': {
+                'entity': 'absent',
+                'fact_basis': 'no separate Opportunity table; B-lane cards are article-level analyses',
+                'note': 'event evidence status is attached to item.event; no Opportunity row stores facts',
+            },
+            'outputs': {
+                'text': 'digest.render_digest + event_summary_lines',
+                'html': 'render_html uses the same event_summary_lines',
+                'email': 'same body/html passed to email_sender',
+                'json': 'items.json stores event.evidence_status, event_context and claim verification_state',
+            },
             'limitations': limitations + [
                 'source_name is a feed label, not a verified publisher identity.',
                 'PUBLISHED_BY is not generated from source_name; no explicit publisher identity exists in the current registry.',
@@ -507,6 +544,9 @@ def audit(db_path, source_registry=None, lineage_registry=None):
                 'SOURCE_FAMILY is represented by evidences.source_family; SYNDICATED_FROM only by a recorded syndication_group.',
                 'A mention is not AFFECTED_BY or a business relationship.',
                 'event_candidate rows are candidates; they do not merge events.',
+                'There is no separate Opportunity entity; B-lane output is a per-article candidate.',
+                'Text, HTML and email share event_summary_lines; JSON stores the raw event evidence_status and event_context.',
+                'Event context runtime statuses (NOT_FOUND/UNAVAILABLE/READ_FAILED/SCHEMA_UNSUPPORTED) are not persisted in the database; audit can only count event membership.',
             ],
             'chains': _chains(conn),
         }

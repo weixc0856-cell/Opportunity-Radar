@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from .digest import (REASON_LABEL,SOURCE_LABEL,MARKET_LABEL,WEIGHT_LABEL,
                      decision_headline,management_note,strategic_note,empty_reason,_pay_strong,_judgment,
                      _why,_evidence_text,_market,_commercial_line,_by_lane,_lane,_state,_shown,_deferred,STATUS_LABEL,
-                     group_by_event,event_summary_lines)
+                     group_by_event,event_summary_lines,event_status_note,_v5_sections)
 from .publication import disclosure
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL,summarize
@@ -65,14 +65,21 @@ def _finding(x):
     href=_safe_href(x.get('url',''))
     source_link=f'<a href="{href}" rel="noopener noreferrer" style="color:{ORANGE};text-decoration:none;">打开原文 ↗</a>' if href else '原文链接不可用'
     rows=(_kv('通道',f'{_e(lane)} · {_e(LANE_LABEL[lane])}')
-          +_kv('证据',f'{_e(_evidence_text(x))} · 来源质量 {_e(SOURCE_LABEL.get(cls.get("source_quality"),cls.get("source_quality","")))}')
-          +_kv('初判',_e(_judgment(a)))
-          +_quote_rows(ev)
-          +_estimate_row(x)
-          +_kv('商业评估' if lane!='C' else '技术评估',_e(_commercial_line(x).strip()))
-          +_kv('关键未知',_e(unknown))
-          +_kv('下一步观察',_e(a.get('suggested_next_step','人工复核')))
-          +_kv('来源',f'{_e(x.get("source_name","Unknown"))} · {source_link}'))
+          +_kv('证据',f'{_e(_evidence_text(x))} · 来源质量 {_e(SOURCE_LABEL.get(cls.get("source_quality"),cls.get("source_quality","")))}'))
+    if a.get('schema_version') == 5:
+        sections = _v5_sections(x, (x.get('event') or {}).get('evidence_status'))
+        body = '<div style="white-space:pre-wrap;font-size:12.5px;line-height:1.7;">' +                '<br>'.join(_e(line.strip()) for line in sections) + '</div>'
+        rows += (_kv('事实与推断', body)
+                 +_kv('商业评估' if lane!='C' else '技术评估',_e(_commercial_line(x).strip()))
+                 +_kv('来源',f'{_e(x.get("source_name","Unknown"))} · {source_link}'))
+    else:
+        rows += (_kv('初判',_e(_judgment(a)))
+                 +_quote_rows(ev)
+                 +_estimate_row(x)
+                 +_kv('商业评估' if lane!='C' else '技术评估',_e(_commercial_line(x).strip()))
+                 +_kv('关键未知',_e(unknown))
+                 +_kv('下一步观察',_e(a.get('suggested_next_step','人工复核')))
+                 +_kv('来源',f'{_e(x.get("source_name","Unknown"))} · {source_link}'))
     return (f'<div style="padding:18px 0;border-bottom:1px solid #ececec;page-break-inside:avoid;">'
             f'<div style="font-size:15px;font-weight:700;color:{INK};line-height:1.5;">'
             f'<span style="color:{ORANGE};margin-right:6px;">{_e(x.get("score",0))}</span>{_e(x.get("title",""))}</div>'
@@ -93,7 +100,8 @@ def _brief(items):
                f'{_e(str(x.get("analysis",{}).get("summary_zh","") or "未生成摘要"))}</div>'
                f'<div style="font-size:12.5px;color:#374151;line-height:1.7;"><strong style="color:{INK};">为什么重要：</strong>{_e(_why(x))}</div>'
                f'<div style="font-size:12.5px;color:#374151;line-height:1.7;"><strong style="color:{INK};">可信度：</strong>'
-               f'{_e(_evidence_text(x))} · {_e(MARKET_LABEL.get(_market(x),"未评估"))}</div>'
+               f'{_e(_evidence_text(x))} · {_e(MARKET_LABEL.get(_market(x),"未评估"))}'
+               f'{(" · "+_e(event_status_note(x))) if event_status_note(x) else ""}</div>'
                f'</td></tr>')
     return (f'<div style="margin:20px 0 0;border-top:1px solid {RULE};"><div style="font-size:11px;letter-spacing:.1em;'
             f'color:{MUTED};text-transform:uppercase;padding-top:10px;">执行摘要 · 三条</div>'
