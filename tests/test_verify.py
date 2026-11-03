@@ -17,7 +17,7 @@ SCHEMA_FOR_TESTS = None
 
 
 def evidence(evidence_id, quote, locator=None, source='bbc-business', kind='quote'):
-    return {'evidence_id': evidence_id, 'article_key': '', 'source_id': source, 'evidence_kind': kind,
+    return {'evidence_id': evidence_id, 'article_key': 'k1', 'source_id': source, 'evidence_kind': kind,
             'quote': quote, 'locator_json': json.dumps(locator or {'field': 'summary', 'start': 0, 'length': 10}),
             'source_family': source, 'independence': 'unknown', 'observed_at': None,
             'rules_version': 'r1-v1', 'created_at': 't'}

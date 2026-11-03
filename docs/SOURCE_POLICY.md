@@ -98,3 +98,7 @@ whether the body is complete, and enabling it does **not** raise the evidence ra
 
 应用：`python -m opportunity_radar.unified_main lineage` 把族与独立性写回 `evidences`。
 未登记的来源保持 `unknown`，不继承任何族。新增来源必须同步登记。
+
+`declared` 是人工声明，不是独立核验；只有 `verified` 才可作为已核验状态。当前谱系行全部为
+`declared`。`syndication_group` 留空表示没有已确认的联合发布证据，不能用标题相似度替代。
+`source_name` 是 FreshRSS/feed 标签，不是发布机构；`PUBLISHED_BY` 不从它推导。

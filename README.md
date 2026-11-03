@@ -95,9 +95,15 @@ python -m opportunity_radar.unified_main rss        # 文章 -> 事件、证据�
 python -m opportunity_radar.unified_main sec        # SEC 事实 -> 证据 + 结构化主张
 python -m opportunity_radar.unified_main eia        # EIA 观测 -> 证据 + 结构化主张
 python -m opportunity_radar.unified_main entities   # 公司实体与提及
+python -m opportunity_radar.unified_main extract    # 标题/证据/主张 -> 实体提及与关系
 python -m opportunity_radar.unified_main links --ingest-db <摄取库>   # 候选关联
+python -m opportunity_radar.unified_main candidates # 事件候选：强/弱候选，不自动合并
 python -m opportunity_radar.unified_main lineage    # 来源谱系 -> 证据
-python -m opportunity_radar.unified_main report     # 各表计数与缺口
+python -m opportunity_radar.unified_main sources    # 文章 -> source_id（只补绑定，不猜测）
+python -m opportunity_radar.unified_main periods --dry-run --json   # 检查旧 skeleton Claim 的 period
+python -m opportunity_radar.unified_main periods --apply            # 置空错误 period（先备份并获批准）
+python -m opportunity_radar.unified_main audit --db <库>  # 只读端到端一致性审计
+python -m opportunity_radar.unified_main report     # 各表计数、完整性与缺口
 ```
 
 主张核验（R2 规则，离线运行）：
@@ -153,14 +159,43 @@ rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 �
 `advance_estimate` 等修订状态与年度区间（`1997-2024`），并把模型的原始表达保留在
 `unit_raw` / `period_raw` / `revision_raw` 里。**核验尚未在生产库运行，也未接入日报或门禁**（待 G6）。
 
-- 六张表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`；
-  实体层：`entities`、`entity_aliases`、`entity_mentions`、`event_links`。
+- 七张表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`、
+  `claim_corrections`；实体层：`entities`、`entity_aliases`、`entity_mentions`、`entity_relations`、`event_links`。
 - 标识符是内容哈希，重复运行不产生第二条记录。
 - 事件合并只有两条规则：规范化 URL 相同，或规范化标题相同且在 72 小时窗口内。其余是不同事件；
   共享关键词不合并。
 - 候选关联（`event_links.status='candidate'`）从不自动合并；接受或拒绝写追加式 `event_corrections`。
+- 事件候选（`relation='event_candidate'`）比较标题规范化相似度、共享实体、共享证据句子、事件类型
+  与时间窗口。强候选必须有标题之外的信号（共享实体/证据/事件类型）；只有标题相似最多是弱候选；
+  低于阈值不关联。候选记录保留双方 event_id、article_id、标题、共享词、共享实体、引用证据 ID、
+  时间差和转载判断状态，但不改变事件归属。
+- 来源独立性分开报告：文章数、来源 ID 数、来源族数、独立来源单元数、已记录联合发布组、未知来源族。
+  未知来源族不计入独立来源；同一来源族的多篇不增加独立单元；已记录 `syndication_group` 的多来源
+  折叠为一个单元。不同来源族但只有相似标题/引用时，只输出转载候选，不认定为已确认转载。
 - RSS 主张 `extractor='skeleton'`：v5 提示词只产出散文事实，数值字段为空，`verification_state`
-  一律 `unverified`。SEC/EIA 主张 `extractor='structured'`，带数值、单位、期间与申报关系。
+  一律 `unverified`。文章发布日期只作为 `articles.published` / evidence `observed_at`，不会写入
+  Claim 的 `period`；没有明确事实期间时 `period` 为空。SEC/EIA 主张 `extractor='structured'`，
+  带数值、单位、期间与申报关系。
+- Claim/Evidence 写入要求：evidence 有非空 `source_id`、可定位的 `locator_json`，并能回到文章
+  或申报/序列记录；Claim 至少关联一条这样的 evidence。不满足的 Claim 不写入，`bulk_add` 在
+  `evidences_rejected` / `claims_rejected` / `links_rejected` / `rejected` 中列出原因，不静默丢弃。
+- 旧版 v5 skeleton Claim 曾把发布日期写进 `period`；`periods --apply` 只修正“period 恰好等于
+  文章发布日期且 `period_raw` 为空”的记录，并写入追加式 `claim_corrections`；其他记录保持原值并
+  报告为待处置。
+
+- 实体抽取（`unified_main extract`）：只读已有标题、Evidence 引文和 Claim 文本，不抓取正文。
+  类别为 ORGANIZATION / GOVERNMENT / PRODUCT / TECHNOLOGY / LOCATION / PERSON；当前确定性规则只自动
+  抽取组织、政府和地点，产品/技术/人物仅在已有受控别名出现时匹配，不凭模型或字符串相似度生成。
+  每条 mention 保留原始文本、类别（经 entities）、article/evidence/claim 键、原文定位、方法和置信度；
+  同一实体在同一来源的多次出现合并为一行并记录 `occurrence_count`。`source_name` 是 FreshRSS/feed
+  标签，不是发布机构；它不生成 `PUBLISHED_BY`，也不作为正文 mention。`The company`、`A.I. company`
+  等泛化词被过滤。
+- 实体关系（`entity_relations`）：`MENTIONED_IN` 由 mention 表表达；`INGESTED_FROM` 由
+  `articles.source_id` / `source_name` 表达；`SOURCE_FAMILY` 由 `evidences.source_family` 表达；
+  `SYNDICATED_FROM` 只由已记录的 `syndication_group` 表达。`PUBLISHED_BY` 只在来源登记提供明确
+  发布者身份时生成；当前数据没有该字段，因此为 0。`APPLICANT` / `PETITIONER` / `REGULATED_BY` 只在
+  明确句子线索下生成，全部 `unverified`。`AFFECTED_BY` 和 `RELATED_TO` 不自动生成；提及不等于受影响
+  或业务关系。`event_candidates` 的共享实体只使用 mention；实体提及也不增加来源独立性。
 
 ## 来源治理与谱系
 

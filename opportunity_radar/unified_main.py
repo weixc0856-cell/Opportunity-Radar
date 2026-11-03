@@ -23,7 +23,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import lineage, linking, unified
+from . import audit, lineage, linking, unified
+from .source_binding import backfill_article_sources
 from .store import Store
 
 DEFAULT_DB = 'data/opportunity_radar.sqlite3'
@@ -54,11 +55,13 @@ def backfill_rss(db_path, limit=None):
     uni = unified.UnifiedStore(db_path)
     report = {'articles': 0, 'events_new': 0, 'articles_skipped_v4': 0,
               'facts_located': 0, 'facts_skipped_unlocated': 0,
-              'evidences': 0, 'claims': 0, 'links': 0}
+              'evidences': 0, 'claims': 0, 'links': 0,
+              'evidences_rejected': 0, 'claims_rejected': 0, 'links_rejected': 0,
+              'rejected_count': 0, 'rejected': []}
 
     with store.connect() as conn:
         rows = [dict(r) for r in conn.execute(
-            '''SELECT a.article_key, a.url, a.title, a.published, a.summary_hash, s.result_json
+            '''SELECT a.article_key, a.url, a.title, a.published, a.summary_hash, a.source_id, s.result_json
                FROM articles a JOIN analyses s USING(article_key)
                ORDER BY COALESCE(a.published,''), a.article_key''')]
     if limit:
@@ -68,7 +71,7 @@ def backfill_rss(db_path, limit=None):
         analysis, meta = _payload(row['result_json'])
         ref = unified.ArticleRef(article_key=row['article_key'], url=row['url'] or '',
                                  title=row['title'] or '', published=row['published'] or '',
-                                 source_id=str(meta.get('source_id') or ''),
+                                 source_id=str(meta.get('source_id') or row.get('source_id') or ''),
                                  summary_hash=row['summary_hash'] or '')
         placed = uni.assign_article(ref)
         report['articles'] += 1
@@ -95,9 +98,11 @@ def backfill_rss(db_path, limit=None):
                           evidence['independence'], claim['locator_json'], unified.now()))
             report['facts_located'] += 1
         written = uni.bulk_add(evidences, claims, links)
-        report['evidences'] += written['evidences']
-        report['claims'] += written['claims']
-        report['links'] += written['links']
+        for key in ('evidences', 'claims', 'links', 'evidences_rejected', 'claims_rejected',
+                    'links_rejected', 'rejected_count'):
+            report[key] += written.get(key, 0)
+        report['rejected'].extend(written.get('rejected', []))
+        report['rejected'] = report['rejected'][:20]
     return report
 
 
@@ -183,9 +188,19 @@ def apply_lineage(db_path, registry_path=None):
     return result
 
 
+def build_event_candidates(db_path, window_days=linking.EVENT_CANDIDATE_WINDOW_DAYS):
+    """Find strong/weak event pairs. They are candidates; no event is merged or moved."""
+    return linking.link_event_candidates(unified.UnifiedStore(db_path), window_days=window_days)
+
+
+def extract_entities(db_path):
+    """Extract mentions and explicit entity relations from stored text."""
+    return linking.extract_entities(unified.UnifiedStore(db_path))
+
+
 def build_links(db_path, ingest_db):
     """Candidate links only: claim<->event when a company and a period line up, and
-    event<->event when two events name the same company within a few days."""
+    event<->event when two events name the same company or share a strong event signal."""
     store = unified.UnifiedStore(db_path)
     with store.connect() as conn:
         cik_to_entity = {r['cik']: r['entity_id'] for r in conn.execute("SELECT cik, entity_id FROM entities WHERE cik<>''")}
@@ -209,8 +224,9 @@ def build_links(db_path, ingest_db):
             conn.close()
     claim_links = linking.link_claims_to_events(store, claims)
     event_links = linking.link_events_by_entity(store)
+    event_candidates = linking.link_event_candidates(store)
     return {'structured_claims_considered': len(claims), 'claim_event_links': claim_links,
-            'event_event_links': event_links}
+            'event_event_links': event_links, 'event_candidates': event_candidates}
 
 
 def report(db_path):
@@ -221,16 +237,99 @@ def report(db_path):
     out['claims_without_locator'] = len(uni.claims_without_locator(limit=100000))
     multi = uni.events_with_multiple_sources()
     out['events_with_multiple_sources'] = len(multi)
+    out['events_with_multiple_source_ids'] = len(multi)
     with uni.connect() as conn:
+        event_ids = [r[0] for r in conn.execute('SELECT event_id FROM events ORDER BY event_id')]
         out['events_with_multiple_articles'] = conn.execute(
             'SELECT COUNT(*) FROM (SELECT event_id FROM event_articles GROUP BY event_id HAVING COUNT(*)>1)').fetchone()[0]
         out['claims_by_extractor'] = {r[0]: r[1] for r in conn.execute(
             'SELECT extractor, COUNT(*) FROM claims GROUP BY extractor ORDER BY 2 DESC')}
         out['claims_by_state'] = {r[0]: r[1] for r in conn.execute(
             'SELECT verification_state, COUNT(*) FROM claims GROUP BY verification_state ORDER BY 2 DESC')}
+        out['entity_count_by_category'] = {category: 0 for category in linking.ENTITY_CATEGORIES}
+        for row in conn.execute('SELECT entity_type, COUNT(*) FROM entities GROUP BY entity_type'):
+            category = linking.entity_category(row[0])
+            out['entity_count_by_category'][category] = out['entity_count_by_category'].get(category, 0) + row[1]
+        mention_columns = {row[1] for row in conn.execute('PRAGMA table_info(entity_mentions)')}
+        out['mention_rows'] = conn.execute('SELECT COUNT(*) FROM entity_mentions').fetchone()[0]
+        if 'occurrence_count' in mention_columns:
+            out['mention_occurrences'] = conn.execute(
+                'SELECT COALESCE(SUM(occurrence_count),0) FROM entity_mentions').fetchone()[0]
+        else:
+            out['mention_occurrences'] = out['mention_rows']
+        out['mentions_by_category'] = {category: 0 for category in linking.ENTITY_CATEGORIES}
+        for row in conn.execute(
+                'SELECT e.entity_type, COALESCE(SUM(m.occurrence_count),0) '
+                'FROM entity_mentions m JOIN entities e USING(entity_id) GROUP BY e.entity_type'
+                if 'occurrence_count' in mention_columns else
+                'SELECT e.entity_type, COUNT(*) FROM entity_mentions m JOIN entities e USING(entity_id) '
+                'GROUP BY e.entity_type'):
+            category = linking.entity_category(row[0])
+            out['mentions_by_category'][category] = out['mentions_by_category'].get(category, 0) + row[1]
+        out['mentions_with_evidence'] = (conn.execute(
+            "SELECT COUNT(*) FROM entity_mentions WHERE evidence_id<>''").fetchone()[0]
+            if 'evidence_id' in mention_columns else 'absent')
+        out['mentions_with_locator'] = (conn.execute(
+            "SELECT COUNT(*) FROM entity_mentions WHERE locator_json NOT IN ('{}','')").fetchone()[0]
+            if 'locator_json' in mention_columns else 'absent')
+        try:
+            out['entity_relations_by_type'] = {relation_type: 0 for relation_type in linking.RELATION_TYPES}
+            for row in conn.execute(
+                    'SELECT relation_type, COUNT(*) FROM entity_relations GROUP BY relation_type'):
+                out['entity_relations_by_type'][row[0]] = row[1]
+            out['entity_relations_by_type'][linking.REL_MENTIONED_IN] = out['mention_rows']
+            out['unverified_entity_relations'] = conn.execute(
+                "SELECT COUNT(*) FROM entity_relations WHERE verification_state='unverified'").fetchone()[0]
+        except sqlite3.OperationalError:
+            out['entity_relations_by_type'] = 'absent'
+            out['unverified_entity_relations'] = 'absent'
+        out['evidences_without_source'] = conn.execute(
+            "SELECT COUNT(*) FROM evidences WHERE trim(source_id)=''").fetchone()[0]
+        out['evidences_without_locator'] = conn.execute(
+            "SELECT COUNT(*) FROM evidences WHERE locator_json IN ('{}','')").fetchone()[0]
+        out['orphan_claim_evidence'] = conn.execute(
+            '''SELECT COUNT(*) FROM claim_evidence ce LEFT JOIN evidences v USING(evidence_id)
+               WHERE v.evidence_id IS NULL''').fetchone()[0]
+        out['claims_without_valid_evidence'] = conn.execute(
+            '''SELECT COUNT(*) FROM claims c WHERE NOT EXISTS (
+                 SELECT 1 FROM claim_evidence ce JOIN evidences v USING(evidence_id)
+                 WHERE ce.claim_id=c.claim_id AND trim(v.source_id)<>''
+                   AND trim(v.quote)<>'' AND v.locator_json NOT IN ('{}',''))''').fetchone()[0]
+        out['source_family_count'] = conn.execute(
+            "SELECT COUNT(DISTINCT source_family) FROM evidences WHERE source_family<>''").fetchone()[0]
+        out['syndicated_evidences'] = conn.execute(
+            "SELECT COUNT(*) FROM evidences WHERE syndication_group<>''").fetchone()[0]
+        out['syndication_groups'] = conn.execute(
+            "SELECT COUNT(DISTINCT syndication_group) FROM evidences WHERE syndication_group<>''").fetchone()[0]
+        corroborating = tuple(linking.CORROBORATING)
+        out['unknown_independence_evidences'] = conn.execute(
+            'SELECT COUNT(*) FROM evidences WHERE independence NOT IN (%s)'
+            % ','.join('?' * len(corroborating)), corroborating).fetchone()[0]
+        out['event_candidate_links'] = conn.execute(
+            'SELECT COUNT(*) FROM event_links WHERE relation=?',
+            (linking.REL_EVENT_CANDIDATE,)).fetchone()[0]
+        reprint_candidate_links = 0
+        for row in conn.execute('SELECT evidence_json FROM event_links WHERE relation=?',
+                                (linking.REL_EVENT_CANDIDATE,)):
+            try:
+                evidence = json.loads(row[0] or '{}')
+            except (TypeError, ValueError):
+                evidence = {}
+            if evidence.get('reprint_candidate'):
+                reprint_candidate_links += 1
+        out['reprint_candidate_links'] = reprint_candidate_links
+        out['skeleton_claims_with_period'] = conn.execute(
+            "SELECT COUNT(*) FROM claims WHERE extractor='skeleton' AND period<>''").fetchone()[0]
+        out['skeleton_claims_verified'] = conn.execute(
+            "SELECT COUNT(*) FROM claims WHERE extractor='skeleton' AND verification_state='verified'").fetchone()[0]
+        if uni.has_articles:
+            out['skeleton_claims_with_publication_period'] = conn.execute(
+                '''SELECT COUNT(*) FROM claims c JOIN articles a USING(article_key)
+                   WHERE c.extractor='skeleton' AND c.period<>''
+                     AND c.period=substr(a.published,1,10)''').fetchone()[0]
         out['relations'] = {r[0]: r[1] for r in conn.execute(
             'SELECT relation, COUNT(*) FROM event_articles GROUP BY relation ORDER BY 2 DESC')}
-        for table in ('entities', 'entity_mentions', 'event_links'):
+        for table in ('entities', 'entity_mentions', 'event_links', 'claim_corrections'):
             try:
                 out[table] = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
             except sqlite3.OperationalError:
@@ -252,6 +351,15 @@ def report(db_path):
                 'SELECT independence, COUNT(*) FROM evidences GROUP BY independence ORDER BY 2 DESC')}
         except sqlite3.OperationalError:
             pass
+    profiles = [linking.event_profile(uni, event_id) for event_id in event_ids]
+    out['events_with_multiple_source_families'] = sum(
+        1 for profile in profiles if profile.get('source_family_count', 0) > 1)
+    out['events_with_independent_corroboration'] = sum(
+        1 for profile in profiles if profile.get('independent_corroboration'))
+    out['events_with_unknown_independence'] = sum(
+        1 for profile in profiles if profile.get('independence_status') == 'UNKNOWN')
+    out['events_with_partial_independence'] = sum(
+        1 for profile in profiles if profile.get('independence_status') == 'PARTIAL')
     out['top_multi_source_events'] = multi[:10]
     return out
 
@@ -276,12 +384,14 @@ def main(argv=None):
     except (AttributeError, ValueError):
         pass
     parser = argparse.ArgumentParser(description='Backfill the unified Event/Evidence/Claim model')
-    parser.add_argument('what', choices=('rss', 'sec', 'eia', 'entities', 'links', 'lineage', 'report'))
+    parser.add_argument('what', choices=('rss', 'sec', 'eia', 'entities', 'extract', 'links', 'candidates', 'lineage', 'sources', 'periods', 'audit', 'report'))
     parser.add_argument('--db', help='database to read and write')
     parser.add_argument('--ingest-db', help='SEC/EIA database (links)')
     parser.add_argument('--registry', help='source lineage registry (lineage)')
+    parser.add_argument('--source-registry', help='source CSV used by audit')
     parser.add_argument('--limit', type=int, help='only the first N articles (rss)')
     parser.add_argument('--dry-run', action='store_true', help='work on a copy and leave the database untouched')
+    parser.add_argument('--apply', action='store_true', help='apply the periods repair (otherwise report only)')
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
 
@@ -297,12 +407,34 @@ def main(argv=None):
     elif args.what == 'entities':
         db = _rss_db(args.db)
         action = seed_entities_and_mentions
+    elif args.what == 'extract':
+        db = _rss_db(args.db)
+        action = extract_entities
     elif args.what == 'lineage':
         db = _rss_db(args.db)
         action = lambda path: apply_lineage(path, args.registry)
+    elif args.what == 'sources':
+        db = _rss_db(args.db)
+        action = lambda path: backfill_article_sources(Store(path))
+    elif args.what == 'audit':
+        db = _rss_db(args.db)
+        action = lambda path: audit.audit(path, source_registry=args.source_registry,
+                                          lineage_registry=args.registry)
+    elif args.what == 'periods':
+        db = _rss_db(args.db)
+        if args.apply:
+            action = lambda path: unified.repair_skeleton_periods(
+                unified.UnifiedStore(path), apply=True)
+        else:
+            # An audit must not migrate the production schema. Only --apply opens writable.
+            action = lambda path: unified.repair_skeleton_periods(
+                unified.UnifiedStore(path, read_only=True), apply=False)
     elif args.what == 'links':
         db = _rss_db(args.db)
         action = lambda path: build_links(path, _ingest_db(args.ingest_db))
+    elif args.what == 'candidates':
+        db = _rss_db(args.db)
+        action = lambda path: build_event_candidates(path)
     else:
         db = _rss_db(args.db)
         action = report

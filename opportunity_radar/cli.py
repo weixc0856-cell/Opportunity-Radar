@@ -450,7 +450,7 @@ def main(argv=None):
             was_analyzed=store.analyzed(key)
             previous_input_hash=store.analysis_input_hash(key) if was_analyzed else None
             current_input_hash=hashlib.sha256(f"{a.url}\n{a.title}\n{a.summary}".encode()).hexdigest()
-            new_count+=store.save_article(a,key)
+            new_count+=store.save_article(a,key,source_id=getattr(source_by_feed.get(a.feed_id),'source_id',''))
             if was_analyzed and previous_input_hash==current_input_hash:
                 skipped+=1; continue
             if was_analyzed and previous_input_hash!=current_input_hash:

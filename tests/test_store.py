@@ -59,8 +59,11 @@ class Tests(unittest.TestCase):
    p=Path(d)/'old.sqlite3'
    c=sqlite3.connect(p);c.execute('CREATE TABLE articles(article_key TEXT PRIMARY KEY, article_id TEXT, title TEXT NOT NULL, url TEXT NOT NULL, published TEXT, source_name TEXT, summary_hash TEXT, created_at TEXT NOT NULL)');c.commit();c.close()
    s=Store(str(p))
-   with s.connect() as c: cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
-   self.assertTrue({'fetched_at','content_source','retrieval_status'} <= cols)
+   with s.connect() as c:
+    cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
+    version=c.execute('PRAGMA user_version').fetchone()[0]
+   self.assertTrue({'fetched_at','content_source','retrieval_status','source_id'} <= cols)
+   self.assertEqual(version, 8)
  def test_run_records_report_and_delivery_is_idempotent(self):
   with tempfile.TemporaryDirectory() as d:
    s=Store(str(Path(d)/'run.sqlite3')); rid=s.start_run()

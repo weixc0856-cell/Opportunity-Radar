@@ -29,8 +29,10 @@ from html import unescape
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from . import claim_contract
+
 RULES_VERSION = 'r1-v1'
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 TITLE_WINDOW_HOURS = 72
 
 # Relations an article can have to the event it was filed under.
@@ -125,6 +127,16 @@ CREATE TABLE IF NOT EXISTS claim_evidence(
   created_at TEXT NOT NULL,
   PRIMARY KEY(claim_id, evidence_id)
 );
+CREATE TABLE IF NOT EXISTS claim_corrections(
+  correction_id TEXT PRIMARY KEY,
+  claim_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  old_value TEXT NOT NULL DEFAULT '',
+  new_value TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL,
+  actor TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS claim_verifications(
   verification_id TEXT PRIMARY KEY,
   claim_id TEXT NOT NULL,
@@ -157,6 +169,7 @@ CREATE TABLE IF NOT EXISTS event_corrections(
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_claims_article ON claims(article_key);
+CREATE INDEX IF NOT EXISTS idx_claim_corrections_claim ON claim_corrections(claim_id);
 CREATE INDEX IF NOT EXISTS idx_claims_event ON claims(event_id);
 CREATE INDEX IF NOT EXISTS idx_evidences_article ON evidences(article_key);
 CREATE INDEX IF NOT EXISTS idx_event_articles_article ON event_articles(article_key);
@@ -262,6 +275,127 @@ def claim_id_for(article_key, ordinal=None, key_parts=None):
     return _stable_id('cl-', article_key, ordinal)
 
 
+def _locator_dict(raw):
+    """(locator, error). A locator is the evidence's pointer back to its source text."""
+    if isinstance(raw, dict):
+        return raw, ''
+    try:
+        value = json.loads(raw or '{}')
+    except (TypeError, ValueError):
+        return {}, 'locator_invalid_json'
+    if not isinstance(value, dict):
+        return {}, 'locator_invalid_json'
+    return value, ''
+
+
+def evidence_integrity_problems(evidence):
+    """What makes an evidence row unable to support a claim.
+
+    Source identity and a locator are mandatory. An article key is enough for RSS;
+    a filing/series reference is enough for the isolated SEC/EIA stores.
+    """
+    problems = []
+    if not str(evidence.get('evidence_id') or '').strip():
+        problems.append('evidence_id_missing')
+    if not str(evidence.get('source_id') or '').strip():
+        problems.append('source_id_missing')
+    if not str(evidence.get('evidence_kind') or '').strip():
+        problems.append('evidence_kind_missing')
+    if not str(evidence.get('quote') or '').strip():
+        problems.append('quote_missing')
+    locator, locator_error = _locator_dict(evidence.get('locator_json'))
+    if locator_error:
+        problems.append(locator_error)
+    elif not locator:
+        problems.append('locator_missing')
+    elif not (str(evidence.get('article_key') or '').strip()
+              or locator.get('accn') or locator.get('series_id')):
+        problems.append('article_or_source_record_missing')
+    return problems
+
+
+def claim_integrity_problems(claim):
+    """A newly produced claim must start unverified and carry an id."""
+    problems = []
+    if not str(claim.get('claim_id') or '').strip():
+        problems.append('claim_id_missing')
+    state = str(claim.get('verification_state') or 'unverified').strip()
+    if state not in ('', 'unverified'):
+        problems.append('claim_not_unverified')
+    return problems
+
+
+def repair_skeleton_periods(store, apply=False, actor='p0-batch2'):
+    """Remove a publication date that an older v5 skeleton claim wrote into `period`.
+
+    Only a skeleton claim whose non-empty period exactly equals its article's publication
+    date, and whose `period_raw` is empty, is safe to correct. Everything else is reported
+    as pending and left untouched. The claim id and verification_state are never changed.
+    """
+    if not getattr(store, 'has_articles', False):
+        return {'applied': False, 'error': 'articles table absent', 'skeleton_claims': 0,
+                'already_empty': 0, 'eligible': 0, 'corrected': 0, 'pending': 0,
+                'pending_reasons': {}, 'pending_examples': []}
+    result = {'applied': bool(apply), 'skeleton_claims': 0, 'already_empty': 0,
+              'eligible': 0, 'corrected': 0, 'pending': 0,
+              'pending_reasons': {}, 'pending_examples': []}
+    pending = []
+
+    def add_pending(claim_id, reason, period, published):
+        result['pending'] += 1
+        result['pending_reasons'][reason] = result['pending_reasons'].get(reason, 0) + 1
+        if len(pending) < 20:
+            pending.append({'claim_id': claim_id, 'reason': reason, 'period': period,
+                            'published': published})
+
+    with store.connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            '''SELECT c.claim_id, c.period, c.period_raw, c.verification_state, a.published
+               FROM claims c LEFT JOIN articles a USING(article_key)
+               WHERE c.extractor='skeleton' ORDER BY c.claim_id''')]
+        result['skeleton_claims'] = len(rows)
+        eligible = []
+        for row in rows:
+            period = str(row.get('period') or '')
+            published = str(row.get('published') or '')[:10]
+            if not period:
+                result['already_empty'] += 1
+                continue
+            if str(row.get('verification_state') or '') != 'unverified':
+                add_pending(row['claim_id'], 'claim_not_unverified', period, published)
+                continue
+            if not published:
+                add_pending(row['claim_id'], 'article_publication_missing', period, published)
+                continue
+            if period != published:
+                add_pending(row['claim_id'], 'period_not_publication_date', period, published)
+                continue
+            if str(row.get('period_raw') or '').strip():
+                add_pending(row['claim_id'], 'period_raw_present', period, published)
+                continue
+            eligible.append(row)
+        result['eligible'] = len(eligible)
+        if apply:
+            for row in eligible:
+                cur = conn.execute(
+                    "UPDATE claims SET period='' WHERE claim_id=? AND period=? AND extractor='skeleton' "
+                    "AND verification_state='unverified'", (row['claim_id'], row['period']))
+                if not cur.rowcount:
+                    add_pending(row['claim_id'], 'concurrent_change', row['period'],
+                                str(row.get('published') or '')[:10])
+                    continue
+                correction_id = _stable_id('cc-', row['claim_id'], 'period', row['period'], '',
+                                           'publication_date_not_fact_period')
+                conn.execute(
+                    'INSERT OR IGNORE INTO claim_corrections(correction_id,claim_id,field,old_value,'
+                    'new_value,reason,actor,created_at) VALUES(?,?,?,?,?,?,?,?)',
+                    (correction_id, row['claim_id'], 'period', row['period'], '',
+                     'publication_date_not_fact_period', actor, now()))
+                result['corrected'] += 1
+    result['pending_examples'] = pending
+    return result
+
+
 # --------------------------------------------------------------------------- records
 @dataclass(frozen=True)
 class ArticleRef:
@@ -301,9 +435,14 @@ def claim_from_fact(article_key, section, event_id=None):
     `extractor='skeleton'` says the numeric fields are empty because the model was never
     asked for them; R2 upgrades the prompt and fills them. Calling this a verified claim
     would be the fabrication the project forbids.
+
+    The article publication date is not a fact period. A v5 fact has no period field, so
+    `period` stays empty unless a caller supplies an explicit, contract-valid period.
     """
     meta = section.get('meta') or section
     ordinal = section.get('ordinal')
+    explicit_period = str(section.get('period') or meta.get('period') or '').strip()
+    period = explicit_period if claim_contract.valid_period(explicit_period) else ''
     return {
         'claim_id': claim_id_for(article_key, ordinal),
         'article_key': article_key,
@@ -316,7 +455,8 @@ def claim_from_fact(article_key, section, event_id=None):
         'unit': '',
         'currency': '',
         'region': '',
-        'period': str(meta.get('published') or '')[:10],
+        'period': period,
+        'period_raw': explicit_period,
         'comparison': '',
         'denominator': '',
         'seasonality': '',
@@ -496,6 +636,18 @@ class UnifiedStore:
             from .linking import ENTITY_SCHEMA   # local import: linking imports this module
             conn.executescript(SCHEMA)
             conn.executescript(ENTITY_SCHEMA)
+            mention_columns = {row[1] for row in conn.execute('PRAGMA table_info(entity_mentions)')}
+            for name, ddl in (('article_key', "TEXT NOT NULL DEFAULT ''"),
+                              ('evidence_id', "TEXT NOT NULL DEFAULT ''"),
+                              ('claim_id', "TEXT NOT NULL DEFAULT ''"),
+                              ('locator_json', "TEXT NOT NULL DEFAULT '{}'"),
+                              ('occurrence_count', 'INTEGER NOT NULL DEFAULT 1')):
+                if name not in mention_columns:
+                    conn.execute(f'ALTER TABLE entity_mentions ADD COLUMN {name} {ddl}')
+            conn.execute("UPDATE entity_mentions SET article_key=target_key "
+                         "WHERE article_key='' AND target_kind='article'")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_mentions_article ON entity_mentions(article_key)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_mentions_evidence ON entity_mentions(evidence_id)')
             # Tables created before batch 3 exist already, so the new evidence columns are
             # added in place rather than by recreating anything.
             have = {row[1] for row in conn.execute('PRAGMA table_info(evidences)')}
@@ -563,6 +715,9 @@ class UnifiedStore:
 
     # ------------------------------------------------------------------ records
     def add_evidence(self, evidence):
+        problems = evidence_integrity_problems(evidence)
+        if problems:
+            raise ValueError('invalid evidence: ' + ', '.join(problems))
         with self.connect() as conn:
             cur = conn.execute('INSERT OR IGNORE INTO evidences(evidence_id,article_key,source_id,evidence_kind,quote,'
                                'locator_json,source_family,independence,observed_at,rules_version,created_at) '
@@ -576,6 +731,9 @@ class UnifiedStore:
     def add_claim(self, claim):
         """Insert one claim. The *_raw columns keep the model's own wording beside the
         normalised value, so a deviation can be traced back to what it actually said."""
+        problems = claim_integrity_problems(claim)
+        if problems:
+            raise ValueError('invalid claim: ' + ', '.join(problems))
         columns = ('claim_id', 'article_key', 'event_id', 'fact_ordinal', 'subject', 'predicate',
                    'value_num', 'value_text', 'unit', 'unit_raw', 'scale', 'currency', 'region', 'period',
                    'period_raw', 'comparison', 'denominator', 'seasonality', 'revision', 'revision_raw',
@@ -590,6 +748,15 @@ class UnifiedStore:
 
     def link(self, claim_id, evidence_id, support='direct', independence='unknown', locator_json='{}'):
         with self.connect() as conn:
+            if not conn.execute('SELECT 1 FROM claims WHERE claim_id=?', (claim_id,)).fetchone():
+                raise ValueError('claim not found: ' + str(claim_id))
+            evidence = conn.execute('SELECT * FROM evidences WHERE evidence_id=?',
+                                    (evidence_id,)).fetchone()
+            if not evidence:
+                raise ValueError('evidence not found: ' + str(evidence_id))
+            problems = evidence_integrity_problems(dict(evidence))
+            if problems:
+                raise ValueError('invalid evidence: ' + ', '.join(problems))
             cur = conn.execute('INSERT OR IGNORE INTO claim_evidence(claim_id,evidence_id,support,independence,locator_json,created_at) '
                                'VALUES(?,?,?,?,?,?)',
                                (claim_id, evidence_id, support, independence, locator_json, now()))
@@ -598,9 +765,50 @@ class UnifiedStore:
     def bulk_add(self, evidences=(), claims=(), links=()):
         """Write many records in one transaction. A backfill of 2,700 facts must not open
         8,000 connections."""
-        inserted = {'evidences': 0, 'claims': 0, 'links': 0}
+        evidences, claims, links = list(evidences), list(claims), list(links)
+        inserted = {'evidences': 0, 'claims': 0, 'links': 0,
+                    'evidences_rejected': 0, 'claims_rejected': 0, 'links_rejected': 0,
+                    'rejected_count': 0, 'rejected': []}
+        rejected = []
+
+        def reject(kind, key, reasons, article_key=''):
+            inserted['rejected_count'] += 1
+            if len(rejected) < 20:
+                rejected.append({'kind': kind, 'id': str(key or ''),
+                                 'article_key': str(article_key or ''),
+                                 'reasons': list(reasons)})
+
+        valid_evidence = {}
+        for ev in evidences:
+            problems = evidence_integrity_problems(ev)
+            if problems:
+                inserted['evidences_rejected'] += 1
+                reject('evidence', ev.get('evidence_id'), problems, ev.get('article_key'))
+            else:
+                valid_evidence[ev['evidence_id']] = ev
+
+        # An RSS evidence must point at a stored article. SEC/EIA evidence points at its
+        # filing/series locator instead, and those stores have no articles table.
+        if self.has_articles:
+            keys = sorted({str(ev.get('article_key') or '') for ev in valid_evidence.values()
+                           if str(ev.get('article_key') or '').strip()})
+            found = set()
+            if keys:
+                with self.connect() as conn:
+                    for index in range(0, len(keys), 400):
+                        chunk = keys[index:index + 400]
+                        found.update(row[0] for row in conn.execute(
+                            'SELECT article_key FROM articles WHERE article_key IN (%s)'
+                            % ','.join('?' * len(chunk)), chunk))
+            for evidence_id, ev in list(valid_evidence.items()):
+                key = str(ev.get('article_key') or '').strip()
+                if key and key not in found:
+                    inserted['evidences_rejected'] += 1
+                    reject('evidence', evidence_id, ['article_not_found'], key)
+                    del valid_evidence[evidence_id]
+
         with self.connect() as conn:
-            for ev in evidences:
+            for ev in valid_evidence.values():
                 cur = conn.execute('INSERT OR IGNORE INTO evidences(evidence_id,article_key,source_id,evidence_kind,quote,'
                                    'locator_json,source_family,independence,observed_at,rules_version,created_at) '
                                    'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
@@ -608,7 +816,50 @@ class UnifiedStore:
                                                          'quote', 'locator_json', 'source_family', 'independence',
                                                          'observed_at', 'rules_version', 'created_at')))
                 inserted['evidences'] += cur.rowcount
+            claim_map = {str(c.get('claim_id') or ''): c for c in claims}
+            links_by_claim = {}
+            for link in links:
+                claim_id, evidence_id = str(link[0]), str(link[1])
+                ev = valid_evidence.get(evidence_id)
+                if ev is None:
+                    row = conn.execute('SELECT * FROM evidences WHERE evidence_id=?',
+                                       (evidence_id,)).fetchone()
+                    if row:
+                        ev = dict(row)
+                if ev is None:
+                    inserted['links_rejected'] += 1
+                    reject('link', f'{claim_id}->{evidence_id}', ['evidence_not_found'])
+                    continue
+                problems = evidence_integrity_problems(ev)
+                if problems:
+                    inserted['links_rejected'] += 1
+                    reject('link', f'{claim_id}->{evidence_id}', problems, ev.get('article_key'))
+                    continue
+                claim = claim_map.get(claim_id)
+                if claim is None and not conn.execute(
+                        'SELECT 1 FROM claims WHERE claim_id=?', (claim_id,)).fetchone():
+                    inserted['links_rejected'] += 1
+                    reject('link', f'{claim_id}->{evidence_id}', ['claim_not_found'])
+                    continue
+                if claim is not None:
+                    claim_article = str(claim.get('article_key') or '').strip()
+                    evidence_article = str(ev.get('article_key') or '').strip()
+                    if claim_article and evidence_article and claim_article != evidence_article:
+                        inserted['links_rejected'] += 1
+                        reject('link', f'{claim_id}->{evidence_id}',
+                               ['claim_evidence_article_mismatch'], evidence_article)
+                        continue
+                links_by_claim.setdefault(claim_id, []).append(link)
+
             for cl in claims:
+                claim_id = str(cl.get('claim_id') or '')
+                problems = claim_integrity_problems(cl)
+                if not links_by_claim.get(claim_id):
+                    problems.append('claim_evidence_missing')
+                if problems:
+                    inserted['claims_rejected'] += 1
+                    reject('claim', claim_id, problems, cl.get('article_key'))
+                    continue
                 cur = conn.execute('INSERT OR IGNORE INTO claims(claim_id,article_key,event_id,fact_ordinal,subject,predicate,'
                                    'value_num,value_text,unit,currency,region,period,comparison,denominator,seasonality,'
                                    'revision,kind,quote,locator_json,verification_state,extractor,rules_version,created_at) '
@@ -620,10 +871,11 @@ class UnifiedStore:
                                                          'verification_state', 'extractor', 'rules_version',
                                                          'created_at')))
                 inserted['claims'] += cur.rowcount
-            for link in links:
-                cur = conn.execute('INSERT OR IGNORE INTO claim_evidence(claim_id,evidence_id,support,independence,locator_json,created_at) '
-                                   'VALUES(?,?,?,?,?,?)', tuple(link))
-                inserted['links'] += cur.rowcount
+                for link in links_by_claim[claim_id]:
+                    cur = conn.execute('INSERT OR IGNORE INTO claim_evidence(claim_id,evidence_id,support,independence,locator_json,created_at) '
+                                       'VALUES(?,?,?,?,?,?)', tuple(link))
+                    inserted['links'] += cur.rowcount
+        inserted['rejected'] = rejected
         return inserted
 
     def record_correction(self, event_id, action, payload=None, actor=''):

@@ -68,8 +68,9 @@ class ApplyTests(unittest.TestCase):
         self.uni = UnifiedStore(str(self.db))
 
     def evidence(self, evidence_id, source_id):
-        self.uni.add_evidence({'evidence_id': evidence_id, 'article_key': '', 'source_id': source_id,
-                               'evidence_kind': 'quote', 'quote': 'q', 'locator_json': '{}',
+        self.uni.add_evidence({'evidence_id': evidence_id, 'article_key': 'k1', 'source_id': source_id,
+                               'evidence_kind': 'quote', 'quote': 'q',
+                               'locator_json': '{"field":"summary","start":0,"length":1}',
                                'source_family': source_id, 'independence': 'unknown',
                                'observed_at': None, 'rules_version': 'r1-v1', 'created_at': 't'})
 
@@ -138,6 +139,9 @@ class CorroborationTests(unittest.TestCase):
         profile = linking.event_profile(self.uni, event)
         self.assertEqual(profile['source_families'], ['bbc', 'bea'])
         self.assertEqual(profile['corroborating_units'], 2)
+        self.assertEqual(profile['source_family_count'], 2)
+        self.assertEqual(profile['independent_source_units'], 2)
+        self.assertEqual(profile['independence_status'], 'MULTI_SOURCE')
         self.assertTrue(profile['independent_corroboration'])
 
     def test_two_columns_of_one_organisation_do_not_corroborate(self):
@@ -148,6 +152,9 @@ class CorroborationTests(unittest.TestCase):
         self.assertEqual(profile['source_families'], ['bbc'])
         self.assertEqual(profile['evidences'], 2)
         self.assertEqual(profile['corroborating_units'], 1)
+        self.assertEqual(profile['family_article_counts'], {'bbc': 2})
+        self.assertEqual(profile['same_family_article_count'], 2)
+        self.assertEqual(profile['independence_status'], 'SINGLE_SOURCE')
         self.assertFalse(profile['independent_corroboration'])
 
     def test_an_unknown_source_never_counts(self):
@@ -156,6 +163,8 @@ class CorroborationTests(unittest.TestCase):
         self.add('ev-2', 'k2', 'bbc-technology', 'bbc', 'unknown')
         profile = linking.event_profile(self.uni, event)
         self.assertEqual(profile['corroborating_units'], 1)
+        self.assertEqual(profile['unknown_independence_evidence_count'], 1)
+        self.assertEqual(profile['independence_status'], 'PARTIAL')
         self.assertFalse(profile['independent_corroboration'])
 
     def test_a_shared_wire_copy_is_one_unit(self):
@@ -164,6 +173,7 @@ class CorroborationTests(unittest.TestCase):
         self.add('ev-2', 'k3', 'us-bea', 'bea', 'independent_primary', group='wire-1')
         profile = linking.event_profile(self.uni, event)
         self.assertEqual(profile['syndication_groups'], ['wire-1'])
+        self.assertEqual(profile['syndicated_article_count'], 2)
         self.assertEqual(profile['corroborating_units'], 1)
         self.assertFalse(profile['independent_corroboration'])
 

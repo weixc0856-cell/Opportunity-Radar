@@ -135,11 +135,26 @@ class RecordTests(unittest.TestCase):
         self.assertEqual(evidence['evidence_kind'], 'quote')
         self.assertEqual(evidence['source_id'], 'bbc-business')
         self.assertEqual(evidence['independence'], 'unknown')
+        self.assertEqual(evidence['observed_at'], self.fact['meta']['published'])
         self.assertEqual(claim['subject'], 'Apple')
         self.assertEqual(claim['extractor'], 'skeleton')
         self.assertEqual(claim['verification_state'], 'unverified')
         self.assertIsNone(claim['value_num'])
         self.assertEqual(json.loads(claim['locator_json'])['field'], 'summary')
+
+    def test_a_skeleton_claim_does_not_use_the_publication_date_as_period(self):
+        claim = unified.claim_from_fact('k1', self.fact, 'evt-1')
+        self.assertEqual(claim['period'], '')
+        self.assertEqual(claim['period_raw'], '')
+
+    def test_an_explicit_valid_period_is_kept_on_a_fact_claim(self):
+        claim = unified.claim_from_fact('k1', dict(self.fact, period='2026-09'), 'evt-1')
+        self.assertEqual((claim['period'], claim['period_raw']), ('2026-09', '2026-09'))
+
+    def test_an_invalid_explicit_period_is_not_normalised_into_a_guess(self):
+        claim = unified.claim_from_fact('k1', dict(self.fact, period='next quarter'), 'evt-1')
+        self.assertEqual(claim['period'], '')
+        self.assertEqual(claim['period_raw'], 'next quarter')
 
     def test_ids_are_content_hashes_not_timestamps(self):
         a = unified.evidence_from_fact('k1', self.fact, 'src')
@@ -187,13 +202,13 @@ class BackfillTests(unittest.TestCase):
         self.store = Store(str(self.db))
         self.uni = UnifiedStore(str(self.db))
 
-    def save(self, key, title, facts, schema_version=5, source_id='bbc-business'):
+    def save(self, key, title, facts, schema_version=5, source_id='bbc-business', article_source_id=''):
         from types import SimpleNamespace
         article = SimpleNamespace(article_id=key, title=title, url='https://example.org/' + key,
                                   published='2026-10-29T08:00:00+00:00', source_name='Test',
                                   summary='Revenue rose 5% on strong demand.', feed_id='1',
                                   fetched_at='', content_source='', retrieval_status='')
-        self.store.save_article(article, key)
+        self.store.save_article(article, key, source_id=article_source_id)
         result = {'schema_version': schema_version, 'facts': facts, 'inferences': [], 'gaps': [], 'actions': []}
         self.store.save_analysis(key, result, {'score': 50, 'risk_flag': ''},
                                  {'source_id': source_id, 'model': 'm'})
@@ -247,15 +262,29 @@ class BackfillTests(unittest.TestCase):
         self.assertEqual(evidence['quote'], 'Revenue rose 5%')
         self.assertEqual(evidence['source_id'], 'bbc-business')
 
-    def test_unknown_source_is_recorded_as_unknown_not_guessed(self):
+    def test_article_source_binding_is_used_when_analysis_meta_lacks_it(self):
+        self.save('k1', 'Retail sales rise', [
+            {'ordinal': 1, 'text': 'x', 'status': 'located',
+             'quote': 'Revenue rose 5%', 'locator': {'field': 'summary', 'start': 0, 'length': 15}}],
+            source_id='', article_source_id='bbc-business')
+        self.backfill()
+        with self.uni.connect() as conn:
+            row = conn.execute('SELECT source_id FROM evidences').fetchone()
+        self.assertEqual(row['source_id'], 'bbc-business')
+
+    def test_unknown_source_does_not_produce_evidence_or_a_claim(self):
         self.save('k1', 'Retail sales rise', [
             {'ordinal': 1, 'text': 'x', 'status': 'located',
              'quote': 'Revenue rose 5%', 'locator': {'field': 'summary', 'start': 0, 'length': 15}}],
             source_id='')
-        self.backfill()
-        with self.uni.connect() as conn:
-            row = conn.execute('SELECT source_id, independence FROM evidences').fetchone()
-        self.assertEqual((row['source_id'], row['independence']), ('', 'unknown'))
+        report = self.backfill()
+        self.assertEqual(report['claims'], 0)
+        self.assertEqual(report['evidences'], 0)
+        self.assertEqual(report['evidences_rejected'], 1)
+        self.assertEqual(report['claims_rejected'], 1)
+        self.assertEqual(report['links_rejected'], 1)
+        self.assertEqual(self.uni.counts()['evidences'], 0)
+        self.assertEqual(self.uni.counts()['claims'], 0)
 
 
 if __name__ == '__main__':

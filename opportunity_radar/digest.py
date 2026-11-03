@@ -135,8 +135,19 @@ def event_summary_lines(x):
     # A single report from a single family says nothing about corroboration; printing the
     # line anyway would train the reader to skip it.
     if others or len(families) > 1 or links:
+        units = event.get('independent_source_units', event.get('corroborating_units'))
+        unit_text = f" · 独立来源单元 {units} 个" if units is not None else ''
+        syndicated = event.get('syndicated_article_count')
+        syndicated_text = f" · 已识别转载 {syndicated} 篇" if syndicated else ''
+        status = event.get('independence_status')
+        status_text = ''
+        if status == 'PARTIAL':
+            status_text = ' · 独立性部分未知'
+        elif status == 'UNKNOWN':
+            status_text = ' · 独立性未知'
         lines.append(f"   事件结构：同事件报道 {len(members)} 篇 · 报道来源 {outlets} 个 · "
-                     f"来源族 {len(families)} 个 · 独立佐证：{verdict}")
+                     f"来源族 {len(families)} 个{unit_text}{syndicated_text}{status_text} · "
+                     f"独立佐证：{verdict}")
     lines += _claim_lines(event)
     lines += _link_lines(event)
     if others:

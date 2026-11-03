@@ -1,7 +1,7 @@
-# 项目状态（2026-11-02）
+# 项目状态（2026-11-03）
 
 当前分支 `main`；Batch 16 已合并（`d48d872`），第七至十六批均已进入 `main`。
-测试：**875 项通过**；干净检出同样通过（27 项因缺少本地样本显式跳过）。
+测试：本地 **956 项通过**（含 Source Pilot 测试）；本次未复核干净检出。
 
 ## 当前阶段冻结（2026-11-02）
 
@@ -36,19 +36,29 @@ N0–N5 影子 Claim 生成路线已完成阶段性验收并冻结，基线为 B
 | R2 Batch 15 | N2 subject/predicate/economic_relevance 定向修复 | 10 篇参考集：N2 disposition 20→21/21、subject 17→20/21、predicate 16→19/21、economic 20→21/21；GDP subject、贸易 `$12.8bn` predicate、`$0.1bn` 经济相关性修复；N5 18 条 Claim，严格精确率 18/18、正文严格召回 17/18（按 relationship_type+comparison 同时匹配为 16/18、16/18）；872 测试通过 |
 | R2 Batch 16 | N5 endpoint level 组装规则 | 固定 Batch 15 N0–N4，仅重跑 N5：贸易 `$105.6bn` 的终点 level 折回 change，Claim 18→17；严格精确率 18/18→17/17（100%），正文严格召回 17/18；relationship_type+comparison 精确率 16/18→16/17；重复/误合并/漏合并 1/0/0；875 测试通过 |
 | N0–N5 影子 Claim 路线 | N0–N5 离线影子生成、候选完整处置、r2-v4 影子 Claim | **阶段验收完成并冻结**；基线 Batch 16；影子 Claim 未接入生产 |
+| P0 Batch 1 | 文章来源身份：`articles.source_id`、迁移、`unified_main sources` 回填 | 已实现；生产副本初始绑定 132/138；Batch 5 用显式 feed alias 补绑余下 6 条，验证副本 138/138；生产库未改 |
+| P0 Batch 2 | Claim/Evidence 语义正确性：skeleton `period` 不再使用发布日期；写入时强制来源、定位与证据关联；历史 `period` 修正 | 已实现；生产副本 220/220 条 skeleton Claim 的 `period` 已置空，220 条修正记录；0 条待处置；生产库未改 |
+| P0 Batch 3 | 事件候选与来源独立性：`event_candidate` 强/弱候选、来源族/独立来源单元/转载候选计算 | 已实现；真实数据 117 事件、6,786 对比较，1 个弱候选、0 强候选、0 已确认转载；无多文章事件，真实聚合能力标记 PARTIAL；生产库未改 |
+| P0 Batch 4 | 实体识别与关系：确定性 mention、类别、定位、受控规范化、`entity_relations` | 已实现；Batch 5 修正 source_name 不是 publisher，`PUBLISHED_BY` 不再生成；APPLICANT/PETITIONER/REGULATED_BY 真实数据 0 条，合成测试覆盖；生产库未改 |
+| P0 Batch 5 | 数据链路闭环与一致性：来源语义、只读端到端审计、10 条完整链路样本 | 已实现；验证副本 138/138 source_id、52 mention/60 次、24 实体、0 `PUBLISHED_BY`；审计 PARTIAL（15 条 lineage 仅 declared、47 个事件无证据、21 篇未分析文章）；生产库未改 |
 
 ## 数据库现状
 
 | 库 | 表 | `user_version` | 内容 |
 |---|---|---|---|
-| `data/opportunity_radar.sqlite3` | 23 | 3 | articles 126 / analyses 117 / runs 15 / deliveries 29；events 117 / evidences 220 / claims 220 / entities 10 / event_links 3（全部 candidate） |
+| `data/opportunity_radar.sqlite3`（生产） | 24 | 5 | articles 138 / analyses 117 / runs 16 / deliveries 29；events 117 / evidences 220 / claims 220 / entities 10 / event_links 3（全部 candidate）；尚无 `source_id` 列，未迁移；220 条 skeleton Claim 的 `period` 仍为旧值 |
+| P0 Batch 1+2 部署验证副本（生产库拷贝） | 25 | 7 | `data/archive/p0-batch2-postdeploy-validation-2026-11-03/opportunity_radar.sqlite3`；132/138 篇文章绑定 `source_id`；220/220 条 skeleton Claim 的 `period` 已置空；`claim_corrections` 220 条；验证状态仍全部为 `unverified`；SHA-256 `cbeecbdb…f482` |
+| P0 Batch 3 验证副本（Batch 1+2 副本 + candidates） | 25 | 7 | `data/archive/p0-batch3-validation-2026-11-03/opportunity_radar.sqlite3`；117 events / 117 articles；`event_candidate` 1 条（weak、same_source_family）；`reprint_candidate` 0；`source_family_count` 11；独立佐证事件 0；未知独立性事件 42；SHA-256 `c10aaa86…d7a3` |
+| P0 Batch 5 验证副本（Batch 1–4 修正后） | 26 | 8 | `data/archive/p0-batch5-validation-2026-11-03/opportunity_radar.sqlite3`；138/138 articles 绑定 `source_id`；24 entities（company 10 / organization 3 / government 3 / location 8）；mentions 52 行 / 60 次；有定位 52/52；有 Evidence 30；`entity_relations` 0（`PUBLISHED_BY` 不生成）；`event_candidate` 1 条；SHA-256 `5bbf3781…3d10` |
 | `data/ingest/opportunity_radar_ingest.sqlite3` | 18 | 3 | sec_facts 2,719 / eia_observations 34 / evidences 2,753 / claims 2,753 |
+
+生产最近一次运行 run 16（2026-11-03 08:30 本地）为 `analysis_failed` / `HOLD`，覆盖率 0.0，失败原因 `circuit_open` 10、`timeout` 3，未发送邮件；这是本批次之前的调度运行故障；P0 Batch 1/Batch 2/Batch 3/Batch 4/Batch 5 均未修改生产库。
 
 证据按来源族：ycombinator-hn 109、openai 24、simscale 17、nyt 17、paraview 15、bbc 14、bea 8、
 nvidia 7、precice 5、ons 3、federal-reserve 1。按独立性：unknown 170、independent_secondary 31、
 independent_primary 19。
 
-备份：`data/archive/r1-backfill-2026-11-01/`、`r1-batch2-deploy-2026-11-01/`、`r1-batch3-deploy-2026-11-01/`。
+备份：`data/archive/r1-backfill-2026-11-01/`、`r1-batch2-deploy-2026-11-01/`、`r1-batch3-deploy-2026-11-01/`；P0 Batch 2 生产快照 `data/archive/p0-batch2-preflight-2026-11-03/`。
 
 ## 当前能力
 
@@ -56,7 +66,10 @@ independent_primary 19。
   （每事件一张卡片，含事实主张、证据 ID 与定位、来源画像、候选关联状态）；报告与归档含运行 ID、
   覆盖率、失败原因。
 - **结构化通道**：SEC 10 家公司 XBRL 事实、EIA 单一序列；独立库、独立进程、9 类失败分类。
-- **统一模型**：事件、证据、主张、实体、候选关联、来源谱系；回填命令幂等。
+- **统一模型**：事件、证据、主张、实体、候选关联、来源谱系；文章可直接绑定 `source_id`；Claim/Evidence 写入要求可追溯来源、可定位记录和至少一条证据关联，不满足的 Claim 不写入并在报告中列出；skeleton Claim 的 `period` 为空，发布日期只作为文章/观察时间；生产库尚未执行迁移/回填。
+- **事件候选与来源独立性**：`unified_main candidates` 生成强/弱事件候选，保留双方 event/article、标题、共享词、实体、证据 ID、时间差和转载判断；不自动合并。`event_profile` 分开输出文章数、来源 ID 数、来源族数、独立来源单元、联合发布组、未知来源族；未知来源族不计入独立佐证。
+- **实体识别与关系**：`unified_main extract` 从已存标题、Evidence 引文和 Claim 文本抽取确定性 mention；保留原始文本、类别、article/evidence/claim 键、定位、方法和置信度。`source_name` 是 feed/`INGESTED_FROM` 标签，不是发布机构；当前不生成 `PUBLISHED_BY`。`APPLICANT`/`PETITIONER`/`REGULATED_BY` 只在明确句子线索下生成且全部 `unverified`；`AFFECTED_BY`/`RELATED_TO` 不自动生成。
+- **一致性审计**：`unified_main audit --db <库>` 只读检查 source、evidence、claim、event、entity、relation 和 10 条端到端链路；不迁移 schema，不修改数据库。
 - **主张核验（离线）**：`verify` 模块对主张与证据做确定性对照，产出 verified / rejected /
   unverifiable 与冲突记录，并提供 `--audit`（检查执行情况）与 `--conflicts`（冲突报告）。
   尚未接入生产库、日报或门禁。
@@ -79,10 +92,10 @@ independent_primary 19。
 
 1. **语料覆盖**：117 篇文章只有 2 篇提到 SEC 覆盖的公司，实体对齐几乎没有可用信号；
    跨来源佐证在真实事件上尚未发生（当前没有多文章事件）。这是来源覆盖问题（S1），不是模型问题。
-2. **RSS 主张是骨架**：数值、单位、期间为空；R2 升级提示词后才有可核验的数值主张。
+2. **RSS 主张是骨架**：数值、单位、期间为空；v6 skeleton Claim 的 `period` 不再写发布日期，但也不推断事实期间；R2 升级提示词后才有可核验的数值主张。
 3. **转载识别**：`syndication_group` 全为空，需要正文相似度或通讯社标记。
 4. **实体消歧**：同名不同公司、母子公司会被当作同一实体；股票代码暂不参与匹配。
-5. **谱系未接入评分**：`multi_source_coverage` 证据状态仍按文章计数，尚未改为来源族计数。
+5. **谱系未接入评分**：`multi_source_coverage` 证据状态仍按 `source_name` 计数（同一机构多个栏目会算作多个），尚未改为来源族/独立来源单元计数；这会改变评分和证据状态，需单独批准。
 6. **R2 待启用**：50 篇真实 RSS 样本已完成 N0–N5；Batch 13 修复 N2 经济相关性、N3 期间关联
    与 N5 语义去重；Batch 14 将 N3 rate/change、period_change 恢复到 Batch 12 基线；Batch 15 修复
    GDP subject、贸易 predicate 与 `$0.1bn` economic relevance；Batch 16 只改 N5，将 `$105.6bn`
@@ -92,6 +105,9 @@ independent_primary 19。
    Claim 表、`verify.py`、日报或门禁。v7 切换判定仍为 **NOT READY**。N2/N3 语义准确率仅 10 篇
    人工参考，不外推；程序只记录缺失、不补造。
 7. **R3–R6 未开始**：编辑优先级、周报月报、经济数据引擎、回测。
+8. **生产迁移与历史修正未执行**：P0 Batch 1/5 的 `source_id` 回填与 feed alias、P0 Batch 2 的 `period` 修正、P0 Batch 3 的事件候选写入、P0 Batch 4 的 schema v8 实体列/关系表迁移和 P0 Batch 5 的审计均只在生产副本完成；需批准后先备份再对生产库执行。
+9. **事件聚合真实样本不足**：当前 117 个事件对应 117 篇文章，没有多文章事件；Batch 3 只得到 1 个同来源族弱候选，强候选/转载候选/跨来源族独立佐证均为 0。真实聚合能力标记为 PARTIAL，合成测试通过不等于真实数据已验证。
+10. **实体层只验证了组织/政府/地点**：Batch 5 验证副本得到 52 条 mention、24 个正文实体；PRODUCT/TECHNOLOGY/PERSON 没有自动抽取；APPLICANT/PETITIONER/REGULATED_BY 真实数据为 0，只有合成测试覆盖。`AFFECTED_BY` 和 `RELATED_TO` 按边界不自动生成。`source_name` 是 feed 标签，未生成 `PUBLISHED_BY`。实体数量增长不等于关系质量已验证。
 
 ## 边界
 

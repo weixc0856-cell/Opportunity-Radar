@@ -69,6 +69,17 @@ class SummaryLineTests(unittest.TestCase):
         self.assertIn('独立佐证：是', joined)
         self.assertIn('NYT', joined)
 
+    def test_independent_units_are_not_the_article_count(self):
+        block = event_block(members=[{'title': 'A', 'url': 'https://example.org/a', 'source_name': 'BBC'},
+                                     {'title': 'B', 'url': 'https://example.org/b', 'source_name': 'NYT'}],
+                            sources=['bbc-business', 'nyt-business'],
+                            source_families=['bbc', 'nyt'], independent_source_units=2,
+                            independent_corroboration=True)
+        text = ' '.join(event_summary_lines(item('A', 50, event=block)))
+        self.assertIn('同事件报道 2 篇', text)
+        self.assertIn('独立来源单元 2 个', text)
+        self.assertIn('独立佐证：是', text)
+
     def test_candidates_are_labelled_as_candidates(self):
         block = event_block(candidate_links=3, link_items=[link(link_id=f'lnk-{i}') for i in range(3)])
         text = ' '.join(event_summary_lines(item('A', 50, event=block)))

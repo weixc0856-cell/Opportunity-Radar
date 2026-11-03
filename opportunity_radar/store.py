@@ -2,7 +2,7 @@ import hashlib, json, re, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
-from .unified import SCHEMA as UNIFIED_SCHEMA
+from .unified import SCHEMA as UNIFIED_SCHEMA, SCHEMA_VERSION as UNIFIED_SCHEMA_VERSION
 
 def now(): return datetime.now(timezone.utc).isoformat()
 class Store:
@@ -24,7 +24,7 @@ class Store:
     def init(self):
         with self.connect() as c:
             c.executescript('''
-        CREATE TABLE IF NOT EXISTS articles(article_key TEXT PRIMARY KEY, article_id TEXT, title TEXT NOT NULL, url TEXT NOT NULL, published TEXT, source_name TEXT, summary_hash TEXT, created_at TEXT NOT NULL, fetched_at TEXT, content_source TEXT, retrieval_status TEXT, event_key TEXT);
+        CREATE TABLE IF NOT EXISTS articles(article_key TEXT PRIMARY KEY, article_id TEXT, title TEXT NOT NULL, url TEXT NOT NULL, published TEXT, source_name TEXT, source_id TEXT NOT NULL DEFAULT '', summary_hash TEXT, created_at TEXT NOT NULL, fetched_at TEXT, content_source TEXT, retrieval_status TEXT, event_key TEXT);
         CREATE TABLE IF NOT EXISTS article_versions(article_key TEXT NOT NULL, summary_hash TEXT NOT NULL, content_source TEXT, fetched_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(article_key,summary_hash));
         CREATE TABLE IF NOT EXISTS analyses(article_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS analysis_history(history_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, result_json TEXT NOT NULL, score INTEGER NOT NULL, risk_flag TEXT, status TEXT NOT NULL, analyzed_at TEXT NOT NULL, UNIQUE(article_key,analyzed_at));
@@ -35,8 +35,12 @@ class Store:
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
-            for name in ('fetched_at','content_source','retrieval_status','event_key'):
-                if name not in cols: c.execute(f'ALTER TABLE articles ADD COLUMN {name} TEXT')
+            for name in ('fetched_at','content_source','retrieval_status','event_key','source_id'):
+                if name not in cols:
+                    if name == 'source_id':
+                        c.execute("ALTER TABLE articles ADD COLUMN source_id TEXT NOT NULL DEFAULT ''")
+                    else:
+                        c.execute(f'ALTER TABLE articles ADD COLUMN {name} TEXT')
             for table,extra in (('runs',(('report_path','TEXT'),('report_hash','TEXT'),('stage','TEXT'),('exit_code','INTEGER'),('pid','INTEGER'),
                                            ('publication_status','TEXT'),('coverage','REAL'),('failed_causes','TEXT'),('not_attempted','INTEGER'))),
                                  ('deliveries',(('idempotency_key','TEXT'),('recipient','TEXT'))),
@@ -47,8 +51,8 @@ class Store:
             # R1 tables live in the same database as the articles they describe. The DDL is
             # shared with the SEC/EIA store so both sides obey one contract.
             c.executescript(UNIFIED_SCHEMA)
-            if c.execute('PRAGMA user_version').fetchone()[0] < 1:
-                c.execute('PRAGMA user_version = 1')
+            if c.execute('PRAGMA user_version').fetchone()[0] < UNIFIED_SCHEMA_VERSION:
+                c.execute(f'PRAGMA user_version = {UNIFIED_SCHEMA_VERSION}')
             # Backfill the current analysis once so pre-upgrade results have a history entry.
             c.execute('''INSERT OR IGNORE INTO analysis_history(article_key,result_json,score,risk_flag,status,analyzed_at)
                          SELECT article_key,result_json,score,risk_flag,status,analyzed_at FROM analyses''')
@@ -78,21 +82,24 @@ class Store:
         return {r['source_name'] for r in rows if (r['source_name'] or '').strip()}
     def analyzed(self,key):
         with self.connect() as c: return c.execute('SELECT 1 FROM analyses WHERE article_key=?',(key,)).fetchone() is not None
-    def save_article(self,a,key):
+    def save_article(self,a,key,source_id=''):
         h=hashlib.sha256(a.summary.encode()).hexdigest()
         stamp=now(); fetched=getattr(a,'fetched_at','') or stamp
         has_text=bool(a.summary.strip())
         cs=getattr(a,'content_source','') or ('rss_summary' if has_text else 'title_only')
         rs=getattr(a,'retrieval_status','') or ('ok' if has_text else 'empty_content')
+        source_id=str(source_id or '')
         with self.connect() as c:
             ekey=self.event_key(a.title)
-            inserted=c.execute('INSERT OR IGNORE INTO articles(article_key,article_id,title,url,published,source_name,summary_hash,created_at,fetched_at,content_source,retrieval_status,event_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(key,a.article_id,a.title,a.url,a.published,a.source_name,h,stamp,fetched,cs,rs,ekey)).rowcount
+            inserted=c.execute('INSERT OR IGNORE INTO articles(article_key,article_id,title,url,published,source_name,source_id,summary_hash,created_at,fetched_at,content_source,retrieval_status,event_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(key,a.article_id,a.title,a.url,a.published,a.source_name,source_id,h,stamp,fetched,cs,rs,ekey)).rowcount
             c.execute('INSERT OR IGNORE INTO article_versions(article_key,summary_hash,content_source,fetched_at,created_at) VALUES(?,?,?,?,?)',(key,h,cs,fetched,stamp))
             if not inserted:
                 # articles is the current metadata row; article_versions preserves each observed content hash.
-                c.execute('''UPDATE articles SET article_id=?,title=?,url=?,published=?,source_name=?,summary_hash=?,
-                             fetched_at=?,content_source=?,retrieval_status=?,event_key=? WHERE article_key=?''',
-                          (a.article_id,a.title,a.url,a.published,a.source_name,h,fetched,cs,rs,ekey,key))
+                # An empty source_id never erases a previously resolved binding.
+                c.execute('''UPDATE articles SET article_id=?,title=?,url=?,published=?,source_name=?,
+                             source_id=COALESCE(NULLIF(?, ''), source_id),
+                             summary_hash=?,fetched_at=?,content_source=?,retrieval_status=?,event_key=? WHERE article_key=?''',
+                          (a.article_id,a.title,a.url,a.published,a.source_name,source_id,h,fetched,cs,rs,ekey,key))
             return inserted
     def versions(self,key):
         with self.connect() as c:
