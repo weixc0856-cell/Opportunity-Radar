@@ -1,34 +1,100 @@
 # Operations
 
-Start FreshRSS: `docker compose up -d`; inspect with `docker compose ps` and `docker compose logs -f freshrss`.
+## Services
 
-Open `http://127.0.0.1:8088`, initialize FreshRSS, verify API availability and add only approved feeds.
+| Service | Endpoint | Start | Stop |
+|---|---|---|---|
+| FreshRSS | `http://127.0.0.1:8088` | `docker compose up -d` | `docker compose down` |
+| Local model | `http://127.0.0.1:8080/v1` | `.\deploy\windows\start-model.ps1` | stop the pid in `reports\llama-server.pid` |
+| Admin UI | `http://127.0.0.1:8090` | `.\deploy\windows\start-admin.ps1` | Ctrl+C |
 
-Check model: `Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/v1/models"`; the context actually
-in use can be read back from `/props` (`default_generation_settings.n_ctx`, requires the API key).
-`start-model.ps1` launches with `-c 65536` and q8_0 KV by default; at f16 the same context does not fit
-on an 8 GB card.
+The project model instance is **CPU-only** (`-ngl 0`, 64K context, q8_0 not needed on CPU).
+The 8 GB Arc A750 is reserved for ComfyUI. The GPU/MoE split measured ~0.8 tok/s at 64K on
+2026-11-03; the CPU-only instance measured ~10.8 tok/s on the same model. Do not raise the
+timeout to hide a throughput problem.
 
-Test: `py -3 -m unittest discover -s tests -v`; offline sample: `py -3 -m opportunity_radar.cli --dry-run --sample`.
+Only one llama-server may use 8080. `start-model.ps1` waits for a foreign listener, never
+opens a second port and never kills another process. `run-digest.ps1` stops only the server
+it started (pid file + command line carrying `--api-key`).
 
-End-to-end verification: `py -3 tools/e2e_verify.py --limit 3` runs the real FreshRSS -> model -> SQLite -> report chain, then repeats it against a local server that returns an invalid category. It exits non-zero if a failed analysis is reported as a clean run. See `docs/E2E_VERIFICATION.md`.
+## Daily task
 
-Real run: `deploy\windows\run-digest.ps1`.
+`OpportunityRadarDaily` runs at 08:00 and calls:
 
-Task Scheduler runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<project>\deploy\windows\run-digest.ps1"`, where `<project>` is the checkout path registered by `install-task.ps1`. Run interactively first.
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<project>\deploy\windows\run-digest.ps1"
+```
 
-Source registry audit (metadata only): `py -3 -m opportunity_radar.source_audit`. Optional HTTPS reachability checks: `py -3 -m opportunity_radar.source_audit --check-urls`. Reachability is not legal approval.
+`run-digest.ps1` starts Compose and the model, then runs
+`python -m opportunity_radar.cli --period auto`. `OR_PIPELINE_ENABLED=0` disables the
+post-analysis pipeline for isolated tests; `OR_CLAIM_PIPELINE_MAX_ARTICLES` (default 8)
+bounds how many new articles go through N0–N5 each run. The task has `StartWhenAvailable`,
+battery restrictions off, `MultipleInstances=IgnoreNew` and a **180-minute** execution limit.
+`--period auto` writes the daily brief, plus a weekly report every 7 days and a monthly
+report every 30 days (catch-up uses the last report's mtime).
 
-SMTP check before a real run: `py -3 -m opportunity_radar.mail_test`. It sends one test message only. Ports 465/994 use implicit TLS; 163 mail requires an authorization code, not the account password.
+Failure semantics:
 
-Each run writes a timestamped archive under `reports/archive/` and records the path plus report hash in the `runs` table. Duplicate reports are not sent twice; runs with no new analyses record `skipped_no_new_content`. Publication is gated on analysis coverage: `PASS` at 0.8 and above, `PASS_WITH_LIMITATIONS` between 0.5 and 0.8 (the report states the coverage), `HOLD` below 0.5 or after an integrity fault. A held run sends no subscription mail and no alert mail; it keeps the local report and the run row.
+- Model unavailable at preflight: `runs` row `failed` + HOLD, exit 3, no subscription mail.
+- Model dies mid-run: bounded retries, health probe, circuit breaker; remaining articles are
+  recorded as `not_attempted`, coverage falls, HOLD below 0.5.
+- Unified pipeline blocking failure: HOLD with the failing step named in the report.
+- No new content: `no_new_content`, no mail.
+- Duplicate: report-hash idempotency per recipient, no second send.
+- HOLD sends neither subscription nor alert mail; the local report and `runs` row are kept.
+- A launcher killed from outside leaves `reports/launcher-inflight.json`; the next run
+  reports it.
 
-Local admin UI: `.\deploy\windows\start-admin.ps1` (or `.\.venv\Scripts\python.exe -m opportunity_radar.admin_server`) serves http://127.0.0.1:8090. It binds loopback only and has no authentication. It edits the registry selected by `OR_SOURCES_PATH` and stores recipients in `config/recipients.json`; SMTP secrets stay in `.env`.
+## Commands
 
-Scheduled runs (`run-digest.ps1`) start Docker Compose and the local model first, then write `reports/scheduler-run.log` with the run id, each phase, the CLI pid and its exit code, and `reports/cli-run.log` / `cli-run.err.log` with the raw CLI output. A launcher killed from outside cannot write its own ending, so it leaves `reports/launcher-inflight.json`; the next run reports that unfinished marker. Multiple recipients in `OR_EMAIL_TO` (comma or semicolon separated) receive separate copies.
+```
+py -3 -m opportunity_radar.cli --dry-run                 # real fetch + model + full pipeline, no mail
+py -3 -m opportunity_radar.cli --render-only             # re-render latest, read-only
+py -3 -m opportunity_radar.cli --period weekly|monthly   # rebuild a period report
+py -3 -m opportunity_radar.unified_main audit --db <db>  # read-only end-to-end audit
+py -3 -m opportunity_radar.unified_main db-migrate --db <db>                 # preview
+py -3 -m opportunity_radar.unified_main db-migrate --db <db> --apply --backup <file>
+py -3 -m opportunity_radar.unified_main economic
+py -3 -m opportunity_radar.unified_main opportunities
+py -3 -m opportunity_radar.unified_main quality
+py -3 -m opportunity_radar.unified_main backtest
+py -3 -m opportunity_radar.source_audit
+py -3 -m opportunity_radar.acceptance                     # real environment checks
+```
 
-## 本地模型按需启动
+Tests: `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`.
+Offline sample: `python -m opportunity_radar.cli --dry-run --sample`.
+End-to-end fault injection: `py -3 tools/e2e_verify.py --limit 3`.
 
-`OR_MODEL_AUTOSTART=1`（Windows）时，`cli` 在分析前检查 `OR_LLM_BASE_URL/health`；若模型未运行，
-会调用 `deploy/windows/start-model.ps1` 并在 `OR_MODEL_START_TIMEOUT`（默认 600 秒）内轮询，成功才继续。
-默认关闭；关闭时模型不可用会让这次运行以退出码 3 结束，而不是产生 30 条连接失败。
+## Database
+
+Production: `data/opportunity_radar.sqlite3`, schema **v9**. Business commands open with
+`migrate=False`; a lower schema raises `SchemaVersionError` and points to `db-migrate`.
+`audit`, `report`, `--render-only` stay read-only. `db-migrate --apply` requires a different,
+integrity-checked backup file. A migration rehearsal and the production backup are in
+`data/archive/final-migration-2026-11-03/`.
+
+Isolated stores:
+
+- SEC/EIA: `data/ingest/opportunity_radar_ingest.sqlite3`
+- Source Pilot: `data/pilot/source_pilot.sqlite3`
+- Claim node runs: `data/claim-pipeline/node_runs.sqlite3`
+- Economic: `data/economic/economic.sqlite3`
+- Quality: `data/quality/quality.sqlite3`
+
+## Reports and logs
+
+- `reports/latest-digest.{txt,html}`; archive `reports/archive/YYYY/MM/DD/` with text, HTML,
+  `items.json` and `manifest.json`.
+- Weekly/monthly: `reports/weekly-*.txt|json`, `reports/monthly-*.txt|json`, archived under
+  `reports/archive/`.
+- Quality: `reports/quality/latest.{json,md}`.
+- Logs: `reports/scheduler-run.log`, `cli-run.log`, `cli-run.err.log`,
+  `opportunity-radar.log`, `llama-server.log`, `llama-server.err.log`, `model-defer.log`.
+- `reports/llama-server.pid` exists only while a project model instance is running.
+
+## SMTP check
+
+`py -3 -m opportunity_radar.mail_test` sends one test message. 465/994 use implicit TLS;
+163 mail requires an authorization code, not the account password. Real daily mail is sent
+only after the publication gate passes and the report is not a duplicate.

@@ -18,13 +18,15 @@
    "今天没有信号"。
 5. **保守合并**：不确定就保持独立。候选关联写 `candidate`，未知来源写 `unknown`。
 
-## 阶段纪律
+## 交付纪律
 
-- 每个阶段有一个批准门（见 `docs/IMPLEMENTATION_PLAN.md` §审批门）。**未获批准不得开始下一阶段**，
-  也不得以"为后续铺路"作为本阶段完成的理由。
-- 每个阶段独立提交；不改写已推送的提交；不把未批准的改动混进提交。
 - 阶段完成的定义是：代码 + 测试 + 真实数据验证 + 文档记录。缺一项就说缺哪一项。
+- 每个阶段独立提交；不改写已推送的提交；不把未验证的改动混进提交。
 - 真实运行需要本机 FreshRSS 与 `llama-server`；没有就明确写"未验证"，不要用 mock 结果代替。
+- 生产库迁移必须有可恢复备份；先在副本演练，再对生产执行。
+- 本地 LLM 单端口 **8080**，项目实例 **CPU-only**（`-ngl 0`，64K）。`start-model.ps1`
+  检测到端口被占用时等待（`MaxWaitSeconds`），不另开端口、不 kill 别人的进程；
+  `run-digest.ps1` 只停止本次启动的实例（`reports\llama-server.pid`）。
 
 ## 工程约定
 
@@ -48,19 +50,12 @@
 
 ## 当前阶段
 
-R1 统一事件模型已分批交付并部署（Batch 1–4）。R2 的规则与 v7 影子提示词已离线实现；
-主张提取流水线的 N0–N5 已交付（Batch 7–10）：N0/N1 确定性规范化与候选，N2/N3 本地模型
-语义与关系，N4/N5 确定性标准化、候选完整处置与 r2-v4 影子 Claim 组装。
-七夹具与 50 篇真实 RSS 影子运行均已完成（Batch 11–12）。Batch 13 完成 N2 经济相关性、
-N3 同句/标题同月期间关联与 N5 语义去重；Batch 14 只修 N3，将 rate/change 与 period_change
-恢复到 Batch 12 参考集基线，并修复 3.8% 遗漏和 N3 输出预算。Batch 15 只修 N2，修复 GDP subject、
-贸易 predicate 与 `$0.1bn` economic relevance，N2 disposition/subject/predicate/economic 达到
-21/20/19/21；N5 严格精确率/召回 18/18、17/18，但语义口径（含 relationship_type/comparison）
-为 16/18、16/18。Batch 16 只改 N5，将 `$105.6bn` 的终点 level 折回 change，Claim 18→17，
-严格精确率 17/17、正文严格召回 17/18，语义精确率 16/17；没有误合并独立 level。Google/Intel
-title-only 与 Personal Income 0.2% DPI 仍有缺口。影子 Claim 未接入生产 Claim 表、日报或核验。
-v7 切换仍是 **NOT READY**，**生产启用需 G6 批准**。
-已关闭的门与待批准的门见 `docs/IMPLEMENTATION_PLAN.md`。
+R0–R6 已进入同一生产管线。每日 `cli` 在分析后自动执行 R1 回填、N0–N5 数值主张、
+实体/谱系、事件候选、`verify` 核验、Opportunity 发现、经济数据同步与 R6 质量快照。
+生产库已迁移到 schema v9；历史 skeleton Claim 的 `period` 已修正，`source_id` 已回填。
+Opportunity 只创建 `signal_detected`，不自动声称 problem/buyer/payment 已验证。
+分析器提示词仍是 v6；`prompts/analyst_v7.md` 仍是影子，未切换。
+日报每日 08:00，周报/月报由 `--period auto` 按 7/30 天节奏生成。
 
 ## 文档地图
 
@@ -68,12 +63,12 @@ v7 切换仍是 **NOT READY**，**生产启用需 G6 批准**。
 |---|---|
 | `README.md` | 产品入口：是什么、怎么装、怎么跑、数据怎么流 |
 | `docs/PRD.md` | 产品定义：用户、通道、功能需求、数据模型、质量框架 |
-| `docs/IMPLEMENTATION_PLAN.md` | 开发路线：阶段、依赖、验收要点、审批门 |
-| `docs/PROJECT_STATUS.md` | 当前事实：已交付、数据库现状、缺口 |
-| `docs/ARCHITECTURE.md` | 模块职责与数据流 |
-| `docs/OPEN_ISSUES.md` | 未解决的工程问题 |
-| `docs/OPERATIONS.md` | 日常运行、排障、任务计划 |
+| `docs/PROJECT_STATUS.md` | 当前事实：已交付、数据库现状、验收矩阵、缺口 |
+| `docs/ARCHITECTURE.md` | 模块职责、数据流、统一生产管线与 R3–R6 |
+| `docs/OPERATIONS.md` | 日常运行、排障、任务计划、数据库迁移 |
 | `docs/EVIDENCE_AND_LANES.md` | 证据等级与通道评分规则 |
-| `docs/CLAIM_PIPELINE.md` | 主张提取流水线：N0–N5 的契约、失败语义、现状与限制 |
+| `docs/CLAIM_PIPELINE.md` | 主张提取流水线：N0–N5 的契约、失败语义、限制 |
 | `docs/SOURCE_POLICY.md` | 来源准入与治理字段 |
-| `docs/archive/` | 历史记录：审计、设计、授权、验收（冻结，不再修改） |
+| `docs/SECURITY_PRIVACY_SOURCE_COMPLIANCE.md` | 安全、隐私与来源合规边界 |
+| `docs/E2E_VERIFICATION.md` | 端到端验证方法与边界 |
+| `docs/archive/` | 历史与已取代文档（冻结，不再修改） |

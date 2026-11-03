@@ -68,18 +68,64 @@
     value/unit/scale/currency/period records, preserving period raw text and locator, without
     re-deciding anything. `n5_assembly.py` (N5) disposes every N1 candidate, merges semantically
     identical r2-v4 claims while preserving all relationship/evidence lineage, folds a level that is
-    only the evidence endpoint of a change back into that change, and assembles shadow claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file, reuses the
-    latest usable result for the same input, and records per-batch tokens/timing. Nothing here
-    writes to the production database or changes the analyzer.
+    only the evidence endpoint of a change back into that change, and assembles r2-v4 claims. `pipeline_store.py` keeps the runs in a separate append-only SQLite file, reuses the
+    latest usable result for the same input, and records per-batch tokens/timing. The nodes
+    themselves do not write the production database; `pipeline.py` promotes accepted N5 claims
+    into `claims`/`evidences` after the same r2-v4 contract checks.
 14. Schema v9 adds the four Opportunity tables: `opportunities`, `opportunity_links`,
     `opportunity_hypotheses`, `opportunity_revisions`. `opportunity.py` is the minimal data access
     layer: stable canonical IDs, polymorphic link target checks, append-only hypotheses/revisions,
     and revision triggers that reject UPDATE/DELETE. `opportunity_audit.py` checks targets,
-    ownership, projection and validation gates. No Opportunity rows are auto-created and nothing
-    here changes B-lane classification, scoring, digest, reports or gate decisions.
+    ownership, projection and validation gates. `opportunity_discovery.py` creates
+    `signal_detected` rows only, from evidence-backed B seeds; it never infers problem_supported,
+    buyer_identified or payment_verified.
+15. `opportunity_candidates.py` is the read-only B-seed mapping path used by
+    `unified_main b-candidates`. It opens the source database with SQLite `mode=ro`, reads stored
+    `analyses.result_json.scoring` and the R1 Event/Evidence/Claim/entity/lineage tables, and writes
+    only `reports/opportunity-candidates.json` / `.md`. It classifies candidates as evidence-backed,
+    signal-only or insufficient mapping, suggests duplicate clusters without merging, and exposes a
+    per-candidate human review status. It never creates Opportunity rows, links, hypotheses or revisions.
+16. `opportunity_review.py` is the Batch 12 explicit-creation boundary used by
+    `unified_main b-review validate|preview|apply`. It validates a review manifest and its
+    source-report hash, checks real Article/Event/Evidence/Claim/Entity references, previews
+    canonical-key conflicts, and creates an Opportunity with its seed/context/fact links and first
+    Revision in one transaction. Apply requires `--apply`, refuses the production path, refuses a
+    schema below v9, and never migrates. Existing canonical keys are idempotent only when the
+    payload matches exactly; otherwise they are conflicts, never merged. Batch 13 adds a fail-closed
+    apply target allowlist (canonical path plus file identity, rejecting symlinks, hardlinks to
+    production, traversal, missing paths and any v9 database outside the allowlist) and requires a
+    human review manifest before an AI-assisted manifest can request creation.
 
 The order in step 6 matters. Evidence is established before scoring, so a lane can never
 promote an item whose quotes could not be located in the text we actually received. See
 `docs/EVIDENCE_AND_LANES.md` for the state table, the lane weights and the promotion gates.
 
 RSS content is untrusted input and may contain prompt injection. The model has no tools and cannot initiate network requests. Secrets are never included in prompts.
+
+17. `pipeline.py` is the single post-analysis production chain used by the daily CLI. After
+    `attach_event_context` has filed this run's articles, it runs, in order: R1 backfill
+    (`unified_main rss`), the bounded N0–N5 claim pipeline (default 8 new articles per run,
+    model calls only when N1 found numeric candidates), entity seeding/extraction, lineage,
+    event candidates, verification (`verify.py`), Opportunity discovery, the economic engine
+    and a quality snapshot. Every step is recorded in `stats.pipeline`; a blocking failure in
+    R1 backfill forces HOLD. The N0–N5 bound, skipped count and per-article status are printed,
+    never hidden. `OR_PIPELINE_ENABLED=0` disables the chain for isolated tests.
+18. R3 editorial priority lives in `scoring.py`: the public `score` is unchanged, and each item
+    also carries `signal_score` (uncapped importance), `evidence_score` (E0/E1/E2 strength) and
+    `editorial_priority` P0–P3/REJECT with a deterministic `priority_basis`. The digest orders
+    event representatives by priority first, score second; source caps still only defer items.
+19. `period_report.py` builds weekly and monthly reports by querying events, evidences, claims,
+    opportunities and the economic store for a date window. Claim/evidence windows use the
+    article's publication time, not the backfill timestamp. `cli --period weekly|monthly` writes
+    one report; `--period auto` (used by the scheduled task) writes weekly every 7 days and
+    monthly every 30 days, with catch-up by the last report's mtime.
+20. `economic.py` is the R5 store (`data/economic/economic.sqlite3`). It syncs BLS macro series
+    from the pilot database and EIA observations from the isolated ingest database, keeps the
+    current observation plus every distinct revision in `observation_versions`, and derives MoM
+    and YoY with the formula and inputs recorded in `derived_metrics`. It never writes the RSS
+    business tables and never turns a series into an article.
+21. `quality.py` is the R6 measurement layer. It computes claim locator/verification rates,
+    event evidence/claim coverage, independent-source events, run failure rate and gate escapes
+    from stored rows, records a 30-day backtest, reads the frozen N1 benchmark, and appends a
+    snapshot to `data/quality/quality.sqlite3` plus `reports/quality/latest.{json,md}`. Metrics
+    with no real benchmark (event clustering precision/recall) are labelled `NOT_MEASURED`.

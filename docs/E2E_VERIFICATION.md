@@ -16,7 +16,7 @@
 | `reset` | 每次补全断开连接 | 熔断生效、剩余条目记为未尝试 |
 | `refuse` | 指向一个关闭的端口 | 模型不可用时写入 HOLD 运行记录并退出 3 |
 
-fault 运行复现 `docs/OPEN_ISSUES.md` 的 ISSUE-001（`policy_change` 不在枚举内）。它复用了
+fault 运行复现 `docs/archive/superseded-2026-11-03/OPEN_ISSUES.md` 的 ISSUE-001（`policy_change` 不在枚举内）。它复用了
 happy 的数据库，所以同一轮里既有"已有结果跳过"，又有"分析失败"——这正是过去会把失败写成
 "本轮没有新增分析任务"的组合。
 

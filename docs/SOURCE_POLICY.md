@@ -79,7 +79,7 @@ whether the body is complete, and enabling it does **not** raise the evidence ra
   `article.feed_summary`; `content_source` becomes `article_page`.
 - `content_access_level=full_text` remains a separate review decision: only that
   declaration lets `content_basis()` return `full_text` and reach E2. Review the fetched
-  body first, then change the declaration. See `docs/FULL_TEXT_FETCH.md`.
+  body first, then change the declaration. See `docs/archive/superseded-2026-11-03/FULL_TEXT_FETCH.md`.
 - An invalid value is an audit error (`invalid_full_text_fetch`); a registry without the
   column defaults to `none`.
 

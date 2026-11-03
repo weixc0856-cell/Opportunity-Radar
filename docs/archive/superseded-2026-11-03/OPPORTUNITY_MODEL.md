@@ -515,3 +515,260 @@ Batch 10 的实现状态：
 - 隔离验证副本已从 v8 迁移到 v9；Opportunity 行数仍为 0。
 - 生产库仍为 v5，未迁移、未写入。
 - 未实现自动发现、自动归并、自动评分或商业验证；没有从 65 个 B 候选自动创建 Opportunity。
+
+## 15. Batch 11：只读 B 种子映射与人工复核入口
+
+命令：
+
+```bash
+python -m opportunity_radar.unified_main b-candidates --db data/opportunity_radar.sqlite3 --format both --output-dir reports
+```
+
+输出（写入已有 `reports/` 目录，不新建报告体系）：
+
+```text
+reports/opportunity-candidates.json
+reports/opportunity-candidates.md
+```
+
+实现约束：
+
+- 源库以 SQLite `mode=ro` 打开；读取 `PRAGMA user_version` 为 5 的生产库，不迁移、不写库。
+- 只读 `analyses.result_json.scoring`、`articles`、`event_articles`、`events`、`evidences`、
+  `claims`、`entities`、`entity_mentions` 和 lineage CSV；不调用模型、不抓正文、不改评分。
+- 不创建 `opportunities`、`opportunity_links`、`opportunity_hypotheses`、`opportunity_revisions`。
+- 不自动合并 Event、Article、Claim 或候选；疑似重复只给 `duplicate_cluster_candidate`，仍需人工判断。
+- 同一输入重复运行应输出相同 JSON（除文件系统路径外不写时间戳；源库 SHA-256 随报告保存）。
+
+逐候选字段：
+
+| 字段 | 含义 |
+|---|---|
+| `candidate_id` | 由 `article_key + event_id` 生成的内容哈希，不是 Opportunity ID |
+| `article_key` / `article_url` / `published` | 文章身份与时间 |
+| `source_id` / `source_name` | `source_id` 只取分析 meta 或 Evidence 的已存值；`source_name` 是 feed 标签，不作为 publisher |
+| `event_id` / `event_evidence_status` | Event 身份与 `EVIDENCE_BACKED` / `NO_EVIDENCE` / `INSUFFICIENT_EVIDENCE` |
+| `seed_class` | `EVIDENCE_BACKED_SEED`、`SIGNAL_ONLY_SEED`、`INSUFFICIENT_MAPPING` |
+| `b_status` / `b_score` / `b_evidence_state` | 原样保留 B 通道评分结果，不重新评分 |
+| `identity` | 主体、问题、买方、机会类型；`problem` / `buyer_scope` / `opportunity_kind` 不把模型文本当已确认身份 |
+| `evidence_refs` | Evidence ID、来源、引文、locator、有效性与缺失原因 |
+| `claim_refs` | Claim ID、核验状态、抽取器、locator |
+| `entity_refs` | 实体 ID、规范名、类别、mention 定位 |
+| `source_families` / `syndication_groups` | 事件级来源族与联合发布组 |
+| `lineage` | 每个源 ID 的 lineage `review_status`、来源族与独立性 |
+| `source_independence` | 独立来源单元、declared-only 计数、独立性状态 |
+| `daily_display` / `displayed_by_status` | `status_eligible` / `not_shown_by_status` 及对应布尔值；`daily_display_confidence` 固定为 `status_only_source_cap_not_replayed` |
+| `duplicate_cluster_candidate` | 仅当两个以上候选共享确定性启发式键才赋值；不合并 |
+| `review_status` | 默认 `pending`；允许 `accepted_as_seed`、`rejected`、`needs_more_evidence`、`duplicate_suspected` |
+| `review_flags` / `missing_dimensions` / `cannot_form_reason` | 缺失买方、独立来源、Event、Evidence、Claim、身份完整性等可见原因 |
+
+分类规则：
+
+1. **证据型种子**：Event 有至少一条有效 Evidence，且有 Claim 关联；Evidence 必须有来源、引文和 locator。
+2. **仅信号种子**：Event 存在但 `NO_EVIDENCE`；只能作为待核验线索，不能支撑事实。
+3. **映射不足**：没有 Event/profile、Evidence 存在但全部无效、或有效 Evidence 没有 Claim 关联等。
+   缺失原因逐条写入 `cannot_form_reason`。
+
+身份规则：
+
+- `subject` 只取该文章唯一且可追溯的实体 mention；多个不同实体视为不确定，留空。
+- `problem` 保持为空；`pain_point` 只放在 `problem_hint`，并明确是模型分析文本。
+- `buyer_scope` 保持为空；`buyer_type` 只放在 `buyer_scope_hint`，`unknown`/`none` 不当作买方。
+- 因为缺少已确认问题，`canonical_key_candidate` 为空，`canonical_key_status` 为
+  `blocked_missing_confirmed_problem`；不因标题或 pain_point 相似就生成机会 ID。
+- 疑似重复簇仅用 `subject + problem_hint + buyer_scope_hint + opportunity_kind_hint` 做复核提示，
+  不是 canonical key，不自动合并。
+
+2026-11-03 生产库只读运行结果：
+
+| 项目 | 数量 |
+|---|---:|
+| B 候选 | 65 |
+| 证据型种子 | 42 |
+| 仅信号种子 | 23 |
+| 映射不足 | 0 |
+| 有 Evidence / Claim | 42 / 42 |
+| 有实体 mention | 0 |
+| 买方无法识别 | 65 |
+| 缺少独立来源 | 65 |
+| 身份完整 | 0 |
+| canonical key 候选 | 0 |
+| 疑似重复簇 | 0 |
+| 仅按状态可进入日报（priority/watch） | 5 |
+| lineage 非 verified 的候选 | 65 |
+| Opportunity 行 | 表不存在；未创建 |
+
+限制：
+
+- `daily_display` 只重放存储的 `scoring.status`。source cap 依赖一次运行中的其他 item，无法从当前
+  数据库重建，因此不能声称 5 个候选“已经展示”；它们是“按状态可进入”，且没有重放配额。
+- 生产库没有 `source_id` 列（schema v5）；`source_id` 只能取分析 meta 或 Evidence 的已存值，
+  缺失时保持未知，不用 feed 名称代替 publisher。
+- 65 个候选的 lineage 都不是 `verified`；0 个独立佐证，不能称“已独立验证”。
+- 本批次没有产生 Opportunity、link、hypothesis 或 revision；人工审核状态只是输出字段，尚未持久化。
+
+## 16. Batch 12：人工审核清单与显式创建
+
+Batch 12 把“候选映射”和“机会创建”分成两个独立步骤。Batch 11 的 `b-candidates` 仍是只读映射；
+Batch 12 的 `b-review` 读取独立的 review manifest，只有经过校验的 `create_opportunity` 申请才可能
+在隔离 v9 数据库中写入。
+
+### 16.1 边界
+
+| 步骤 | 输入 | 输出 | 写入 |
+|---|---|---|---|
+| 候选映射 | 生产库只读 | `reports/opportunity-candidates.json` | 无 |
+| 审核清单 | 候选映射 + 人工/AI 审核者 | `reports/opportunity-review-manifest.json` | 无 |
+| 校验 | 清单 + 候选报告 + 目标库 | 逐条错误与预览 | 无 |
+| 显式创建 | 校验通过的清单 + `--apply` + 隔离 v9 库 | Opportunity + links + revision | 仅隔离库 |
+
+`accepted_as_seed` 只表示“可以作为种子”，不等于批准创建；`promotion_decision` 必须独立填写
+`create_opportunity`。`review_mode=ai_assisted` 会被明确标为临时 AI 审核，不冒充人工批准。
+
+### 16.2 Manifest
+
+`source_report_hash` 是候选报告文件的 SHA-256（当前
+`reports/opportunity-candidates.json`），不是生产库 SHA-256。命令默认读取该报告，可用 `--report`
+指定其他报告。
+
+```json
+{
+  "manifest_version": 1,
+  "source_report_hash": "<sha256 of opportunity-candidates.json>",
+  "created_at": "...",
+  "reviewer": "...",
+  "review_mode": "human",
+  "candidates": [
+    {
+      "candidate_id": "opc-...",
+      "article_key": "...",
+      "event_id": "evt-...",
+      "review_status": "accepted_as_seed",
+      "promotion_decision": "create_opportunity",
+      "identity": {
+        "subject": "...",
+        "problem_statement": "...",
+        "buyer_scope": "unknown",
+        "opportunity_kind": "demand"
+      },
+      "review_notes": "...",
+      "evidence_refs": ["ev-..."],
+      "entity_refs": [{"entity_id": "ent-...", "role": "subject"}],
+      "claim_refs": [{"claim_id": "cl-...", "role": "unverified_claim"}]
+    }
+  ]
+}
+```
+
+规则：
+
+- `review_status`：`pending`、`accepted_as_seed`、`rejected`、`needs_more_evidence`、
+  `duplicate_suspected`。
+- `promotion_decision`：`none`、`create_opportunity`；只有 `accepted_as_seed` 可以请求创建。
+- `identity.subject`、`problem_statement`、`opportunity_kind` 必须显式填写；`buyer_scope` 可为
+  `unknown`；缺失时拒绝创建，不从标题、`pain_point`、`summary_zh` 或 `buyer_type` 自动补全。
+- `evidence_refs`、`entity_refs`、`claim_refs` 必须引用目标库真实对象；Evidence 作为
+  `fact_basis` 时必须通过 Batch 10 的有效性规则；skeleton/unverified Claim 不得作为 `fact_basis`。
+- 每个创建申请自动带一个 Article `seed_signal` link；Event 作为 `context`；Entity 只有存在
+  article mention 时才允许。人工填写的 subject/problem 不是 Evidence。
+
+### 16.3 命令
+
+```bash
+# 只读校验；可对生产库运行
+python -m opportunity_radar.unified_main b-review validate   --manifest reports/opportunity-review-manifest.json   --db data/opportunity_radar.sqlite3
+
+# 只读预览；不执行 INSERT/UPDATE/DELETE/DDL/migration
+python -m opportunity_radar.unified_main b-review preview   --manifest reports/opportunity-review-manifest.json   --db data/archive/p0-batch12-validation/opportunity_radar.sqlite3
+
+# 显式创建；必须同时提供 --apply
+python -m opportunity_radar.unified_main b-review apply   --manifest reports/opportunity-review-manifest.json   --db data/archive/p0-batch12-validation/opportunity_radar.sqlite3   --apply
+```
+
+`validate` 检查 manifest 版本、source report hash、candidate/article/event 一致性、枚举、identity、
+Evidence/Entity/Claim 引用、Claim fact basis、重复申请、canonical key、已有 canonical key 冲突和
+疑似重复机会。所有错误逐条返回；有错误时 apply 不写入任何 Opportunity。
+
+`apply` 额外要求：
+
+- 显式 `--apply`；
+- 目标路径不是生产库（`resolve()` 加 `os.path.samefile()` 保护，不靠字符串前缀）；
+- 目标 `PRAGMA user_version` 不低于 9；
+- 不自动 migration；v5 只提示复制并单独迁移；
+- 不自动创建、不自动合并、不自动追加已有 Opportunity；
+- 单条 Opportunity、links、首条 Revision 在同一 SQLite 事务中；任一步失败整条回滚；
+- 重复 apply 对完全相同 payload 幂等跳过；payload 不一致时报冲突，不覆盖历史。
+
+创建后的唯一初始状态：
+
+```text
+stage = active
+validation_state = signal_detected
+```
+
+即使 manifest 带 Evidence 或 Entity，也不得升级到 `problem_supported`、`buyer_identified`、
+`payment_verified` 或 `opportunity_candidate`。
+
+### 16.4 结果与审计
+
+`apply` 结果写入 `reports/opportunity-review-result.json` / `.md`，包括创建成功、失败、幂等跳过、
+冲突、validation_state 分布、link/revision 完整性和只读 Opportunity audit。`signal_detected`
+不是已验证商业机会。
+
+### 16.5 2026-11-03 实际运行
+
+```text
+生产库 manifest：65 个 B 候选，全部 pending + none（未人工审核；AI 只做筛选建议）
+  validate: valid，schema v5，0 个创建申请
+  preview: 0 个 create，65 个 not_promoted
+  apply: 未执行写入；生产 SHA-256 不变
+v9 隔离副本（从生产只读复制后显式迁移）：
+  manifest 同上：apply 创建 0，Opportunity 0
+合成 fixture（独立 v9，仅用于 Batch 12 流程验证；Batch 13 后正式 CLI 因 allowlist 拒绝该路径）：
+  validate/preview: 1 个 create 申请通过
+  apply: 创建 1 个 Opportunity，stage=active，validation_state=signal_detected
+  links: Article seed_signal / Event context / Evidence fact_basis / Claim unverified_claim
+  revision: 1 条；Opportunity audit 错误 0
+  重复 apply: created 0，idempotent 1，revision 仍为 1
+```
+
+生产库在 Batch 12 前后均为 schema v5、SHA-256
+`fb7541f4a7005aec7aa1112bd183dd70674560dc166562310c3d7db3b48d5ca1`，未迁移、未写入。
+
+## 17. Batch 13：apply 目标 allowlist 与 AI 审核修正
+
+Batch 13 修正两个安全问题，不扩展机会发现能力。
+
+### 17.1 apply 目标 allowlist
+
+正式 `b-review apply` 只接受一个目标：
+
+```text
+data/archive/p0-batch12-validation/opportunity_radar.sqlite3
+```
+
+实现位于 `_assert_allowed_target()`，在打开写连接之前执行：
+
+- 目标必须已存在且是普通文件；
+- 拒绝原始路径中的 `..`（路径穿越）；
+- 拒绝目标自身或任意父目录是符号链接；
+- 使用 `resolve(strict=True)` 后与 allowlist 的绝对路径比较；
+- 使用 `os.path.samefile()` 拒绝生产数据库及其硬链接；
+- allowlist 外任意 v9 数据库、缺失路径、无法解析路径一律 fail closed；
+- 只有通过路径检查后才检查 schema；低于 v9 拒绝，不自动 migration；
+- `validate` / `preview` 不经过 allowlist，仍只读。
+
+测试专用接口是 `apply_manifest(..., allowed_paths=(test_db,), allow_ai_create=True)`；正式 CLI 不暴露这两个参数，不会放宽生产/正式路径或人工审核要求。
+
+### 17.2 AI 审核清单修正
+
+`review_mode=ai_assisted` 只能表示筛选建议，不能表示人工审核。Batch 13 将当前生产 manifest 中全部 65 个候选修正为：
+
+```text
+review_status = pending
+promotion_decision = none
+```
+
+`priority/watch`、分数、Evidence 数量不能自动产生 `accepted_as_seed`。正式校验拒绝 `review_mode=ai_assisted` 的 `accepted_as_seed`；`accepted_as_seed + create_opportunity` 还必须使用 `review_mode=human`。测试接口可显式允许 fixture。
+
+本次修正没有创建、删除或更新任何 Opportunity。

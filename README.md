@@ -31,8 +31,8 @@
 5. 启动模型：`.\deploy\windows\start-model.ps1`（参数在脚本顶部；`-Foreground` 前台运行）。
    - 本地 LLM 只用 **8080** 一个端口。若 8080 已被正在开发的项目占用，脚本会等待并在日志 `reports\model-defer.log` 记录，不会另开端口或 kill 别人的进程。
    - 定时任务跑完后会停止自己启动的 llama-server，把 8080 释放给下一个使用者。
-   默认 64K 上下文 + q8_0 KV（本机 8 GB 显卡实测约 7.3 GB）；GPU offload 与 CPU MoE 分层沿用原配置。
-   交互式启动器 `D:\AI\start_server.bat` 的默认档位也已改为 64K。
+   项目实例默认 **CPU-only**（`-ngl 0`，64K，约 19 GB 内存），实测约 10.8 tok/s；
+   8 GB A750 留给 ComfyUI。GPU/MoE 分层模式在同一机器上实测约 0.8 tok/s，不要用于定时任务。
 6. 试跑：`python -m opportunity_radar.cli --dry-run`。真实运行：`.\deploy\windows\run-digest.ps1`。
 7. 注册每日任务：`.\deploy\windows\install-task.ps1`。
 8. 测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests`。
@@ -40,18 +40,25 @@
 ## 数据流
 
 ```
-FreshRSS ──Fever API──> articles ──> llama-server ──> analyses / analysis_sections
-                                                        │
-                                      评分（A/B/C 通道，config/scoring.toml）
-                                                        │
-                              事件归并（R1）──> events / evidences / claims
-                                                        │
-                                   发布门禁（覆盖率 + 熔断）──> PASS / HOLD
-                                                        │
-                          reports/latest-digest.{txt,html} + archive/*.items.json ──> 邮件
+FreshRSS ──Fever API──> articles ──> llama-server（CPU-only，64K）
+                                        │
+                         analyses / analysis_sections
+                                        │
+                 评分（A/B/C 通道 + R3 编辑优先级 P0–P3/REJECT）
+                                        │
+        ┌─────────────────────── 统一生产管线（pipeline.py）───────────────────────┐
+        │ R1 回填 events/evidences/claims → N0–N5 数值主张 → 实体/谱系              │
+        │ → 事件候选 → verify 核验 → Opportunity signal_detected → 经济引擎 → 质量  │
+        └───────────────────────────────────────────────────────────────────────────┘
+                                        │
+                   发布门禁（覆盖率 + 熔断）──> PASS / HOLD
+                                        │
+        reports/latest-digest.{txt,html} + archive/*.items.json/manifest.json
+                                        │
+                    每日日报 ──> 邮件；每周周报、每月月报（--period auto）
 
-SEC XBRL ─┐
-EIA API  ─┴─> 独立摄取库（原始快照 + 规范化事实）──> R1 claims/evidences（同库，不跨库）
+SEC XBRL / EIA ──> 独立摄取库 ──> 经济数据引擎（data/economic/economic.sqlite3）
+Federal Register / BLS Pilot ──> 独立 Pilot 库 ──> 经济数据引擎
 ```
 
 ## 日报
@@ -65,7 +72,8 @@ EIA API  ─┴─> 独立摄取库（原始快照 + 规范化事实）──> R
   （仅线索，不作为已核实事实）”。文本、HTML 和邮件共用同一 `event_summary_lines`，归档 JSON 保留原始
   `event.evidence_status` 和 `event_context`。事件上下文不可用时，输出明确区分 `NOT_FOUND`、`UNAVAILABLE`、
   `READ_FAILED` 和 `SCHEMA_UNSUPPORTED`；文章自己的证据等级保留，但不会升级成事件级核验状态。
-  当前没有独立 Opportunity 表；B 通道“值得验证的商业机会”是文章级候选，不是已验证机会实体。
+  schema v9 代码已定义 Opportunity 四表，但生产库仍是 v5、没有 Opportunity 行；B 通道“值得验证的商业机会”
+  仍是文章级候选，不是已验证机会实体。
   HTML 与文本都渲染 v5 facts/inferences/gaps/actions。卡片下依次给出：
   - `事件结构`：同事件报道 N 篇 · 报道来源 N 个 · 来源族 N 个 · 独立佐证：是/否（单篇单族时不打印）；
   - `事实主张`：事件关联的主张，逐条标注类型（事实/推断/…）与核验状态，并给出证据 ID、定位
@@ -110,6 +118,10 @@ python -m opportunity_radar.unified_main entities   # 公司实体与提及
 python -m opportunity_radar.unified_main extract    # 标题/证据/主张 -> 实体提及与关系
 python -m opportunity_radar.unified_main links --ingest-db <摄取库>   # 候选关联
 python -m opportunity_radar.unified_main candidates # 事件候选：强/弱候选，不自动合并
+python -m opportunity_radar.unified_main b-candidates --db <库>  # 只读：B 种子映射 + 人工复核 JSON/Markdown
+python -m opportunity_radar.unified_main b-review validate --manifest <清单> --db <库>  # 只读校验
+python -m opportunity_radar.unified_main b-review preview --manifest <清单> --db <库>   # 只读创建预览
+python -m opportunity_radar.unified_main b-review apply --manifest <清单> --db data/archive/p0-batch12-validation/opportunity_radar.sqlite3 --apply  # 显式创建
 python -m opportunity_radar.unified_main lineage    # 来源谱系 -> 证据
 python -m opportunity_radar.unified_main sources    # 文章 -> source_id（只补绑定，不猜测）
 python -m opportunity_radar.unified_main periods --dry-run --json   # 检查旧 skeleton Claim 的 period
@@ -130,7 +142,8 @@ python -m opportunity_radar.verify --db <库> --conflicts        # 记录到的�
 ```
 
 结构化提示词 `prompts/analyst_v7.md` 已存在，但**只在影子运行中使用**（`tools/shadow_v7.py`），
-生产仍用 v6。`verify` 模块也尚未在生产库运行，未接入日报或门禁（待 G6）。
+生产分析器仍用 v6。N0–N5 与 `verify` 已通过统一管线接入每日运行；`verified` 只表示主张与其
+证据一致，不等于事实为真。
 
 主张提取流水线（离线、只读）：
 
@@ -156,14 +169,15 @@ N2 用本地 Qwen3-30B-A3B 先判定候选的经济相关性（economic / non_ec
 确定性补齐；rate/change、period_change 与缺失候选有提示词、程序纠正和一次覆盖重试。两者输出
 都经过程序校验（ID、枚举、覆盖、证据定位、比较口径守卫、输出预算）。
 N4 确定性地标准化数值/单位/数量级/币种/期间/baseline，并保留期间原文与定位；N5 检查每个 N1
-候选的处置，按 r2-v4 语义字段合并重复 Claim 后组装影子 Claim，证据回指 N0，缺失期间/比较口径
+候选的处置，按 r2-v4 语义字段合并重复 Claim 后组装 Claim，证据回指 N0，缺失期间/比较口径
 只记录不补造。
-节点运行写入独立的追加式留存（`data/claim-pipeline/node_runs.sqlite3`），不写生产库；
-影子 Claim 不进入生产 Claim 表、日报或核验。七夹具与 50 篇真实 RSS 影子运行已完成（Batch 12）；
+节点运行写入独立的追加式留存（`data/claim-pipeline/node_runs.sqlite3`）；通过 r2-v4 契约与
+证据定位检查的 N5 Claim 由 `pipeline.py` 写入生产 `claims`/`evidences`（`extractor='n5'`），
+随后由 `verify.py` 核验，未通过的不写入。七夹具与 50 篇真实 RSS 影子运行已完成（Batch 12）；
 Batch 13 完成 N2 经济相关性、N3 期间关联与 N5 语义去重（14 篇回归）；Batch 14 修复 N3
 rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 的 GDP subject、贸易 predicate
 与 `$0.1bn` economic relevance；Batch 16 只改 N5，把变化关系的终点 level 折回 change（10 篇参考集），
-影子 Claim 仍非已核实事实。
+N5 Claim 仍非已核实事实。
 契约见 `docs/CLAIM_PIPELINE.md`。
 
 核验把每条主张与它引用的证据对照：数值是否在引文里、单位是否同族、期间是否与证据记录一致、
@@ -171,12 +185,19 @@ rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 �
 并更新主张状态。`verified` 的含义是"主张与其证据一致"，不是"该事实为真"；散文骨架主张一律
 `unverifiable`；有数值但无单位的主张也按 `unverifiable` 处理。主张契约 `r2-v4` 支持
 `advance_estimate` 等修订状态与年度区间（`1997-2024`），并把模型的原始表达保留在
-`unit_raw` / `period_raw` / `revision_raw` 里。**核验尚未在生产库运行，也未接入日报或门禁**（待 G6）。
+`unit_raw` / `period_raw` / `revision_raw` 里。**核验已接入每日管线**；HOLD 仍由覆盖率与
+管线阻断决定，核验结果本身不改写发布门禁。
 
 - 七张核心表：`events`、`event_articles`、`evidences`、`claims`、`claim_evidence`、`event_corrections`、
   `claim_corrections`；实体层：`entities`、`entity_aliases`、`entity_mentions`、`entity_relations`、`event_links`。
 - 机会层（schema v9，当前空表）：`opportunities`、`opportunity_links`、`opportunity_hypotheses`、
-  `opportunity_revisions`。最小数据访问在 `opportunity.py`，append-only revision；尚未接入日报、评分或自动发现。
+  `opportunity_revisions`。最小数据访问在 `opportunity.py`，append-only revision；每日管线从
+  evidence-backed B 种子创建 `signal_detected`，不自动声称 problem/buyer/payment 已验证。
+  `b-candidates` 只读生成 B 种子映射：证据型种子、仅信号种子、映射不足、疑似重复簇和人工复核状态；
+  不创建 Opportunity，不自动合并，输出到 `reports/opportunity-candidates.{json,md}`。
+  `b-review validate|preview|apply` 读取独立 review manifest；apply 必须显式 `--apply`，只允许
+  `data/archive/p0-batch12-validation/opportunity_radar.sqlite3` 这个隔离 v9 库，单条机会的事务内创建
+  links 与首条 revision，初始状态固定 `signal_detected`；AI 辅助清单不能自动产生 accepted/创建批准。
 - 标识符是内容哈希，重复运行不产生第二条记录。
 - 事件合并只有两条规则：规范化 URL 相同，或规范化标题相同且在 72 小时窗口内。其余是不同事件；
   共享关键词不合并。
@@ -212,6 +233,35 @@ rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 �
   发布者身份时生成；当前数据没有该字段，因此为 0。`APPLICANT` / `PETITIONER` / `REGULATED_BY` 只在
   明确句子线索下生成，全部 `unverified`。`AFFECTED_BY` 和 `RELATED_TO` 不自动生成；提及不等于受影响
   或业务关系。`event_candidates` 的共享实体只使用 mention；实体提及也不增加来源独立性。
+
+## 统一生产管线（R1–R6）
+
+每日 `cli` 在分析完成后自动执行 [pipeline.py](opportunity_radar/pipeline.py)：
+R1 回填、N0–N5 数值主张（默认每轮 8 篇）、实体/谱系、事件候选、`verify` 核验、
+Opportunity 发现（只创建 `signal_detected`）、经济数据同步与派生、质量快照。
+每一步写入 `stats.pipeline`，阻断性失败使本次运行 HOLD。`OR_PIPELINE_ENABLED=0`
+只用于隔离测试。
+
+```
+python -m opportunity_radar.cli --dry-run              # 真实取数 + 模型 + 全管线，不发邮件
+python -m opportunity_radar.cli --period weekly       # 从事件/证据/主张重建周报
+python -m opportunity_radar.cli --period monthly      # 月报
+python -m opportunity_radar.cli --period auto         # 每日运行 + 到期周报/月报
+python -m opportunity_radar.unified_main economic     # BLS/EIA -> 经济库 + MoM/YoY
+python -m opportunity_radar.unified_main opportunities# evidence-backed B 种子 -> signal_detected
+python -m opportunity_radar.unified_main quality      # R6 指标 + 30 天回测快照
+python -m opportunity_radar.unified_main backtest     # 30 天运行/覆盖率/投递回测
+python -m opportunity_radar.unified_main benchmark    # 冻结的 N1 基准摘要
+```
+
+R3 编辑优先级在评分结果中输出 `signal_score` / `evidence_score` /
+`editorial_priority`（P0–P3/REJECT）；日报按优先级排序事件代表卡片，来源配额仍只影响
+`distribution`，不改写 `status`。
+
+R5 经济库位于 `data/economic/economic.sqlite3`：`datasets` / `observations` /
+`observation_versions` / `derived_metrics` / `economic_runs`。修订追加版本，不覆盖历史；
+派生指标同时保存公式与输入。R6 指标写入 `data/quality/quality.sqlite3` 和
+`reports/quality/latest.{json,md}`；没有真实基准的指标标 `NOT_MEASURED`。
 
 ## 来源治理与谱系
 
@@ -254,18 +304,14 @@ rate/change、period_change、3.8% 遗漏与输出预算；Batch 15 修复 N2 �
 
 | 文档 | 写什么 |
 |---|---|
-| `CLAUDE.md` | 工作规则：原则、边界、阶段纪律 |
+| `README.md` | 产品入口：是什么、怎么装、怎么跑、数据怎么流 |
 | `docs/PRD.md` | 产品定义：用户、通道、功能需求、数据模型、质量框架 |
-| `docs/IMPLEMENTATION_PLAN.md` | 开发路线：阶段、依赖、验收要点、审批门 |
-| `docs/PROJECT_STATUS.md` | 当前事实：已交付、数据库现状、缺口 |
-| `docs/ARCHITECTURE.md` | 模块职责与数据流 |
-| `docs/OPEN_ISSUES.md` | 未解决的工程问题 |
-| `docs/OPERATIONS.md` | 运行、排障、任务计划与归档 |
+| `docs/PROJECT_STATUS.md` | 当前事实：已交付、数据库现状、验收矩阵、缺口 |
+| `docs/ARCHITECTURE.md` | 模块职责、数据流、统一生产管线与 R3–R6 |
+| `docs/OPERATIONS.md` | 日常运行、排障、任务计划、数据库迁移 |
 | `docs/EVIDENCE_AND_LANES.md` | 证据等级与通道评分规则 |
-| `docs/SOURCE_POLICY.md` | 来源准入、治理字段、正文获取 |
-| `docs/OPPORTUNITY_MODEL.md` | Opportunity 数据模型设计与现有数据映射（仅设计，未实现） |
-| `docs/FULL_TEXT_FETCH.md`、`docs/PAGE_MONITORING.md`、`docs/DATASETS.md` | 三个子系统：正文抓取、页面监测、数据集登记 |
-| `docs/E2E_VERIFICATION.md` | 端到端与故障注入 |
-| `docs/SECURITY_PRIVACY_SOURCE_COMPLIANCE.md` | 安全、隐私与合规清单 |
-| `docs/LOCAL_DAILY_ARCHIVE.md` | 本地日报归档说明 |
-| `docs/archive/` | 历史记录：审计、设计评审、授权、验收（冻结） |
+| `docs/CLAIM_PIPELINE.md` | 主张提取流水线：N0–N5 的契约、失败语义、限制 |
+| `docs/SOURCE_POLICY.md` | 来源准入与治理字段 |
+| `docs/SECURITY_PRIVACY_SOURCE_COMPLIANCE.md` | 安全、隐私与来源合规边界 |
+| `docs/E2E_VERIFICATION.md` | 端到端验证方法与边界 |
+| `docs/archive/` | 历史与已取代文档（冻结，不再修改） |

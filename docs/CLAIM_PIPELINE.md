@@ -2,7 +2,10 @@
 
 版本：4.4 · 2026-11-02
 定位：规定"文章 → 主张"这条链路怎么拆、每个节点的输入输出契约、失败语义、留存方式与验收方式。
-现状：**N0–N5 已实现，形成离线影子链路；Claim 仍是影子 Claim，不是已核实事实。**
+现状：**N0–N5 已进入每日生产管线（`pipeline.py`）。** N5 通过 r2-v4 契约与证据定位检查的
+Claim 写入生产 `claims`/`evidences`，`extractor='n5'`、初始 `unverified`；随后
+`verify.py` 核验。未通过的 Claim 不写入，原因保留在管线结果中。Claim 仍不是"已核实事实"，
+`verified` 只表示主张与其证据一致。
 Batch 13 已完成 N2 经济相关性、N3 同句/标题同月期间关联、N5 语义去重的定向修复；14 篇回归
 （含完整 10 篇人工参考集）显示期间关联从 0/18 提升到 11/18，但同时暴露 rate/comparison 与
 个别召回回退。Batch 14 只修 N3：rate/change 与 period_change 参考集指标恢复到 Batch 12 基线，
@@ -15,7 +18,8 @@ N5：`$105.6bn` 的终点 level 折回 change，Claim 18→17，严格精确率 
 `docs/archive/R2_BATCH14_N3_SEMANTIC_REGRESSION_2026-11-02.md`、
 `docs/archive/R2_BATCH15_N2_SEMANTIC_QUALITY_2026-11-02.md` 与
 `docs/archive/R2_BATCH16_N5_SEMANTIC_ASSEMBLY_2026-11-02.md`。
-生产提示词仍是 v6，v7 仍是影子，切换判定仍是 **NOT READY**，生产启用需 G6 批准。
+生产分析器提示词仍是 v6；`prompts/analyst_v7.md` 仍是影子，未切换。N0–N5 使用
+`n2-v3` / `n3-v3` / `n4-v2` / `n5-v3` 与契约 `r2-v4`。
 
 - N0/N1：`docs/archive/R2_BATCH8_ACCEPTANCE_2026-11-01.md`
 - N2/N3：`docs/archive/R2_BATCH9_N2_N3_SPEC_2026-11-02.md`、`R2_BATCH9_N2_N3_ACCEPTANCE_2026-11-02.md`
@@ -31,7 +35,8 @@ N5：`$105.6bn` 的终点 level 折回 change，Claim 18→17，严格精确率 
 
 每个节点只解决一种问题。上一个节点交付确定的数据，下一个节点只处理这些数据，不重新猜测
 上一个节点已经完成的事情。N0、N1、N4、N5 是确定性程序；N2、N3 使用本地模型，输出是
-待核验材料。N5 只写影子 Claim，不写生产表，也不把模型判断标记为已核实事实。
+待核验材料。N5 产出 r2-v4 Claim；通过契约与证据定位检查后由 `pipeline.py` 写入生产表，
+并把模型判断保持为 `unverified`，随后由 `verify.py` 核验。
 
 ## 2. 输入边界
 
@@ -47,7 +52,7 @@ N5：`$105.6bn` 的终点 level 折回 change，Claim 18→17，严格精确率 
 | N2 | 本地模型 | 每个候选的 disposition/subject/predicate/证据 | 已实现 |
 | N3 | 本地模型 | 水平/变化/比较/区间/修订/份额/比率关系与候选处置 | 已实现 |
 | N4 | 程序 | 数值/单位/数量级/币种/期间/baseline 标准化记录 | 已实现 |
-| N5 | 程序 | 候选完整处置 + r2-v4 影子 Claim | 已实现 |
+| N5 | 程序 | 候选完整处置 + r2-v4 Claim | 已实现 |
 
 ## 4. N0 / N1（确定性头）
 
@@ -167,7 +172,8 @@ execution_status、executed_at、params_json、tools_json、output_json。`INSER
 - N0–N5 不改动 `claim_contract.py`（r2-v4）、`verify.py`（r2-v2）、生产提示词、评分与门禁。
 - 第十批对 `units.py` 只做了追加式 count/duration 单位族补充（`5 million vehicles` 的直接阻断），
   没有修改既有单位、换算或核验规则。
-- N5 产出的是 r2-v4 影子 Claim，尚未进入生产 Claim 表、日报或 `verify.py`；不是已核实事实。
+- N5 产出 r2-v4 Claim；通过契约与证据检查后由 `pipeline.py` 写入生产 `claims`/`evidences`，
+  再由 `verify.py` 核验。`verified` 仍只表示主张与其证据一致，不是已核实事实。
 - v7 未启用；生产仍是 v6；G6 未批准。
 
 ## 11. 已知限制
@@ -197,4 +203,5 @@ python tools/eval_numeric_tools.py
 
 N4/N5 工具默认复用已留存 N0–N3；N2/N3 缺失时记录 missing，不调用模型。
 没有 claim_value 的文章也会记录一个空的 N3 结果，使 N5 仍能处置 context_only/non_claim 候选。
-输出 `data/claim-pipeline/<时间戳>/`（JSONL、summary.json、summary.md），不写生产库。
+输出 `data/claim-pipeline/<时间戳>/`（JSONL、summary.json、summary.md）；工具本身不写生产库，
+生产写入由 `pipeline.py` 在契约检查后完成。

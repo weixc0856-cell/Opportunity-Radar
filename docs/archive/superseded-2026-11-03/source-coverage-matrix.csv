@@ -1,0 +1,34 @@
+﻿industry,region,information_type,source_type,current_coverage,missing_information,recommended_sources,expected_value,priority
+跨行业企业,Global,财报/资本开支/管理层变动,official_filing,partial: NVIDIA newsroom; SEC 10 companies XBRL,"8-K/10-Q/10-K, earnings, management changes, capex","SEC EDGAR, DART, EDINET, Companies House",high,PRIORITY_1
+跨行业企业,Global,实体/所有权/母公司,official_registry,"weak: 10 entities, 2 mentions","LEI, parent/child, officers, company number","GLEIF, Companies House, DART/EDINET",high,PRIORITY_1
+跨行业企业,Global,并购/融资/投资,official_filing/private_market,none,"Form D, S-1, deal data, investors","SEC Form D, Companies House, PitchBook/Crunchbase (paid)",high,PRIORITY_2
+跨行业企业,Global,产品发布/客户/供应商,first_party/news,partial: HN/OpenAI/NVIDIA,"IR newsroom, product pages, supplier disclosures","company IR, GDELT, company page monitor",medium,PRIORITY_2
+宏观,US,GDP/通胀/就业/利率,official_statistics,partial: BEA/Fed/ONS headlines,"series, revisions, units, seasonal adjustment","FRED, BLS, BEA, Fed",high,PRIORITY_1
+宏观,EU,GDP/通胀/就业/利率,official_statistics,none,"series, revisions, country breakdowns","Eurostat, ECB",high,PRIORITY_1
+宏观,Global,增长/贸易/财政,official_statistics,none,cross-country series,"World Bank, IMF, OECD, WTO",high,PRIORITY_2
+宏观,China,GDP/CPI/PMI/贸易,official_statistics,none,official series and release notes,"NBS, PBoC, Customs, MIIT",high,PRIORITY_2
+政策监管,US,法规/公告/征求意见,official_regulator,none,"rule text, agency, docket, comment period","Federal Register, Regulations.gov",high,PRIORITY_1
+政策监管,UK,政策/法规/公告,official_regulator,none,"policy papers, consultations, guidance",GOV.UK Content API,high,PRIORITY_1
+政策监管,EU,法规/指令/公告,official_regulator,none,"legal text, deadlines, transposition","EUR-Lex, European Commission",high,PRIORITY_2
+政策监管,China,产业政策/监管,official_regulator,none,"policy text, ministry, effective date","gov.cn English, NBS, MIIT",high,PRIORITY_2
+采购,US,合同/机会/预算,procurement,none,"buyer, award, NAICS, value, deadline","SAM.gov, USAspending",high,PRIORITY_2
+采购,EU,招标/中标,procurement,none,"buyer, CPV, value, deadlines",TED,high,PRIORITY_1
+就业,US,招聘/岗位需求,jobs,none,"role, location, employer, skill","USAJOBS, company job pages",medium,PRIORITY_2
+就业,Global,招聘/需求信号,jobs,none,"job ads, skills, geography","Adzuna, company job pages",medium,PRIORITY_3
+能源,US,发电/燃料/排放/价格,official_statistics,partial: EIA 2 series/34 obs,"full EIA datasets, state/price series","EIA, Ember",high,PRIORITY_1
+能源,EU,发电/负荷/价格/跨境,official_statistics,none,"hourly generation, load, flows","ENTSO-E, Ember",high,PRIORITY_2
+能源,Global,供需/投资/排放,official/commercial,none,"long series, forecasts, investment","IEA (paid), EIA, Ember",medium,PRIORITY_3
+汽车,Global,产量/销量/出口/库存,industry_association,none,country/model/segment series,"OICA (paid), ACEA (consent), national stats",high,PRIORITY_2
+汽车,China,产量/销量/出口,industry_association,none,CAAM/NBS/MIIT data,"CAAM (blocked), NBS, MIIT",high,PRIORITY_2
+机器人,Global,安装量/订单/应用,industry_association,none,"IFR data, company orders","IFR (paid), company filings",medium,PRIORITY_3
+半导体,Global,销售额/资本开支/产能,industry_association,partial: NVIDIA news only,"SIA/WSTS, company capex, fab announcements","SIA press releases, SEC filings, GDELT",high,PRIORITY_2
+AI/数据中心,Global,资本开支/算力/电力,filings/news,partial: HN/OpenAI/NVIDIA,"10-Q/8-K, IR, utility/grid data","SEC, company IR, GDELT, EIA/ENTSO-E",high,PRIORITY_1
+贸易,Global,双边贸易/关税,trade_data,none,"country/commodity series, tariffs","UN Comtrade, WTO, national customs",high,PRIORITY_2
+航运,Global,港口/咽喉/流量,trade_data,none,"port calls, chokepoint transit","IMF PortWatch, port authorities",medium,PRIORITY_3
+私营市场,Global,融资/并购/VC/PE,private_market_data,none,"deal size, investors, valuations","SEC Form D, PitchBook/Crunchbase/CB Insights (paid)",high,PRIORITY_2
+研究,Global,论文/专利/技术,research_metadata/patent,none,"authors, institutions, patents, citations","OpenAlex, Crossref, arXiv, PatentsView, EPO OPS",medium,PRIORITY_2
+新闻发现,Global,跨来源事件/多语言,event_discovery,weak: RSS only; 0 multi-article events,"event clusters, URLs, languages, domains","GDELT, Event Registry (paid)",high,PRIORITY_1
+Newsletter,Global,专家/行业/机构更新,newsletter,none,"curated updates, attachments, context","GovDelivery, company IR, think tanks, vertical media",medium,PRIORITY_3
+页面监测,China/Global,政策/IR/协会页面,page_monitor,limited: NBS page watch only,"new links, diffs, attachments","gov.cn, NBS, company IR, industry associations",high,PRIORITY_2
+社交信号,Global,早期信号/舆情,social_api,none,"posts, authors, propagation","X, Reddit, YouTube, Bluesky (paid/limited)",low/medium,PRIORITY_3
+合规,Global,制裁/所有权/风险,compliance_data,none,"sanctions, PEP, ownership","GLEIF, OpenSanctions (paid), official lists",medium,PRIORITY_3

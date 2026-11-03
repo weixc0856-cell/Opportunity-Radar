@@ -104,6 +104,35 @@ N5 的 endpoint 规则只在 evidence containment 明确时生效，后续如出
 N5 严格与 relationship_type+comparison 语义口径、endpoint 合并/独立/ambiguous、重复 Claim、
 误合并；必须同时报告分母与是否使用人工参考，不得外推到 50 篇。
 
+## ISSUE-005 B 种子身份、日报展示与人工复核不可完全重建
+
+**状态**：部分解决（Batch 12，2026-11-03）；身份与复核持久化仍开放 · 影响：B→Opportunity 映射与复核 · 优先级：中
+
+**现象**：
+
+- 生产库 schema v5 有 65 个 B 分析，但 B 文章只有 0 个实体 mention；`buyer_type` 是分类器提示，
+  不是已识别买方。`pain_point` 是模型分析文本，不是已确认问题，因此 65 个候选的
+  `canonical_key_candidate` 都为空，`canonical_key_status` 为 `blocked_missing_confirmed_problem`。
+- `daily_display` 只能重放存储的 `scoring.status`；source cap 依赖一次运行中的其他 item，
+  不能从数据库重建。当前映射中 5 个候选仅按 priority/watch 状态“可进入”，不能声称已经展示。
+- `review_status` 只是 `b-candidates` 的输出字段，尚未持久化；没有人工接受/拒绝/要求补证记录，
+  也没有 Opportunity 创建入口。65 个候选全部保持 `pending`。
+
+**为什么不能直接解决**：
+
+- 用标题、`summary_zh` 或 `pain_point` 生成 canonical key 会把模型文本当成已确认需求。
+- 用 `buyer_type` 或来源名称当买方会制造未经证据支持的买方身份。
+- 自动把重复簇合并会绕过人工复核，违反保守合并原则。
+
+**Batch 12/13 进展**：新增 manifest 驱动的 `b-review validate|preview|apply`，只能在唯一 allowlist 的隔离 v9 库中显式创建；
+创建与 links/首条 revision 同事务，初始状态固定 `signal_detected`，生产路径、硬链接、符号链接、路径穿越、
+allowlist 外 v9 和 v5 目标均被拒绝。当前生产清单 65 个候选全部为 pending/none；`review_mode=ai_assisted`
+只是筛选建议，不是人工批准，AI 创建申请默认被拒绝。仍然没有持久化 review_status，也没有自动确认
+subject/problem/buyer；下一步是设计追加式 review 表，并在人工核对身份后再启用创建。
+
+**跟踪指标**：身份完整数、canonical key 候选数、人工复核状态分布、疑似重复簇、每次运行的
+`source_cap_replayed` 标记；必须同时报告 65 个候选的分母，不得把“可进入”写成“已展示”。
+
 ## 记录约定
 
 - 每个问题单独验证、单独合并；不把多个变量放进同一轮实验。
