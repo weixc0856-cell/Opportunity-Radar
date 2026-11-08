@@ -356,22 +356,25 @@ def _alert(store,s,reason):
     except Exception:
         logging.exception('Failed to send alert email'); return False
 
-def _render_only(store,s,cfg):
-    """Rebuild the report from stored analyses without calling the model or re-scoring."""
+def _stored_items(store,sources,since=None,keys=None):
+    """Rebuild report items from stored analyses, without calling the model.
+
+    Shared by --render-only and by a run that analysed nothing new. The report says
+    "conclusions carry over" in that case; it has to actually carry them over instead of
+    printing an empty page under a promise, which is what overwrote a good report on
+    2026-11-08 11:28.
+    """
     from .lanes import derive_lane
-    rows=load_sources()
-    by_id,by_name,ambiguous=source_index(rows)
-    if ambiguous: logging.warning('Ambiguous source names after normalisation, ignored for backfill: %s',', '.join(sorted(ambiguous)))
+    by_id,by_name,ambiguous=source_index(sources)
+    if ambiguous:
+        logging.warning('Ambiguous source names after normalisation, ignored for backfill: %s',', '.join(sorted(ambiguous)))
     unresolved=matched_id=matched_name=0
     items=[]
-    # Scope to the newest run that analysed something, not to every analysis ever stored.
-    since=store.last_analysis_run_started_at()
     for r in store.list_analyses(500,since=since):
+        if keys is not None and Store.key(r['url']) not in keys: continue
         try: d=json.loads(r['result_json'])
         except (ValueError,TypeError): continue
         sc=d.get('scoring',{}); meta=d.get('meta',{})
-        # Records stored before lanes existed still have a source; route them the same
-        # way a live run would instead of dumping everything into lane A.
         # The stored id is authoritative; FreshRSS feed titles differ from registry names,
         # and name matching alone left half the articles unattributed to a line.
         sid=str(meta.get('source_id') or r.get('source_id') or '')
@@ -385,7 +388,7 @@ def _render_only(store,s,cfg):
         lane=sc.get('lane') or derive_lane({},d.get('analysis',{}),source,sc.get('classification',{}))
         items.append({'title':r['title'],'url':r['url'],'source_name':r['source_name'],'analysis':d.get('analysis',{}),
                       'score':r['score'],'status':sc.get('status','filtered'),'filter_reason':sc.get('filter_reason',''),
-                      'source_id':meta.get('source_id',''),
+                      'source_id':meta.get('source_id','') or r.get('source_id',''),
                       'intelligence_lines':getattr(source,'intelligence_lines',''),
                       'lane':lane,'content_basis_estimate':sc.get('content_basis_estimate',''),
                       'evidence_basis':sc.get('evidence_basis',''),
@@ -395,6 +398,18 @@ def _render_only(store,s,cfg):
                       'risk_flag':sc.get('risk_flag',''),'verification_note':sc.get('verification_note',''),
                       'evidence':sc.get('evidence',[]),'evidence_integrity':sc.get('evidence_integrity',''),
                       'components':sc.get('components',{}),'meta':d.get('meta',{})})
+    return items,{'matched_id':matched_id,'matched_name':matched_name,'unresolved':unresolved,
+                  'ambiguous':len(ambiguous)}
+
+
+def _render_only(store,s,cfg):
+    """Rebuild the report from stored analyses without calling the model or re-scoring."""
+    rows=load_sources()
+    # Scope to the newest run that analysed something, not to every analysis ever stored.
+    since=store.last_analysis_run_started_at()
+    items,matched=_stored_items(store,rows,since=since)
+    unresolved=matched['unresolved']; matched_id=matched['matched_id']; matched_name=matched['matched_name']
+    ambiguous=range(matched['ambiguous'])
     lane_weights,lane_thresholds=lane_display_config(cfg)
     attach_event_context(store, items, write=False)
     caps=apply_source_caps(items,rows)
@@ -733,6 +748,14 @@ def main(argv=None):
                                       'the rest will be recorded as not attempted',cause,consecutive_transport_failures)
                 else:
                     consecutive_transport_failures=0
+        if analyzed==0 and skipped>0:
+            # Nothing new since the last run: the brief is about the day's items, so it
+            # carries them over, clearly labelled, instead of becoming an empty page.
+            fetched_keys={Store.key(a.url) for a in articles}
+            carried,_match=_stored_items(store,sources,keys=fetched_keys)
+            if carried:
+                items=carried
+                logging.info('No new analysis; carried %d stored item(s) into the report',len(items))
         caps=apply_source_caps(items,sources)
         attach_event_context(store, items, write=True)
         # One production chain: the daily run now produces Evidence/Claim/Entity/
