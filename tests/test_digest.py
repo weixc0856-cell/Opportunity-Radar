@@ -3,7 +3,7 @@ from opportunity_radar.digest import render_digest, management_note
 
 def item(status='watch',score=60,title='t',reason=''):
     return {'title':title,'url':'https://example.invalid/a','source_name':'s','analysis':{},'score':score,'status':status,
-            'filter_reason':reason,'evidence_level':'summary','classification':{'article_type':'user_pain'},'risk_flag':''}
+            'filter_reason':reason,'evidence_level':'summary','classification':{'article_type':'user_pain','signal_type':'user_pain'},'risk_flag':''}
 
 def news(status='priority',score=88,title='Acme raises guidance'):
     return {'title':title,'url':'https://example.invalid/n','source_name':'News','analysis':{},
@@ -39,15 +39,17 @@ class Tests(unittest.TestCase):
  def test_failed_run_is_reported_as_empty(self):
   _,body=render_digest([],stats(fetched=10,failed=3),'2026-10-20')
   self.assertIn('分析结果为空',body)
- def test_primary_claims_land_in_their_lane_section(self):
+ def test_a_priority_item_leads_the_key_judgments(self):
   _,body=render_digest([news()],stats(fetched=1,analyzed=1),'2026-10-20')
-  self.assertIn('一、商业、科技与经济情报',body);self.assertIn('[88/100] Acme raises guidance',body)
- def test_community_pain_lands_in_the_opportunity_lane(self):
+  block=body.split('二、关键判断\n')[1].split('三、建议行动')[0]
+  self.assertIn('Acme raises guidance',block)
+ def test_a_selected_item_is_traceable_in_the_appendix(self):
   _,body=render_digest([item('priority',80,'real candidate')],stats(fetched=1,analyzed=1),'2026-10-20')
-  self.assertIn('二、值得验证的商业机会',body);self.assertIn('[80/100] real candidate',body)
- def test_all_three_lane_sections_are_always_present(self):
+  self.assertIn('[80/100] real candidate',body)
+ def test_the_consulting_sections_are_always_present(self):
   _,body=render_digest([item('watch',60)],stats(fetched=1,analyzed=1),'2026-10-20')
-  for heading in ('一、商业、科技与经济情报','二、值得验证的商业机会','三、技术观察与工程信号'):
+  for heading in ('一、执行摘要（核心判断）','二、关键判断','三、建议行动','四、待验证假设',
+                  '五、风险与反证','六、监测清单','七、证据与方法','八、附录 A'):
    self.assertIn(heading,body)
  def test_filtered_grouped_by_reason(self):
   _,body=render_digest([item('filtered',20,'a job',reason='hiring')],stats(fetched=1,analyzed=1),'2026-10-20')
@@ -57,7 +59,7 @@ class Tests(unittest.TestCase):
   self.assertIn('获取 10',body);self.assertIn('新增 2',body);self.assertIn('内容更新 1',body);self.assertIn('已有结果跳过 7',body)
  def test_conclusion_first(self):
   _,body=render_digest([item('watch',62,'ParaView crinkle')],stats(fetched=10,analyzed=10),'2026-10-20')
-  head=body.split('【执行摘要】\n')[1].split('\n')[0]
+  head=body.split('一、执行摘要（核心判断）\n')[1].split('\n')[0].strip()
   self.assertIn('建议集中核实',head);self.assertIn('ParaView crinkle',head)
  def test_next_step_is_inline(self):
   it=item('watch',62,'ParaView crinkle'); it['analysis']={'suggested_next_step':'联系 3 位 ParaView 用户确认复现条件'}
@@ -98,21 +100,21 @@ class Tests(unittest.TestCase):
   it['evidence']=[{'id':'e1','quote':'q','field':'summary','start':0},{'id':'e2','quote':'x','field':'unlocated','start':-1}]
   _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
   self.assertIn('1 条可定位 · 1 条无法在原文中定位',body)
- def test_data_overview_section(self):
+ def test_basis_of_preparation_section(self):
   it=item('watch',60); it['evidence']=[{'id':'e1','quote':'q','field':'summary','start':0}]
   _,body=render_digest([it],stats(fetched=10,new=8,queued=6,analyzed=6,counts={'watch':1,'priority':0,'filtered':5}),'2026-10-20')
-  self.assertIn('数据概览',body);self.assertIn('漏斗：本轮获取 10',body)
+  self.assertIn('七、证据与方法',body);self.assertIn('漏斗：本轮获取 10',body)
   self.assertIn('口径：本轮进入分析的 6 条',body)
  def test_none_commercial_signal_is_not_appended(self):
   it=item('watch',60); it['analysis']={'summary_zh':'用户报告了下载问题','commercial_signal':'none'}
   _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
   self.assertIn('初判：用户报告了下载问题',body);self.assertNotIn('下载问题 none',body)
 
- def test_executive_brief_has_at_most_three_items(self):
-  items=[item('priority',90-i,f'item {i}') for i in range(5)]
-  _,body=render_digest(items,stats(fetched=5,analyzed=5),'2026-10-20')
-  brief=body.split('执行摘要：\n')[1].split('新增信号')[0]
-  self.assertEqual(brief.count('发生了什么：'),3)
+ def test_key_judgments_are_capped_at_four(self):
+  items=[item('priority',90-i,f'item {i}') for i in range(6)]
+  _,body=render_digest(items,stats(fetched=6,analyzed=6),'2026-10-20')
+  block=body.split('二、关键判断\n')[1].split('三、建议行动')[0]
+  self.assertEqual(block.count('KJ'),4)
  def test_source_audit_section_reports_issues(self):
   s=stats(fetched=1,analyzed=1,source_issues=[{'severity':'warning','source_id':'x','code':'stale_last_verified_at','message':'re-review'}])
   _,body=render_digest([],s,'2026-10-20')
@@ -161,7 +163,7 @@ class OutputConsistencyTests(unittest.TestCase):
   return it
  def test_brief_and_card_agree_on_evidence_and_validation(self):
   _,body=render_digest([self._rich()],stats(fetched=1,analyzed=1),'2026-10-20')
-  brief=body.split('执行摘要：\n')[1].split('新增信号')[0]
+  brief=body.split('二、关键判断\n')[1].split('三、建议行动')[0]
   self.assertIn('E1 · 摘要引文已定位',brief)
   self.assertIn('单一来源',brief)
   card=next(l for l in body.splitlines() if l.startswith('   证据：'))
@@ -192,7 +194,7 @@ class DistributionTests(unittest.TestCase):
   self.assertNotIn('1. [94/100] 供应链中断公告',body)
  def test_headline_reports_deferral_instead_of_no_signal(self):
   _,body=render_digest([self._deferred()],stats(fetched=1,analyzed=1),'2026-10-20')
-  head=body.split('【执行摘要】\n')[1].split('\n')[0]
+  head=body.split('一、执行摘要（核心判断）\n')[1].split('\n')[0]
   self.assertIn('未进入阅读区',head)
   self.assertNotIn('没有信号通过筛选门槛',head)
  def test_stats_line_separates_verdict_from_distribution(self):

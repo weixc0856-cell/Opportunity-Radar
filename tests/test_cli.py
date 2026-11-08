@@ -182,7 +182,7 @@ class RenderOnlyUpgradeTests(unittest.TestCase):
    out=buf.getvalue()
    self.assertEqual(rc,0)
    self.assertIn('E1 · 摘要引文已定位',out)
-   self.assertIn('二、值得验证的商业机会',out)   # user_pain routes to lane B
+   self.assertIn('B · 客户痛点与商业机会',out)   # user_pain routes to lane B, shown in the appendix
    self.assertIn('legacy-model',out)
    self.assertTrue(Path(d,'latest-digest.txt').exists())
    self.assertTrue(Path(d,'latest-digest.html').exists())

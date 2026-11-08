@@ -14,6 +14,10 @@ RATE_LIMITED='http_429'
 SERVER_ERROR='http_5xx'
 CLIENT_ERROR='http_4xx'
 SCHEMA='schema'
+# The endpoint answered, but the answer held no text: a reasoning model spent the whole
+# max_tokens budget thinking. It is not a dead model, so it is not a circuit-breaker cause;
+# it is a budget problem the caller can retry once with more room.
+EMPTY='empty_completion'
 UNKNOWN='unknown'
 RETRYABLE=(CONNECT_RESET,CONNECT_REFUSED,TIMEOUT,RATE_LIMITED,SERVER_ERROR)
 DEFAULT_BACKOFF=(2,5,10)
@@ -144,11 +148,19 @@ def retry_after_seconds(exc,cap):
 class LocalAnalyzer:
     def __init__(self,base_url,model,timeout=90,max_tokens=500,api_key='',connect_retries=3,
                  timeout_retries=1,backoff=DEFAULT_BACKOFF,retry_after_max=30,retry_max_seconds=120,
-                 sleep=time.sleep,system=None,temperature=0.2):
+                 sleep=time.sleep,system=None,temperature=0.2,api_style='openai'):
         # `system` lets a shadow run use another prompt version without changing the production
         # one; the default is whatever prompts/analyst.md currently is.
         self.system=system or SYSTEM
-        self.url=base_url.rstrip('/')+'/chat/completions'
+        # Two wire protocols carry the same triage contract:
+        #   openai    -> POST {base}/chat/completions  (llama.cpp, and cc-switch's Codex route)
+        #   anthropic -> POST {base}/messages          (the route Claude Code itself uses)
+        # Everything above the transport (prompt, parser, retries, failure causes) is shared,
+        # so switching backends does not change what is asked or how the answer is checked.
+        self.api_style=(api_style or 'openai').strip().lower()
+        if self.api_style not in ('openai','anthropic'):
+            raise ValueError('unknown API style: '+str(api_style))
+        self.url=base_url.rstrip('/')+('/messages' if self.api_style=='anthropic' else '/chat/completions')
         self.model=model; self.timeout=timeout; self.max_tokens=max_tokens; self.api_key=api_key
         self.connect_retries=max(0,int(connect_retries))
         self.timeout_retries=max(0,int(timeout_retries))
@@ -161,6 +173,11 @@ class LocalAnalyzer:
 
     def _headers(self):
         h={'Content-Type':'application/json'}
+        if self.api_style=='anthropic':
+            # Anthropic Messages authenticates with x-api-key and requires a version header.
+            if self.api_key: h['x-api-key']=self.api_key
+            h['anthropic-version']='2023-06-01'
+            return h
         if self.api_key: h['Authorization']='Bearer '+self.api_key
         return h
 
@@ -173,12 +190,24 @@ class LocalAnalyzer:
         return self.backoff[min(attempt-1,len(self.backoff)-1)]
 
     def _body(self,messages,max_tokens=None,temperature=None,response_format=None):
+        budget=max_tokens or self.max_tokens
+        temp=self.temperature if temperature is None else float(temperature)
+        if self.api_style=='anthropic':
+            # Anthropic carries the system prompt in a top-level field, has no response_format,
+            # and rejects unknown template kwargs. The prompt already demands raw JSON and
+            # parse_model_json recovers a fenced answer, so nothing is lost.
+            systems=[m.get('content','') for m in messages if m.get('role')=='system']
+            turns=[m for m in messages if m.get('role')!='system']
+            body={'model':self.model,'max_tokens':budget,'temperature':temp,'messages':turns}
+            joined='\n\n'.join(s for s in systems if s)
+            if joined: body['system']=joined
+            return body
         # Thinking-capable models (Qwen3.5 etc.) otherwise spend the whole token budget on <think>
         # and never emit JSON; triage only needs the structured answer. Servers that do not know
         # this template kwarg ignore it.
         body={'model':self.model,
-              'temperature':self.temperature if temperature is None else float(temperature),
-              'max_tokens':max_tokens or self.max_tokens,'messages':messages,
+              'temperature':temp,
+              'max_tokens':budget,'messages':messages,
               'chat_template_kwargs':{'enable_thinking':False}}
         # llama.cpp accepts an OpenAI-style response_format; passing None keeps the production
         # request byte-for-byte what it was before N2/N3 existed.
@@ -191,23 +220,60 @@ class LocalAnalyzer:
 
     def complete(self,messages,max_tokens=None,temperature=None,response_format=None):
         """One structured completion for an offline node; production analysis keeps using analyze()."""
-        return self._call(messages,max_tokens=max_tokens,temperature=temperature,
-                          response_format=response_format)
+        try:
+            return self._call(messages,max_tokens=max_tokens,temperature=temperature,
+                              response_format=response_format)
+        except ModelCallError as exc:
+            if exc.cause!=EMPTY: raise
+            return self._call(messages,max_tokens=self._widened_budget(max_tokens),
+                              temperature=temperature,response_format=response_format)
+
+    def _widened_budget(self,max_tokens=None):
+        """Double the room once for an answer that reasoning consumed; never unbounded."""
+        return min(16000,(max_tokens or self.max_tokens)*2)
 
     def complete_detailed(self,messages,max_tokens=None,temperature=None,
                           response_format=None):
         """(content, metrics) for offline nodes that record token usage and timings."""
         started=time.time()
-        payload=self._post_response(json.dumps(self._body(messages,max_tokens,temperature,
-                                                          response_format)).encode())
-        content=payload['choices'][0]['message']['content']
+        try:
+            payload=self._post_response(json.dumps(self._body(messages,max_tokens,temperature,
+                                                              response_format)).encode())
+        except ModelCallError as exc:
+            if exc.cause!=EMPTY: raise
+            payload=self._post_response(json.dumps(self._body(
+                messages,self._widened_budget(max_tokens),temperature,response_format)).encode())
+        content=self._content_of(payload)
+        finish=(payload.get('stop_reason')
+                or ((payload.get('choices') or [{}])[0].get('finish_reason','')))
         return content, {'seconds':round(time.time()-started,2),
                          'usage':payload.get('usage') or {},
-                         'finish_reason':payload['choices'][0].get('finish_reason',''),
+                         'finish_reason':finish,
                          'timings':payload.get('timings') or {}}
 
+    @staticmethod
+    def _content_of(payload):
+        """The answer text, whichever protocol carried it."""
+        if 'choices' in payload:
+            return payload['choices'][0]['message']['content']
+        # Anthropic Messages: content is a list of blocks; thinking blocks are not the answer.
+        blocks=payload.get('content') or []
+        if isinstance(blocks,str): return blocks
+        return ''.join(b.get('text','') for b in blocks
+                       if isinstance(b,dict) and b.get('type')=='text')
+
     def _post(self,data):
-        return self._post_response(data)['choices'][0]['message']['content']
+        payload=self._post_response(data)
+        content=self._content_of(payload)
+        if not (content or '').strip():
+            # A reasoning model can spend the entire budget thinking and return no text at all.
+            # Without this the caller sees an empty answer and reports it as a schema failure.
+            finish=(payload.get('stop_reason')
+                    or ((payload.get('choices') or [{}])[0].get('finish_reason','')))
+            raise ModelCallError(EMPTY,
+                f'empty completion (finish_reason={finish}); raise OR_LLM_MAX_TOKENS',
+                self.last_attempts,None,False)
+        return content
 
     def _post_response(self,data):
         """One request with a bounded retry budget; never loops on the same dead endpoint."""
@@ -241,7 +307,14 @@ class LocalAnalyzer:
         payload={'source_name':source_name,'title':title[:1000],'summary':summary[:7000],'url':url,'task':'Analyze this article for potential commercial opportunity signals.'}
         article={'title':title,'summary':summary,'url':url,'published':published}
         msgs=[{'role':'system','content':self.system},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}]
-        raw=self._call(msgs)
+        try:
+            raw=self._call(msgs)
+        except ModelCallError as exc:
+            # A long article can spend the configured budget on reasoning and return no text.
+            # That is a budget problem, not a dead endpoint: one retry with double the room
+            # costs less than dropping the article from the day's coverage.
+            if exc.cause!=EMPTY: raise
+            raw=self._call(msgs,max_tokens=self._widened_budget())
         prior=self.last_attempts
         if trace is not None: trace.append(raw)
         try: return parse_model_json(raw,article)

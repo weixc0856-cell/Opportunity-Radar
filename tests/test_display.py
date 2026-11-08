@@ -98,7 +98,7 @@ class WatchlistTests(unittest.TestCase):
     def test_text_report_shows_every_class_with_a_reason(self):
         watch = build_watchlist(self.store, self.pipe, limit=8)
         _subject, body = digest.render_digest([], {'counts': {}, 'watchlist': watch})
-        self.assertIn('五、待观察信号（弱信号 / 未确认）', body)
+        self.assertIn('弱信号（保留在库中，不进入主阅读区）', body)
         self.assertIn('低置信 Opportunity：2 个标题', body)
         self.assertIn('原始 3 条记录', body)
         self.assertIn('同标题 2 条', body)
@@ -107,7 +107,7 @@ class WatchlistTests(unittest.TestCase):
         self.assertIn('Gemini model launch ↔ Gemini model release', body)
         self.assertIn('未经确认，不作为同一事件', body)
         self.assertIn('N0–N5 本轮上限外：2 篇', body)
-        self.assertIn('六、附录', body)
+        self.assertIn('附录 A', body)
 
     def test_text_report_truncates_and_says_how_many_are_left(self):
         watch = build_watchlist(self.store, self.pipe, limit=1)
@@ -117,14 +117,14 @@ class WatchlistTests(unittest.TestCase):
     def test_html_report_has_the_same_section(self):
         watch = build_watchlist(self.store, self.pipe, limit=8)
         html = render_html.render_html([], {'counts': {}, 'watchlist': watch})
-        self.assertIn('待观察信号（弱信号 / 未确认）', html)
+        self.assertIn('弱信号（保留在库中，不进入主阅读区）', html)
         self.assertIn('Gemini model launch', html)
         self.assertIn('signal_detected', html)
 
-    def test_no_watchlist_keeps_the_old_appendix_number(self):
+    def test_no_watchlist_omits_the_weak_signal_block(self):
         _subject, body = digest.render_digest([], {'counts': {}})
-        self.assertIn('五、附录', body)
-        self.assertNotIn('待观察信号', body)
+        self.assertIn('附录 A', body)
+        self.assertNotIn('弱信号（保留在库中', body)
 
 
 if __name__ == '__main__':

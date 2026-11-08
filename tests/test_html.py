@@ -36,7 +36,7 @@ class Tests(unittest.TestCase):
   self.assertIn('招聘/企业动态',html)
  def test_includes_data_overview_charts(self):
   html=render_html([item()],stats(),'2026-10-20')
-  self.assertIn('数据概览',html);self.assertIn('处理漏斗',html);self.assertIn('<svg',html);self.assertIn('来源贡献',html)
+  self.assertIn('证据与方法',html);self.assertIn('处理漏斗',html);self.assertIn('<svg',html);self.assertIn('来源贡献',html)
 
 class ConflictBlockTests(unittest.TestCase):
  def test_the_conflict_block_renders_both_sides(self):

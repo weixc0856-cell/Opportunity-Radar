@@ -364,13 +364,17 @@ def _render_only(store,s,cfg):
     if ambiguous: logging.warning('Ambiguous source names after normalisation, ignored for backfill: %s',', '.join(sorted(ambiguous)))
     unresolved=matched_id=matched_name=0
     items=[]
-    for r in store.list_analyses(500):
+    # Scope to the newest run that analysed something, not to every analysis ever stored.
+    since=store.last_analysis_run_started_at()
+    for r in store.list_analyses(500,since=since):
         try: d=json.loads(r['result_json'])
         except (ValueError,TypeError): continue
         sc=d.get('scoring',{}); meta=d.get('meta',{})
         # Records stored before lanes existed still have a source; route them the same
         # way a live run would instead of dumping everything into lane A.
-        sid=str(meta.get('source_id') or '')
+        # The stored id is authoritative; FreshRSS feed titles differ from registry names,
+        # and name matching alone left half the articles unattributed to a line.
+        sid=str(meta.get('source_id') or r.get('source_id') or '')
         if sid and sid in by_id: source=by_id[sid]; matched_id+=1
         else:
             source=by_name.get(_norm_name(r['source_name']))
@@ -394,7 +398,15 @@ def _render_only(store,s,cfg):
     lane_weights,lane_thresholds=lane_display_config(cfg)
     attach_event_context(store, items, write=False)
     caps=apply_source_caps(items,rows)
-    stats={'fetched':len(items),'new':0,'updated':0,'queued':0,'analyzed':len(items),'failed':0,'skipped':0,
+    # A re-render must report the run it renders, not "as many as it found": the run fetched
+    # 40 articles and analysed 21 of them, and saying 21 hides the 19 already-analyzed ones.
+    run=store.latest_run() or {}
+    run_fetched=int(run.get('article_count') or len(items))
+    run_analyzed=int(run.get('analyzed_count') or len(items))
+    stats={'fetched':run_fetched,'new':0,'updated':0,'queued':run_analyzed,'analyzed':run_analyzed,
+           'failed':int(run.get('error_count') or 0),
+           'skipped':max(0,run_fetched-run_analyzed-int(run.get('error_count') or 0)),
+           'coverage':run.get('coverage'),'publication_status':run.get('publication_status'),
            'counts':{k:sum(1 for x in items if x.get('status')==k) for k in ('priority','watch','filtered')},
            'rules_version':RULES_VERSION,'lane_weights':lane_weights,'lane_thresholds':lane_thresholds,
            'render_only':True,'unresolved_sources':unresolved,'deferred':caps['deferred'],
@@ -657,7 +669,7 @@ def main(argv=None):
         model=LocalAnalyzer(s.llm_base_url,s.llm_model,s.llm_timeout,s.llm_max_tokens,api_key=s.llm_api_key,
                             connect_retries=s.llm_connect_retries,timeout_retries=s.llm_timeout_retries,
                             backoff=parse_backoff(s.llm_retry_backoff),retry_after_max=s.llm_retry_after_max,
-                            retry_max_seconds=s.llm_retry_max_seconds)
+                            retry_max_seconds=s.llm_retry_max_seconds,api_style=s.llm_api_style)
         queued=skipped=not_attempted=0
         circuit_open=False
         causes=Counter()
@@ -698,6 +710,9 @@ def main(argv=None):
                 item['intelligence_lines']=getattr(source_by_feed.get(a.feed_id),'intelligence_lines','')
                 store.save_analysis(key,result,item['scoring'],item['meta'])
                 items.append(item); analyzed+=1
+                # A run can spend an hour here; without this line the launcher log, the CLI log
+                # and stdout all stay empty, and a working run is indistinguishable from a hang.
+                logging.info('Analyzed %d of %d article(s): %s',analyzed,len(articles),a.url)
                 consecutive_transport_failures=0
             except Exception as exc:
                 errors+=1

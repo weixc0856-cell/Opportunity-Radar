@@ -275,9 +275,26 @@ class Store:
         with self.connect() as c:
             r=c.execute('SELECT label,note,reviewed_at FROM reviews WHERE article_key=?',(key,)).fetchone()
             return dict(r) if r else None
-    def list_analyses(self,limit=50):
-        """Analysed articles with their machine verdict and human label, newest first."""
+    def list_analyses(self,limit=50,since=None):
+        """Analysed articles with their machine verdict and human label, newest first.
+
+        `since` scopes the list to one run's analyses. Re-rendering the whole corpus is not
+        a briefing: a month of records with no common origin reads as an unfocused dump.
+        """
+        base='''SELECT a.article_key,a.title,a.url,a.source_name,a.source_id,s.score,s.result_json,r.label,r.note
+                FROM analyses s JOIN articles a USING(article_key) LEFT JOIN reviews r USING(article_key)'''
         with self.connect() as c:
-            return [dict(r) for r in c.execute('''SELECT a.article_key,a.title,a.url,a.source_name,s.score,s.result_json,r.label,r.note
-                FROM analyses s JOIN articles a USING(article_key) LEFT JOIN reviews r USING(article_key)
-                ORDER BY s.analyzed_at DESC LIMIT ?''',(limit,))]
+            if since:
+                return [dict(r) for r in c.execute(base+' WHERE s.analyzed_at >= ? ORDER BY s.analyzed_at DESC LIMIT ?',(since,limit))]
+            return [dict(r) for r in c.execute(base+' ORDER BY s.analyzed_at DESC LIMIT ?',(limit,))]
+
+    def last_analysis_run_started_at(self):
+        """Start time of the newest run that actually analysed something.
+
+        A run that only skipped everything is not a briefing either; the report then has no
+        items at all, which is the honest "no new content" case.
+        """
+        with self.connect() as c:
+            row=c.execute('SELECT started_at FROM runs WHERE COALESCE(analyzed_count,0) > 0 '
+                          'ORDER BY run_id DESC LIMIT 1').fetchone()
+            return row[0] if row else None

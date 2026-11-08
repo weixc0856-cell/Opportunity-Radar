@@ -206,3 +206,61 @@ class OutputBudgetTests(_unittest.TestCase):
     def test_the_budget_never_falls_below_the_base(self):
         self.assertEqual(output_budget(''), 2400)
 
+
+class AnthropicStyleTests(unittest.TestCase):
+    """The Claude Code route: POST /v1/messages, top-level system, block content, x-api-key."""
+
+    def test_url_headers_and_body_shape(self):
+        a = LocalAnalyzer('http://127.0.0.1:15721/v1', 'claude-sonnet-5', api_key='k',
+                          api_style='anthropic')
+        self.assertEqual(a.url, 'http://127.0.0.1:15721/v1/messages')
+        headers = a._headers()
+        self.assertEqual(headers.get('x-api-key'), 'k')
+        self.assertEqual(headers.get('anthropic-version'), '2023-06-01')
+        self.assertNotIn('Authorization', headers)
+        body = a._body([{'role': 'system', 'content': 'SYS'},
+                        {'role': 'user', 'content': 'U'}], max_tokens=4000)
+        self.assertEqual(body['system'], 'SYS')
+        self.assertEqual(body['messages'], [{'role': 'user', 'content': 'U'}])
+        self.assertEqual(body['max_tokens'], 4000)
+        self.assertNotIn('chat_template_kwargs', body)
+        self.assertNotIn('response_format', body)
+
+    def test_openai_body_is_unchanged(self):
+        a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm')
+        self.assertEqual(a.url, 'http://127.0.0.1:1/v1/chat/completions')
+        body = a._body([{'role': 'user', 'content': 'U'}], response_format={'type': 'json_object'})
+        self.assertIn('chat_template_kwargs', body)
+        self.assertEqual(body['response_format'], {'type': 'json_object'})
+
+    def test_only_text_blocks_are_the_answer(self):
+        payload = {'content': [{'type': 'thinking', 'thinking': '...'},
+                               {'type': 'text', 'text': '{"a":1}'}],
+                   'stop_reason': 'end_turn'}
+        self.assertEqual(LocalAnalyzer._content_of(payload), '{"a":1}')
+
+    def test_openai_payload_still_reads_choices(self):
+        payload = {'choices': [{'message': {'content': 'X'}}]}
+        self.assertEqual(LocalAnalyzer._content_of(payload), 'X')
+
+    def test_an_empty_answer_names_the_token_budget(self):
+        # A reasoning model can spend the whole budget thinking and emit no text at all.
+        a, _ = _analyzer(api_style='anthropic', max_tokens=4000)
+        payload = {'content': [{'type': 'thinking', 'thinking': '...'}], 'stop_reason': 'max_tokens'}
+        with mock.patch.object(a, '_post_response', return_value=payload):
+            with self.assertRaises(ModelCallError) as ctx:
+                a.complete([{'role': 'user', 'content': 'u'}])
+        self.assertIn('OR_LLM_MAX_TOKENS', str(ctx.exception))
+
+    def test_analyze_parses_a_message_payload(self):
+        a, _ = _analyzer(api_style='anthropic')
+        payload = {'content': [{'type': 'text', 'text': _json.dumps(GOOD)}],
+                   'stop_reason': 'end_turn'}
+        with mock.patch.object(a, '_post_response', return_value=payload):
+            result = a.analyze('t', 's', 'src', 'https://example.org/a')
+        self.assertEqual(result['actionability'], 'monitor')
+
+    def test_an_unknown_style_is_rejected(self):
+        with self.assertRaises(ValueError):
+            LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='grpc')
+

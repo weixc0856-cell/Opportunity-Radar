@@ -48,6 +48,9 @@ class Settings:
     smtp_security:str=''; email_on_empty:bool=False; alert_after_failures:int=3
     sample_since:str=''; sample_until:str=''
     model_autostart:bool=False; model_start_timeout:int=600
+    # Wire protocol for the analyzer endpoint: 'openai' (/chat/completions) or 'anthropic'
+    # (/messages). See docs/OPERATIONS.md, "Analyzer backend".
+    llm_api_style:str='openai'
     # R0 publication gate: retries are counted after the first attempt, so
     # llm_connect_retries=3 means at most 4 HTTP attempts for one call.
     llm_connect_retries:int=3; llm_timeout_retries:int=1; llm_retry_backoff:str='2,5,10'
@@ -78,6 +81,7 @@ class Settings:
         return cls(freshrss_base_url=g('OR_FRESHRSS_BASE_URL','http://127.0.0.1:8088').rstrip('/'),freshrss_username=g('OR_FRESHRSS_USERNAME'),freshrss_api_key=g('OR_FRESHRSS_API_KEY'),
                    llm_base_url=g('OR_LLM_BASE_URL','http://127.0.0.1:8080/v1').rstrip('/'),llm_model=g('OR_LLM_MODEL'),llm_api_key=g('OR_LLM_API_KEY'),
                    llm_timeout=int(g('OR_LLM_TIMEOUT_SECONDS','90')),llm_max_tokens=int(g('OR_LLM_MAX_TOKENS','1200')),
+                   llm_api_style=g('OR_LLM_API_STYLE','openai').lower(),
                    smtp_host=g('OR_SMTP_HOST'),smtp_port=port,smtp_username=g('OR_SMTP_USERNAME'),smtp_password=g('OR_SMTP_PASSWORD'),
                    email_from=g('OR_EMAIL_FROM'),email_to=email_to,smtp_starttls=bval('OR_SMTP_STARTTLS',True),smtp_security=security,
                    max_articles=max(1,int(g('OR_MAX_ARTICLES','10'))),request_timeout=int(g('OR_REQUEST_TIMEOUT_SECONDS','20')),

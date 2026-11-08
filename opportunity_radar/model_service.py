@@ -33,7 +33,11 @@ def health_ok(base_url: str, timeout: int = 3) -> bool:
     try:
         with urlopen(Request(f"{url}/health", headers={"User-Agent": "OpportunityRadar/0.1"}), timeout=timeout) as r:
             payload = json.loads(r.read().decode("utf-8", "replace"))
-            return isinstance(payload, dict) and payload.get("status") == "ok"
+            if not isinstance(payload, dict): return False
+            # llama.cpp answers {"status":"ok"}; the cc-switch proxy in front of DeepSeek
+            # answers {"status":"healthy"}. Both mean the endpoint will accept a request.
+            # Anything else (HTML, an error object, an empty body) is not health.
+            return str(payload.get("status", "")).strip().lower() in {"ok", "healthy"}
     except (URLError, TimeoutError, OSError, ValueError):
         return False
 

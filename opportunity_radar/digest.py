@@ -235,6 +235,15 @@ def _decision_body(items,stats):
     visible=_shown(items); pri=[x for x in visible if x.get('status')=='priority']; watch=[x for x in visible if x.get('status')=='watch']
     deferred=_deferred(items)
     if pri:
+        # Name something the brief will actually argue for. A priority item with no
+        # commercial edge is a high score, not a recommendation.
+        pick=next((x for x in sorted(pri,key=_pool_key) if _has_commercial_edge(x)),None)
+        if pick:
+            return f"本期筛选出 {len(pri)} 条达到验证门槛的信号，建议优先核实《{pick['title']}》。"
+        edge=sorted([x for x in _shown(items) if _has_commercial_edge(x)],key=_pool_key)
+        if edge:
+            return (f"本期筛选出 {len(pri)} 条达到验证门槛的信号，但均无付费或采购证据；"
+                    f"建议先核实《{edge[0]['title']}》。")
         return f"本期筛选出 {len(pri)} 条达到验证门槛的信号，建议优先核实《{_top(pri)['title']}》。"
     if watch:
         return f"本期尚未发现经过验证的付费机会，建议集中核实一项：{_top(watch)['title']}。"
@@ -444,22 +453,193 @@ def _card(i,x):
     lines.append(f"   来源：{x.get('source_name','Unknown')} · {x.get('url','')}")
     return lines
 
-def executive_brief(items):
-    """Three items at most: what happened, why it matters, how far the evidence goes."""
-    ranked=sorted(_shown(items),key=lambda v:v.get('score',0),reverse=True)[:3]
-    if not ranked: return []
-    out=['','执行摘要：']
+KJ_LIMIT=4
+ACTION_LIMIT=5
+
+def _one_line(value,limit=60):
+    """One clause, cut at a sentence boundary; never left dangling on a comma."""
+    text=' '.join(str(value or '').split())
+    if len(text)<=limit: return text
+    for sep in ('。','；'):
+        cut=text.find(sep,12,limit)
+        if cut>0: return text[:cut+1]
+    for i in range(12,min(limit,len(text))):
+        if text[i]=='.' and (i+1==len(text) or text[i+1] in ' \t'):
+            return text[:i+1]
+    return text[:limit-1]+'…'
+
+def _action_title(x):
+    """A conclusion, not a topic label. The model's summary already states one."""
+    return _one_line((x.get('analysis') or {}).get('summary_zh') or x.get('title',''),56)
+
+def _evidence_basis(x):
+    cls=x.get('classification',{})
+    parts=[_evidence_text(x),MARKET_LABEL.get(_market(x),_market(x) or '未评估')]
+    quality=SOURCE_LABEL.get(cls.get('source_quality'),cls.get('source_quality'))
+    if quality: parts.append('来源 '+str(quality))
+    located=sum(1 for f in (x.get('analysis') or {}).get('facts') or []
+                if isinstance(f,dict) and f.get('status')=='located')
+    parts.append(f'{located} 条可定位事实')
+    return ' · '.join(parts)
+
+def _confidence(x):
+    """The model's confidence, downgraded where the evidence cannot carry it."""
+    raw=_confidence_label((x.get('analysis') or {}).get('confidence'))
+    if raw=='—': return '未评估'
+    if raw=='高' and _market(x)!='buyer_confirmed': return '中（单一来源，未独立佐证）'
+    return raw
+
+def _implication(x):
+    """The 'so what', expressed only with fields the analysis actually produced."""
+    a=x.get('analysis',{}); cls=x.get('classification',{}); lane=_lane(x); comp=x.get('components') or {}
+    buyer=BUYER_LABEL.get(cls.get('buyer_type'),'未知买方')
+    if lane=='B':
+        pain=_one_line(a.get('pain_point'),48) or '未描述具体问题'
+        pay=PAY_LABEL.get(cls.get('buyer_payment_evidence',cls.get('payment_evidence')),'无证据')
+        delivery=DELIVERY_LABEL.get(cls.get('delivery_fit'),'未评估')
+        subject='' if buyer in ('未知买方','未知','') else buyer
+        return f'{subject}存在「{pain}」；付费证据 {pay}，交付形态 {delivery}，均未验证。'
+    if lane=='C':
+        maturity=comp.get('technical_maturity') or cls.get('technical_maturity') or '—'
+        repro=comp.get('reproducibility','—'); scope=comp.get('impact_scope','—')
+        return (f'技术成熟度 {maturity} · 可复现性 {repro}/5 · 影响范围 {scope}/5；'
+                '当前只支持跟踪，不支持产品决策。')
+    # Lane A only earns an implication the analysis actually made. A repeated template line
+    # four times over is filler, and filler is what makes a brief read as machine output.
+    signal=str(a.get('commercial_signal') or '').strip()
+    if signal.lower() not in NONE_WORDS:
+        return signal
+    return ''
+
+NONE_WORDS={'','none','unknown','n/a','无','未知'}
+PAY_STRONG_SET={'explicit_budget','existing_purchase'}
+COMMERCIAL_SIGNALS={'payment_demand','user_pain','deployment_blocker','product_gap'}
+
+def _has_commercial_edge(x):
+    """Would this change an action, or is it background?
+
+    Decided from structured fields only. Reading the free-text `commercial_signal` was
+    unreliable: every item that says "无商业机会信号" contains the word 商业, so a keyword
+    test promoted game reviews and statistics previews into the key judgments.
+    """
+    a=x.get('analysis') or {}; cls=x.get('classification') or {}
+    pay=cls.get('buyer_payment_evidence') or cls.get('payment_evidence')
+    if pay in PAY_STRONG_SET: return True
+    if str(cls.get('signal_type') or '') in COMMERCIAL_SIGNALS: return True
+    pain=str(a.get('pain_point') or '').strip().lower()
+    if pain and pain not in NONE_WORDS: return True
+    return False
+
+ACTION_RANK={'act':0,'decide':1,'investigate':2,'monitor':3,'none':4,'':5}
+LANE_RANK={'B':0,'A':1,'C':2}
+
+def _pool_key(x):
+    """Actionability first, then the opportunity lane, then editorial priority and score.
+
+    A trend piece can carry the highest editorial priority and still be the wrong thing to
+    lead with: the brief's job is to say what could change an action.
+    """
+    actionability=str((x.get('analysis') or {}).get('actionability') or '').lower()
+    return (ACTION_RANK.get(actionability,5),LANE_RANK.get(_lane(x),3),_order_key(x))
+
+def _judgment_pool(items):
+    """Items that may lead: commercial edge first, ordered by what can be acted on."""
+    return sorted([x for x in _shown(items) if _has_commercial_edge(x)],key=_pool_key)
+
+def _key_judgments(items):
+    """Three to five conclusions. With no commercial edge, the brief says so instead."""
+    ranked=_judgment_pool(items)[:KJ_LIMIT]
+    lines=[]
+    if not ranked:
+        lines.append('  本期入选条目的分析结论均为「无商业信号」：没有客户、预算、价格或采购迹象。')
+        lines.append('  因此本节不设关键判断；条目仍保留在附录 A 供追溯，不作为行动依据。')
+        return lines
     for i,x in enumerate(ranked,1):
-        lane=_lane(x)
-        out+=[f" {i}. [{lane}] {x.get('title','')}",
-              f"    发生了什么：{str(x.get('analysis',{}).get('summary_zh','') or '').strip() or '未生成摘要'}",
-              f"    为什么重要：{_why(x)}",
-              f"    可信度：{_evidence_text(x)} · {MARKET_LABEL.get(_market(x),'未评估')}"
-              + (f" · {event_status_note(x)}" if event_status_note(x) else "")]
-    return out
+        summary=_one_line((x.get('analysis') or {}).get('summary_zh') or x.get('title',''),140)
+        lines+=[f'  KJ{i}｜{_action_title(x)}',
+                f'       判断：{summary}',
+                f'       依据：{_evidence_basis(x)}']
+        implication=_implication(x)
+        if implication: lines.append(f'       影响：{implication}')
+        lines.append(f'       置信度：{_confidence(x)}')
+    rest=len(_shown(items))-len(ranked)
+    if rest>0:
+        lines.append(f'  另有 {rest} 条入选条目没有可识别的商业信号（评测、预告、纯技术动态），'
+                     '保留在附录 A 供追溯，不进入行动层。')
+    return lines
+
+def _next_actions(items):
+    """The actions the analysis already proposed. Nothing is invented for the table.
+
+    Each row cites the key judgment it serves (KJ1) rather than repeating that judgment's
+    full sentence, which is what made the table unreadable.
+    """
+    pool=_judgment_pool(items)
+    kj={id(x):i for i,x in enumerate(pool[:KJ_LIMIT],1)}
+    rows=[]; seen=set()
+    for x in pool:
+        basis=f'KJ{kj[id(x)]}' if id(x) in kj else _one_line(x.get('title',''),32)
+        for action in (x.get('analysis') or {}).get('actions') or []:
+            if not isinstance(action,dict): continue
+            step=_one_line(action.get('step'),70)
+            if not step or step in seen: continue
+            seen.add(step)
+            rows.append((step,_one_line(action.get('done_when'),50) or '—',basis))
+            if len(rows)>=ACTION_LIMIT: return rows
+    return rows
+
+def _hypotheses(items):
+    """Inferences the analysis supports but has not verified. They stay labelled as such."""
+    rows=[]
+    for x in (_judgment_pool(items) or sorted(_shown(items),key=_order_key))[:KJ_LIMIT]:
+        for inf in (x.get('analysis') or {}).get('inferences') or []:
+            if not isinstance(inf,dict) or inf.get('status')!='supported': continue
+            text=_one_line(inf.get('text'),110)
+            if not text: continue
+            rows.append((text,_basis_label(inf),_confidence_label(inf.get('confidence')),
+                         _one_line(x.get('title',''),32)))
+            if len(rows)>=4: return rows
+    return rows
+
+def _risks(items):
+    """What would falsify this issue: single sources, unlocated quotes, open gaps."""
+    rows=[]
+    visible=_shown(items)
+    single=[x for x in visible if _market(x)=='single_source']
+    if single:
+        rows.append(f'单一来源：{len(single)} 条判断只有 1 个来源，未获独立佐证，不得当作已验证结论。')
+    unlocated=sum(1 for x in items for f in (x.get('analysis') or {}).get('facts') or []
+                  if isinstance(f,dict) and f.get('status')!='located')
+    if unlocated:
+        rows.append(f'引文未定位：{unlocated} 条事实无法在原文中定位，已从事实层移出。')
+    for x in sorted(visible,key=_order_key)[:3]:
+        gaps=[g for g in (x.get('analysis') or {}).get('gaps') or []
+              if isinstance(g,dict) and g.get('missing')]
+        if gaps:
+            short=_one_line(x.get('title',''),28)
+            rows.append(f'证据缺口（{short}）：{_one_line(gaps[0].get("missing"),50)}')
+    if not rows: rows.append('本期没有记录到会推翻现有判断的反证；这表示证据没有被检验过，不等于证据可靠。')
+    return rows
+
+def _watch_rows(items):
+    """Watch-list rows: subject, the trigger that would change the judgment, current score."""
+    rows=[]
+    # An executive watch list is a short list; the appendix keeps the rest.
+    for x in sorted([i for i in _shown(items) if i.get('status')=='watch'],key=_order_key)[:6]:
+        gaps=[g for g in (x.get('analysis') or {}).get('gaps') or [] if isinstance(g,dict)]
+        how=_one_line(gaps[0].get('how_to_close'),40) if gaps else ''
+        rows.append((_one_line(x.get('title',''),40),how or '出现独立来源或付费证据',
+                     f"{x.get('score',0)}/100"))
+    return rows
 
 def render_digest(items,stats,date_label=None):
-    """Consulting-style text report: conclusion first, then one section per lane."""
+    """Consulting-format brief: answer first, then the few judgments that carry it.
+
+    Structure follows the pyramid principle used by MBB/Big Four briefs: a governing
+    message, 3-5 key judgments with evidence and implication, an action table, the
+    hypotheses still open, what would falsify them, a watch list, and a basis-of-preparation
+    block. The evidence cards move to the appendix so the body stays readable.
+    """
     date_label=date_label or datetime.now().astimezone().strftime('%Y-%m-%d')
     subject=f'Opportunity Radar｜商业机会情报简报｜{date_label}'
     fetched=stats.get('fetched',stats.get('article_count',0)); new=stats.get('new',0)
@@ -468,91 +648,138 @@ def render_digest(items,stats,date_label=None):
     counts=stats.get('counts') or _counts(items); strong=sum(1 for x in items if _pay_strong(x))
     shown=_shown(items); deferred=_deferred(items)
     filtered=[x for x in items if x.get('status')=='filtered']
-    lines=[f'Opportunity Radar · 商业机会情报简报 · {date_label}','='*56]
+    coverage=stats.get('coverage')
+    lines=[f'Opportunity Radar · 商业机会情报简报 · {date_label}','='*64]
+    lines.append(f'报告编号 OR-{date_label.replace("-","")} · 生成于 {datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")}')
+    lines.append(f'数据基础：本轮获取 {fetched} 篇 · 新增分析 {analyzed} 篇'
+                 + (f' · 已有结果跳过 {skipped} 篇' if skipped else '')
+                 + (f' · 分析覆盖率 {coverage:.0%}' if isinstance(coverage,(int,float)) else '')
+                 + f' · 入选 {len(shown)} 条')
     if stats.get('sample_mode'):
-        lines += ['【演示数据声明】以下内容为离线样例，仅用于展示版式与评分流程，不代表真实来源或真实商业机会。','']
-    lines += ['【执行摘要】',decision_headline(items,stats),('样例仅用于演示字段和版式，不构成对真实需求的判断。' if stats.get('sample_mode') else management_note(items)),'']
-    lines += executive_brief(items)
-    lines += ['',f"{'已保存分析' if stats.get('render_only') else '新增信号'}：{len(items) if stats.get('render_only') else new} | 持续观察：{counts['watch']} | 优先验证：{counts['priority']} | 明确付费证据：{strong} | 未纳入分发：{len(deferred)}"]
-    lines.append(f'报告来源：基于数据库已保存的 {len(items)} 条分析重新生成（未重新调用模型）。' if stats.get('render_only')
-                 else f"运行统计：获取 {fetched} | 新增 {new} | 内容更新 {stats.get('updated',0)} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped} | 重复事件 {stats.get('duplicate_events',0)}")
+        lines += ['','【演示数据声明】以下内容为离线样例，仅用于展示版式与评分流程，不代表真实来源或真实商业机会。']
+
+    lines += ['','一、执行摘要（核心判断）','  '+decision_headline(items,stats)]
+    note=management_note(items)
+    if note: lines.append('  '+note)
+
+    lines += ['','二、关键判断',
+              '  按可执行性、通道与信号分排序；每条只回答一个问题：这条信息是否改变我们的行动。']
+    lines += _key_judgments(items)
+
+    actions=_next_actions(items)
+    lines += ['','三、建议行动']
+    if actions:
+        lines.append('   序号  行动 | 完成标准 | 依据')
+        for i,(step,done,base) in enumerate(actions,1):
+            lines.append(f'   {i}. {step}')
+            lines.append(f'      完成标准：{done}')
+            lines.append(f'      依据：{base}')
+    else:
+        lines.append('   本期没有达到可执行程度的条目；维持监测，不启动新动作。')
+
+    hypotheses=_hypotheses(items)
+    lines += ['','四、待验证假设','   以下是分析给出、但尚未被证据支持的推断。不作为结论使用。']
+    if hypotheses:
+        for i,(text,basis,conf,title) in enumerate(hypotheses,1):
+            lines.append(f'   H{i}｜{text}')
+            lines.append(f'      依据 {basis} · 置信度 {conf} · 出自《{title}》')
+    else:
+        lines.append('   无。')
+
+    lines += ['','五、风险与反证']
+    lines += ['   - '+row for row in _risks(items)]
+
+    watch=_watch_rows(items)
+    lines += ['','六、监测清单']
+    if watch:
+        lines.append('   主题 | 触发条件 | 当前评分')
+        for topic,trigger,score in watch:
+            lines.append(f'   {topic} | {trigger} | {score}')
+    else:
+        lines.append('   本期没有需要单独设触发条件的观察项。')
+
+    lines += ['','七、证据与方法（Basis of preparation）']
+    funnel_line=' → '.join(f'{k} {v}' for k,v in funnel(stats))
+    lines.append(f'   漏斗：{funnel_line}')
+    if stats.get('render_only'):
+        lines.append(f'   报告来源：基于数据库已保存的 {len(items)} 条分析重新生成（未重新调用模型）。')
+    else:
+        lines.append(f"   运行统计：获取 {fetched} | 新增 {new} | 内容更新 {stats.get('updated',0)} | 进入分析 {queued} | 成功 {analyzed} | 失败 {failed} | 已有结果跳过 {skipped} | 重复事件 {stats.get('duplicate_events',0)}")
     disclosed=disclosure(stats)
-    if disclosed: lines.append(f'运行完整性：{disclosed}')
+    if disclosed: lines.append(f'   运行完整性：{disclosed}')
+    lanes=lane_breakdown(items)
+    if lanes:
+        lines.append('   通道分布：'+'，'.join(f"{LANE_LABEL[r['lane']]} 入选 {r['shown']} · 分析 {r['items']}" for r in lanes))
+    lines.append(f"   入选分布：优先验证：{counts['priority']} · 持续观察：{counts['watch']}"
+                 f" · 未纳入分发：{len(deferred)} · 明确付费证据：{strong}")
+    ev=evidence_breakdown(items)
+    lines.append('   证据强度：'+('，'.join(f"{STATE_LABEL.get(e['state'],e['state'])} {e['count']}" for e in ev) or '无'))
+    present={_state(x) for x in items}
+    meanings=[STATE_MEANING[st] for st in EVIDENCE_STATES if st in present and st in STATE_MEANING]
+    if meanings: lines.append('   证据口径：'+' '.join(meanings))
+    window=stats.get('sample_window')
+    if window:
+        lines.append(f"   样本窗口：{window.get('since') or '(无下界)'} 至 {window.get('until') or '(无上界)'} UTC"
+                     f"（池 {window.get('pool')} → 窗口内 {window.get('in_window')} → 取 {window.get('sampled')}）")
+    lines.append('   '+denominator_note(stats))
+    evs=[e for x in items for e in (x.get('evidence') or [])]
+    unlocated=sum(1 for e in evs if e.get('field')=='unlocated')
+    lines.append(f'   引文定位：{len(evs)-unlocated} 条可定位 · {unlocated} 条无法在原文中定位')
     pipeline=stats.get('pipeline')
     if pipeline:
         steps=pipeline.get('steps') or {}
         ok=sum(1 for value in steps.values() if value.get('ok'))
-        lines.append(f"统一管线：{pipeline.get('status','')} · {ok}/{len(steps)} 步成功"
-                     + (f" · 阻断：{','.join(pipeline.get('blocking_failures') or [])}"
-                        if pipeline.get('blocking_failures') else '')
-                     + (f" · 警告：{','.join(pipeline.get('warnings') or [])}"
-                        if pipeline.get('warnings') else ''))
-    window=stats.get('sample_window')
-    if window:
-        lines.append(f"样本窗口：{window.get('since') or '(无下界)'} 至 {window.get('until') or '(无上界)'} UTC"
-                     f"（池 {window.get('pool')} → 窗口内 {window.get('in_window')} → 取 {window.get('sampled')}）")
-    sections=[('一、商业、科技与经济情报','A'),('二、值得验证的商业机会','B'),('三、技术观察与工程信号','C')]
-    # One card per event across all lanes; the siblings are printed under their event.
+        lines.append(f"   统一管线：{pipeline.get('status','')} · {ok}/{len(steps)} 步成功"
+                     + (f" · 阻断：{','.join(pipeline.get('blocking_failures') or [])}" if pipeline.get('blocking_failures') else '')
+                     + (f" · 警告：{','.join(pipeline.get('warnings') or [])}" if pipeline.get('warnings') else ''))
+    lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'}（{stats.get('prompt_hash') or 'hash未记录'}）· 规则 {stats.get('rules_version','v2')}")
+    lines.append('   局限：本报告只覆盖已成功分析的条目；单一来源、未定位引文与未验证推断均已逐条标注，不构成对营收、市场规模或法律许可的结论。')
+
+    lines += ['','八、附录 A · 条目明细（可追溯证据）']
     representatives,_siblings=group_by_event(shown)
-    for title,lane in sections:
-        lines+=['',title,f'   通道定义：{LANE_PROMISE[lane]}']
-        group=[x for x in representatives if _lane(x)==lane]
-        if group:
-            for i,x in enumerate(group,1):
-                lines+=_card(i,x)
-                lines+=event_summary_lines(x)
-        else:
-            lines+=['   本期该通道没有条目进入观察区。']
-    if not shown and not filtered:
+    if representatives:
+        for i,x in enumerate(sorted(representatives,key=_order_key),1):
+            lines+=_card(i,x)
+            lines+=event_summary_lines(x)
+    else:
         lines+=['',empty_reason(stats)]
-    lines+=['','四、数据概览']
-    lines.append('   漏斗：'+' → '.join(f'{k} {v}' for k,v in funnel(stats)))
-    lanes=lane_breakdown(items)
-    lines.append('   通道分布：'+('，'.join(f"{LABEL} 入选 {r['shown']} · 分析 {r['items']}" for r,LABEL in ((r,LANE_LABEL[r['lane']]) for r in lanes)) or '无'))
-    lines.append('   情报主线：'+(('，'.join(f"{INTELLIGENCE_LINE_LABEL.get(k,k)} {v}" for k,v in summarize(items))) or '无')+'。按来源声明统计，未声明来源计为 (undeclared)。')
+
+    lines += ['','九、附录 B · 未纳入与失败']
+    if deferred:
+        lines.append(f'   本期未纳入分发（来源单期配额）：{len(deferred)} 条。原始判断保留，不代表价值较低。')
+        for x in sorted(deferred,key=lambda v:(-v.get('score',0),v.get('title',''))):
+            lines.append(f"     - [{STATUS_LABEL.get(x.get('status'),x.get('status'))} · {x.get('score',0)}/100] {x.get('title','')}（{x.get('source_name','Unknown')}）")
+    if filtered:
+        for reason in REASON_LABEL:
+            group=[x for x in filtered if x.get('filter_reason')==reason]
+            if group:
+                lines.append(f'   已过滤 · {REASON_LABEL[reason]}：{len(group)} 篇')
+                lines+=[f"     - [{x.get('score',0)}/100] {x.get('title','')}" for x in group[:10]]
+    if not deferred and not filtered:
+        lines.append('   无。')
+
+    lines += ['','十、附录 C · 来源与数据源']
     src=source_breakdown(items)
     if src:
         lines.append('   来源贡献（分析条目 / 可定位引文）：')
         for r in src:
             detail=f"可定位引文 {r['located']}/{r['evidence']}" if r['evidence'] else '无引文'
             lines.append(f"     {r['source']}：分析 {r['items']} 条 · {detail}")
+    lines.append('   情报主线：'+(('，'.join(f"{INTELLIGENCE_LINE_LABEL.get(k,k)} {v}" for k,v in summarize(items))) or '无')+'。按来源声明统计，未声明来源计为 (undeclared)。')
     conflict_lines=stats.get('conflicts') or []
     if conflict_lines:
-        lines+=['','   数据冲突（记录，不判定对错）：']+['   '+line for line in conflict_lines]
-    ev=evidence_breakdown(items)
-    lines.append('   证据强度：'+('，'.join(f"{STATE_LABEL.get(e['state'],e['state'])} {e['count']}" for e in ev) or '无'))
-    lines.append('   '+denominator_note(stats))
-    watch_lines=_watch_lines(stats)
-    lines+=watch_lines
-    lines+=['',('六' if watch_lines else '五')+'、附录','   来源分布：'+(', '.join(f'{k} {v}' for k,v in Counter(x.get('source_name','Unknown') for x in items).most_common()) or '无')]
-    if deferred:
-        lines.append(f'   本期未纳入分发（来源单期配额）：{len(deferred)} 条，原始判断保留如下')
-        for x in sorted(deferred,key=lambda v:(-v.get('score',0),v.get('title',''))):
-            lines.append(f"       - [{STATUS_LABEL.get(x.get('status'),x.get('status'))} · {x.get('score',0)}/100] {x.get('title','')}（{x.get('source_name','Unknown')}）")
-    if filtered:
-        lines.append('   已过滤与待补充：')
-        for reason in REASON_LABEL:
-            group=[x for x in filtered if x.get('filter_reason')==reason]
-            if group:
-                lines.append(f'     {REASON_LABEL[reason]}：{len(group)} 篇')
-                lines+=[f"       - [{x.get('score',0)}/100] {x.get('title','')}" for x in group[:10]]
+        lines.append('   数据冲突（记录，不判定对错）：')
+        lines+=[f'     {line}' for line in conflict_lines]
     quality=Counter(_evidence_text(x) for x in items)
-    q=', '.join(f'{k} {v}' for k,v in quality.most_common()) or '无'
-    lines.append('   数据质量：证据等级分布 '+q+'。仅标题或无法定位的摘录不能作为已验证需求。')
+    lines.append('   数据质量：证据等级分布 '+(', '.join(f'{k} {v}' for k,v in quality.most_common()) or '无')+'。仅标题或无法定位的摘录不能作为已验证需求。')
     sync=stats.get('source_sync')
     if sync:
         rows=[f"{name} {row.get('status')}"+(f"（{row.get('reason')}）" if row.get('reason') else '')
               for name,row in (sync.get('sources') or {}).items()]
-        lines.append(f"   外部数据源同步（{str(sync.get('started_at') or '')[:10] or '时间未记录'}）："
-                     +(', '.join(rows) or '无记录')+'. 各源独立入库，不进入本报告的证据与主张。')
+        lines.append(f"   外部数据源同步（{str(sync.get('started_at') or '')[:10] or '时间未记录'}）："+', '.join(rows)+'. 各源独立入库，不进入本报告的证据与主张。')
+    watch_lines=_watch_lines(stats)
+    lines+=watch_lines
     lines+=_source_audit_note(stats)
-    lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'}（{stats.get('prompt_hash') or 'hash未记录'}）· 规则 {stats.get('rules_version','v2')}")
-    evs=[e for x in items for e in (x.get('evidence') or [])]
-    unlocated=sum(1 for e in evs if e.get('field')=='unlocated')
-    lines.append(f"   引文定位：{len(evs)-unlocated} 条可定位 · {unlocated} 条无法在原文中定位")
-    present={_state(x) for x in items}
-    meanings=[STATE_MEANING[st] for st in EVIDENCE_STATES if st in present and st in STATE_MEANING]
-    if meanings: lines.append('   证据口径：'+' '.join(meanings))
     lines.append(_rules_line(stats))
     lines.append('   免责声明：初筛分数只表示相对优先级；营收、利润、市场规模和法律许可等主张必须核对原始来源及独立证据。')
     return subject,'\n'.join(lines)
@@ -566,7 +793,7 @@ def _watch_lines(stats):
     watch=stats.get('watchlist')
     if not watch: return []
     limit=int(watch.get('limit') or 8)
-    lines=['','五、待观察信号（弱信号 / 未确认）',
+    lines=['','   弱信号（保留在库中，不进入主阅读区）',
            '   口径：这些条目保留在库中并参与追溯，不进入主阅读区；弱信号不等于事实，也不计入发布门禁。']
     opps=watch.get('opportunities') or {}; opp_items=opps.get('items') or []
     records=int(opps.get('records') or opps.get('count') or 0)

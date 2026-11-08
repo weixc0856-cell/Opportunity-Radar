@@ -67,6 +67,7 @@ def make_client(settings, max_tokens, timeout, retries=1):
                                        settings.llm_retry_backoff.split(',') if part.strip()),
                          retry_after_max=settings.llm_retry_after_max,
                          retry_max_seconds=settings.llm_retry_max_seconds,
+                         api_style=settings.llm_api_style,
                          temperature=0.0)
 
 

@@ -12,3 +12,4 @@ config/sources.local.csv
 mail.txt
 config/recipients.json
 .env.bak*
+config/sources.local.csv*
