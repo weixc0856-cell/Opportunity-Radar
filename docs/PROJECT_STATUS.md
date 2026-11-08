@@ -122,17 +122,24 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
    `syndication_group` 仍为空。这是来源覆盖与正文相似度问题，不是模型问题。
 2. **N2/N3 语义参考**：只有 10 篇人工参考；不能外推到全部语料。Google/Intel title-only
    与 Personal Income 0.2% DPI 仍有已知缺口。
-3. **v7 提示词**：已切换为生产分析器；V6 仅保留回滚。N0–N5 使用 r2-v4 契约。
+3. **提示词**：生产为 v8（v7 + 面向人的字段一律简体中文，逐字引文保持原文）；
+   v7 与 v6 保留回滚。N0–N5 使用 r2-v4 契约。
 4. **Opportunity**：只有 `signal_detected`；problem/buyer 是模型提示，不是确认事实；
    66 行没有经过人工 `problem_supported`/`buyer_identified`/`payment_verified` 提升。
-5. **来源覆盖**：15 个启用 RSS 源；SEC/EIA 独立；GDELT 仍被 429 阻断；Federal Register
-   与 BLS 每日同步到独立 Pilot 库，但数据不进入日报正文。SEC 缺少
-   `OR_INGEST_SEC_USER_AGENT`，当前状态 `not_configured`。
-6. **R6**：事件聚类 precision/recall 无可信标注基准，标 `NOT_MEASURED`；N1 benchmark
+5. **来源覆盖**：29 个启用源（2026-11-08 经合规核验新增 14 个：BLS、Census、Google×3、
+   Hugging Face、Microsoft×2、AWS、TechCrunch、MIT Technology Review、AMD IR、arXiv×2），
+   每轮取数 40；SEC/EIA 独立；GDELT 仍被 429 阻断；Federal Register 与 BLS 每日同步到独立
+   Pilot 库，但数据不进入日报正文。SEC 缺少 `OR_INGEST_SEC_USER_AGENT`，状态 `not_configured`。
+   核验记录见 `docs/SOURCE_COMPLIANCE_REVIEW_2026-11-08.md`。
+6. **政策线为空（已知缺口）**：注册表内唯一政策源为中国人民银行，只有 HTML 栏目页且
+   `robots.txt` 为 `Disallow: /`，不可抓取。候选已核验但**未启用**：欧盟委员会新闻稿 RSS
+   （CC BY 4.0）、UK GOV.UK 公告 Atom（OGL v3.0）可直接批准；中国政府网 RSS 条款限制较严，
+   需人工确认。在新增并批准之前，日报的政策监管内容会一直为 0，报告不以此掩盖。
+7. **R6**：事件聚类 precision/recall 无可信标注基准，标 `NOT_MEASURED`；N1 benchmark
    是冻结静态结果，不是每日重跑。
-7. **全文抓取**：所有来源 `full_text_fetch=none`；E2 只来自已声明 `full_text` 的来源。
-8. **邮件**：HOLD 不发订阅/告警邮件；失败无自动重试。
-9. **主张结构**：323 条 Claim 中 321 条是 R1 `skeleton`（无 period、无数值，全部
+8. **全文抓取**：所有来源 `full_text_fetch=none`；E2 只来自已声明 `full_text` 的来源。
+9. **邮件**：HOLD 不发订阅/告警邮件；失败无自动重试。
+10. **主张结构**：323 条 Claim 中 321 条是 R1 `skeleton`（无 period、无数值，全部
    `unverifiable`），只有 2 条是 N0–N5 的 `n5` Claim。run 19 的 8 篇 N0–N5 输入都是
    非经济数字段落（HN/论坛/版本号），未产出 r2-v4 Claim。数值主张依赖 RSS 摘要本身包含
    数字；全文抓取仍全部关闭。
