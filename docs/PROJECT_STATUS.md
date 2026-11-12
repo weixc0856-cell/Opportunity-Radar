@@ -1,6 +1,6 @@
 # 项目状态（2026-11-03）
 
-**结论：R0–R6 已接通同一条每日生产管线；生产库已迁移到 schema v9；每日任务 08:00
+**结论：R0–R6 已接通同一条每日生产管线；生产库已迁移到 schema v9；每日任务 06:00
 运行日报并自动生成到期的周报/月报。** 本文件只写当前事实；历史批次过程见 Git 与
 `docs/archive/`。
 
@@ -80,7 +80,7 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
 | R6 质量与回测 | `quality.py` | 指标快照 + 30/90 天回测（18 runs，77.78% success）；版本对比；聚类/阅读指标 `NOT_MEASURED` | **PARTIAL（可测项 PASS）** |
 | Opportunity 数据库 | `opportunity.py`、`opportunity_discovery.py` | 48 行 `signal_detected`，489 links，48 revisions | **PASS_VERIFIED（signal 层）** |
 | Source Pilot | `pilot/` | FR 17 / BLS 971；GDELT 429 | **PARTIAL（GDELT 阻断）** |
-| 每日自动化 | `run-digest.ps1 --period auto` | 计划任务 08:00；180 分钟上限 | **PASS_VERIFIED（配置）；真实 dry-run 见 §4** |
+| 每日自动化 | `run-digest.ps1 --period auto` | 计划任务 06:00；180 分钟上限 | **PASS_VERIFIED（配置）；真实 dry-run 见 §4** |
 
 ## 4. 真实验证
 
@@ -108,6 +108,14 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   未产出 r2-v4 Claim；实体 70 条 mention；Opportunity 新建 8、已有 51；经济库同步成功；
   质量快照 `PASS_MEASURED`；未发送邮件（dry-run），退出码 0。
 
+### 邮件版与完整版（2026-11-12）
+
+- 邮件只发送第一至七节与附录说明。用生产库 `--render-only` 实测：邮件版 9.3 KB，完整版 93.6 KB，
+  邮件正文不含附录 A/B/C。
+- 附录按 `report_hash` 写入 SQLite `report_sections`（首次保存时自建表，不改 schema 版本），
+  归档同时保存 `*.email.txt` / `*.email.html`；管理台 `GET /api/report/sections` 可读。
+- 测试：全量 1069 项通过（1 项环境跳过，2026-11-12）。
+
 ### 发现层与展示层分离
 
 `display.py` 为 Claim / Opportunity / 关联计算 `L0–L3` 展示等级与原因；日报在“数据概览”之后
@@ -122,24 +130,31 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
    `syndication_group` 仍为空。这是来源覆盖与正文相似度问题，不是模型问题。
 2. **N2/N3 语义参考**：只有 10 篇人工参考；不能外推到全部语料。Google/Intel title-only
    与 Personal Income 0.2% DPI 仍有已知缺口。
-3. **v7 提示词**：已切换为生产分析器；V6 仅保留回滚。N0–N5 使用 r2-v4 契约。
+3. **提示词**：生产为 v8（v7 + 面向人的字段一律简体中文，逐字引文保持原文）；
+   v7 与 v6 保留回滚。N0–N5 使用 r2-v4 契约。
 4. **Opportunity**：只有 `signal_detected`；problem/buyer 是模型提示，不是确认事实；
    66 行没有经过人工 `problem_supported`/`buyer_identified`/`payment_verified` 提升。
-5. **来源覆盖**：15 个启用 RSS 源；SEC/EIA 独立；GDELT 仍被 429 阻断；Federal Register
-   与 BLS 每日同步到独立 Pilot 库，但数据不进入日报正文。SEC 缺少
-   `OR_INGEST_SEC_USER_AGENT`，当前状态 `not_configured`。
-6. **R6**：事件聚类 precision/recall 无可信标注基准，标 `NOT_MEASURED`；N1 benchmark
+5. **来源覆盖**：29 个启用源（2026-11-08 经合规核验新增 14 个：BLS、Census、Google×3、
+   Hugging Face、Microsoft×2、AWS、TechCrunch、MIT Technology Review、AMD IR、arXiv×2），
+   每轮取数 40；SEC/EIA 独立；GDELT 仍被 429 阻断；Federal Register 与 BLS 每日同步到独立
+   Pilot 库，但数据不进入日报正文。SEC 缺少 `OR_INGEST_SEC_USER_AGENT`，状态 `not_configured`。
+   核验记录见 `docs/SOURCE_COMPLIANCE_REVIEW_2026-11-08.md`。
+6. **政策线为空（已知缺口）**：注册表内唯一政策源为中国人民银行，只有 HTML 栏目页且
+   `robots.txt` 为 `Disallow: /`，不可抓取。候选已核验但**未启用**：欧盟委员会新闻稿 RSS
+   （CC BY 4.0）、UK GOV.UK 公告 Atom（OGL v3.0）可直接批准；中国政府网 RSS 条款限制较严，
+   需人工确认。在新增并批准之前，日报的政策监管内容会一直为 0，报告不以此掩盖。
+7. **R6**：事件聚类 precision/recall 无可信标注基准，标 `NOT_MEASURED`；N1 benchmark
    是冻结静态结果，不是每日重跑。
-7. **全文抓取**：所有来源 `full_text_fetch=none`；E2 只来自已声明 `full_text` 的来源。
-8. **邮件**：HOLD 不发订阅/告警邮件；失败无自动重试。
-9. **主张结构**：323 条 Claim 中 321 条是 R1 `skeleton`（无 period、无数值，全部
+8. **全文抓取**：所有来源 `full_text_fetch=none`；E2 只来自已声明 `full_text` 的来源。
+9. **邮件**：HOLD 不发订阅/告警邮件；失败无自动重试。
+10. **主张结构**：323 条 Claim 中 321 条是 R1 `skeleton`（无 period、无数值，全部
    `unverifiable`），只有 2 条是 N0–N5 的 `n5` Claim。run 19 的 8 篇 N0–N5 输入都是
    非经济数字段落（HN/论坛/版本号），未产出 r2-v4 Claim。数值主张依赖 RSS 摘要本身包含
    数字；全文抓取仍全部关闭。
 
 ## 6. 运行方式
 
-- 计划任务：`OpportunityRadarDaily`，每天 08:00，180 分钟上限，`--period auto`。
+- 计划任务：`OpportunityRadarDaily`，每天 06:00，180 分钟上限，`--period auto`。
 - 服务：FreshRSS `127.0.0.1:8088`（Docker Compose）；模型 `127.0.0.1:8080/v1`
   CPU-only、64K、单 slot；SMTP 163:465 SSL。
 - 生产迁移：`unified_main db-migrate --apply --backup <file>`；业务 CLI `migrate=False`，

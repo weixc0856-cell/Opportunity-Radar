@@ -62,6 +62,21 @@ def _src(sid,name,cap):
 def _item(name,score,status='watch'):
     return {'source_name':name,'score':score,'status':status,'filter_reason':''}
 
+class EmailEditionArchiveTests(unittest.TestCase):
+ def test_archive_keeps_full_report_and_mailed_brief(self):
+  import json
+  with tempfile.TemporaryDirectory() as d:
+   path,_h=_write(d,'subject','【执行摘要】full body','<html>full</html>',items=[],stats=None,
+                  email_body='【执行摘要】brief only',email_html='<html>brief</html>')
+   p=Path(path)
+   self.assertIn('full body',p.read_text(encoding='utf-8'))
+   brief=Path(str(path).replace('.txt','.email.txt'))
+   self.assertTrue(brief.exists()); self.assertIn('brief only',brief.read_text(encoding='utf-8'))
+   self.assertIn('brief only',(Path(d)/'latest-digest-email.txt').read_text(encoding='utf-8'))
+   manifest=json.loads(p.with_name(p.stem+'.manifest.json').read_text(encoding='utf-8'))
+   self.assertIn('email_text',manifest['files']); self.assertIn('email_html',manifest['files'])
+   self.assertIn('email_report_hash',manifest)
+
 class SourceCapTests(unittest.TestCase):
  def test_cap_defers_extras_without_rewriting_their_verdict(self):
   from opportunity_radar.cli import apply_source_caps
@@ -182,7 +197,7 @@ class RenderOnlyUpgradeTests(unittest.TestCase):
    out=buf.getvalue()
    self.assertEqual(rc,0)
    self.assertIn('E1 · 摘要引文已定位',out)
-   self.assertIn('二、值得验证的商业机会',out)   # user_pain routes to lane B
+   self.assertIn('B · 客户痛点与商业机会',out)   # user_pain routes to lane B, shown in the appendix
    self.assertIn('legacy-model',out)
    self.assertTrue(Path(d,'latest-digest.txt').exists())
    self.assertTrue(Path(d,'latest-digest.html').exists())

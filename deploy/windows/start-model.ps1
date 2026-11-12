@@ -15,7 +15,11 @@
   [int]$TimeoutSeconds = 600,
   # Single-port policy: the project owns 8080 while it runs. This launcher waits for the
   # project to release the port instead of starting a second LLM server on another port.
-  [int]$MaxWaitSeconds = 28800,
+  # The wait is capped well under the daily task's 180-minute ExecutionTimeLimit: an 8-hour
+  # wait (the old 28800) could never complete, it only made the task look hung and then get
+  # killed with no ending line in the log. Giving up at 70 minutes exits 75, which the
+  # launcher records as "deferred port 8080" instead of a silent day.
+  [int]$MaxWaitSeconds = 4200,
   [int]$PollSeconds = 30,
   [switch]$Foreground
 )

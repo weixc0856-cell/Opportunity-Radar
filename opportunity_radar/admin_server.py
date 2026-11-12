@@ -250,7 +250,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._ok({'version': '1.1', 'error_codes': ERROR_CODES,
                           'endpoints': ['/api/status','/api/sources','/api/sources/save','/api/recipients','/api/recipients/save',
                                         '/api/freshrss-feeds','/api/audit','/api/source-check','/api/email/test','/api/email/resend',
-                                        '/api/deliveries/latest','/api/run','/api/schedule','/api/logs','/report']})
+                                        '/api/deliveries/latest','/api/run','/api/schedule','/api/logs','/api/report/sections','/report']})
             elif path == '/api/status':
                 s = Settings.from_env(); store = Store(s.db_path, migrate=False)
                 previous = RUN_PROCESS
@@ -294,6 +294,12 @@ class Handler(BaseHTTPRequestHandler):
                 s = Settings.from_env(); rd = report_dir()
                 self._ok({'application': redact(tail(s.log_path, 200)), 'admin': redact(tail(rd / 'admin-run.log', 200)),
                           'scheduler': redact(tail(rd / 'scheduler-run.log', 100)), 'cli': redact(tail(rd / 'cli-run.log', 200))})
+            elif path == '/api/report/sections':
+                store = Store(Settings.from_env().db_path, migrate=False)
+                latest = store.latest_run() or {}
+                rows = store.report_sections(latest.get('report_hash') or '') if latest.get('report_hash') else []
+                if not rows: rows = store.latest_report_sections()
+                self._ok({'report_hash': latest.get('report_hash') or '', 'sections': rows})
             elif path == '/report':
                 report = report_dir() / 'latest-digest.html'
                 if report.exists(): self._text(report.read_text(encoding='utf-8'), 'text/html; charset=utf-8')
@@ -368,7 +374,9 @@ class Handler(BaseHTTPRequestHandler):
         addresses = data.get('recipients', [])
         details = validate_recipient_list(addresses)
         if details: self._error('VALIDATION_ERROR', '收件邮箱校验失败', 400, details); return
-        rd = report_dir(); txt_path = rd / 'latest-digest.txt'; html_path = rd / 'latest-digest.html'
+        rd = report_dir(); txt_path = rd / 'latest-digest-email.txt'; html_path = rd / 'latest-digest-email.html'
+        if not txt_path.exists(): txt_path = rd / 'latest-digest.txt'
+        if not html_path.exists(): html_path = rd / 'latest-digest.html'
         if not txt_path.exists(): self._error('REPORT_MISSING', '尚无可用日报，先运行一次日报任务。', 409); return
         raw = txt_path.read_text(encoding='utf-8')
         subject, _, body = raw.partition('\n\n')
@@ -411,7 +419,7 @@ class Handler(BaseHTTPRequestHandler):
                 log_file.close(); self._error('INTERNAL_ERROR', f'启动失败：{type(e).__name__}', 500)
 
     def _schedule(self, data):
-        start = str(data.get('start_time', '08:00'))
+        start = str(data.get('start_time', '06:00'))
         if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', start):
             self._error('VALIDATION_ERROR', '时间格式必须为 HH:MM', 400, [{'field': 'start_time', 'message': 'expected HH:MM'}]); return
         script = ROOT / 'deploy' / 'windows' / 'install-task.ps1'

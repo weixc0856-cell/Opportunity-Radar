@@ -55,7 +55,12 @@ R0–R6 已进入同一生产管线。每日 `cli` 在分析后自动执行 R1 �
 生产库已迁移到 schema v9；历史 skeleton Claim 的 `period` 已修正，`source_id` 已回填。
 Opportunity 只创建 `signal_detected`，不自动声称 problem/buyer/payment 已验证。
 生产分析器使用 V7（`OR_PROMPT_PATH=prompts/analyst_v7.md`）；V6 保留为回滚版本。
-日报每日 08:00，周报/月报由 `--period auto` 按 7/30 天节奏生成。
+分析后端走 Anthropic Messages 路由（`OR_LLM_API_STYLE=anthropic`，cc switch 本地代理
+`http://127.0.0.1:15721/v1`，模型 `claude-sonnet-5`）；本地 Qwen + 8080 保留为回滚后端，
+见 `docs/OPERATIONS.md` 的 Analyzer backend。
+日报每日 06:00，周报/月报由 `--period auto` 按 7/30 天节奏生成。
+日报邮件只发送第一至七节与附录说明；附录 A/B/C 按 `report_hash` 写入 SQLite
+`report_sections` 并随归档保存，管理台 `/report` 仍提供完整版。
 
 ## 文档地图
 
@@ -63,6 +68,7 @@ Opportunity 只创建 `signal_detected`，不自动声称 problem/buyer/payment 
 |---|---|
 | `README.md` | 产品入口：是什么、怎么装、怎么跑、数据怎么流 |
 | `docs/PRD.md` | 产品定义：用户、通道、功能需求、数据模型、质量框架 |
+| `docs/REPORT_FORMAT.md` | 报告体例：咨询结构、写作规则、门禁与语言约束 |
 | `docs/PROJECT_STATUS.md` | 当前事实：已交付、数据库现状、验收矩阵、缺口 |
 | `docs/ARCHITECTURE.md` | 模块职责、数据流、统一生产管线与 R3–R6 |
 | `docs/OPERATIONS.md` | 日常运行、排障、任务计划、数据库迁移 |

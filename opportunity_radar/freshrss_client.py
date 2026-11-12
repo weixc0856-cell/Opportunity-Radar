@@ -1,4 +1,4 @@
-import hashlib, json, urllib.error, urllib.parse, urllib.request
+import hashlib, json, time, urllib.error, urllib.parse, urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -106,7 +106,26 @@ class FreshRSSClient:
         # second. Without this, one duplicate URL (the same story syndicated into two feeds)
         # could consume a slot in the first cycle and leave the last feeds unsampled for the
         # whole run.
-        queues=[self._feed(fid,max_content) for fid in feed_ids]; out=[]; seen=set()
+        # Hosts that publish a minimum interval between requests as a condition of use.
+        # arXiv: "make no more than one request every three seconds, and limit requests to a
+        # single connection at a time" (info.arxiv.org/help/api/tou.html). The crawler is
+        # already single-connection; this adds the interval so two arXiv feeds cannot fire
+        # back to back and become a terms violation on the very first run.
+        host_intervals={'rss.arxiv.org':3.2}
+        urls={}
+        try: urls={str(f['id']):str(f.get('url') or '') for f in self.list_feeds()}
+        except Exception: urls={}
+        last_fetch={}
+        queues=[]
+        for fid in feed_ids:
+            host=urllib.parse.urlsplit(urls.get(str(fid),'')).netloc.lower()
+            wait=host_intervals.get(host,0)
+            if wait and host in last_fetch:
+                elapsed=time.monotonic()-last_fetch[host]
+                if elapsed<wait: time.sleep(wait-elapsed)
+            queues.append(self._feed(fid,max_content))
+            if wait: last_fetch[host]=time.monotonic()
+        out=[]; seen=set()
         for q in queues:
             while q:
                 a=q.pop(0)

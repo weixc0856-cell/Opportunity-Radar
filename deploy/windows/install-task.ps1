@@ -1,4 +1,4 @@
-﻿param([string]$TaskName="OpportunityRadarDaily",[string]$ProjectPath=(Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,[string]$StartTime="08:00")
+﻿param([string]$TaskName="OpportunityRadarDaily",[string]$ProjectPath=(Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,[string]$StartTime="06:00")
 $ErrorActionPreference="Stop"
 $scriptPath=Join-Path $ProjectPath "deploy\windows\run-digest.ps1"
 $action=New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""

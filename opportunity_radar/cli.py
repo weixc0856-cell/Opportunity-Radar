@@ -2,7 +2,7 @@ from collections import Counter
 import argparse, hashlib, json, logging, os, re, sqlite3, sys
 from pathlib import Path
 from .config import Settings, load_scoring, parse_backoff
-from .digest import render_digest, empty_reason
+from .digest import render_digest, empty_reason, split_report
 from .email_sender import send_email, send_email_detailed, parse_recipients
 from .freshrss_client import FreshRSSClient, ordered_feed_ids
 from .render_html import render_html
@@ -169,19 +169,31 @@ def _validate_report(subject,body,html,items=None,stats=None):
 def _atomic_write(path,text):
     tmp=Path(str(path)+'.tmp'); tmp.write_text(text,encoding='utf-8'); os.replace(tmp,path)
 
-def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=None,stats=None,run_id=None):
+def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=None,stats=None,run_id=None,
+           email_body=None,email_html=None):
     """Write the latest report plus a dated local archive of the report and structured results.
 
+    `body`/`html` are the complete report kept locally; `email_body`/`email_html` are the
+    edition actually mailed. Both are validated; the archive keeps both so the emailed
+    brief and the traceable appendices stay auditable side by side.
     The archive stores this application's generated analysis, evidence metadata and report
     artifacts. It intentionally does not snapshot full third-party article bodies.
     """
     from datetime import datetime
     d=Path(report_dir); d.mkdir(parents=True,exist_ok=True)
     text=subject+'\n\n'+body
+    email_body=email_body if email_body is not None else body
+    email_html=email_html if email_html is not None else html
+    email_text=subject+chr(10)+chr(10)+email_body
     _validate_report(subject,body,html,items,stats)
+    _validate_report(subject,email_body,email_html,items,stats)
     report_hash=hashlib.sha256(text.encode()).hexdigest()[:16]
+    email_report_hash=hashlib.sha256(email_text.encode()).hexdigest()[:16]
     _atomic_write(d/f'{name}.txt',text)
     _atomic_write(d/f'{name}.html',html)
+    # The exact mailed edition, so resend and audit never fall back to the full appendix.
+    _atomic_write(d/f'{name}-email.txt',email_text)
+    _atomic_write(d/f'{name}-email.html',email_html)
     if not archive: return '',report_hash
     local_now=datetime.now().astimezone()
     stamp=local_now.strftime('%Y-%m-%d-%H%M%S')
@@ -190,7 +202,9 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     arch.mkdir(parents=True,exist_ok=True)
     txt=arch/f'{stamp}.txt'; html_path=arch/f'{stamp}.html'
     items_path=arch/f'{stamp}.items.json'; manifest_path=arch/f'{stamp}.manifest.json'
+    email_txt=arch/f'{stamp}.email.txt'; email_html_path=arch/f'{stamp}.email.html'
     _atomic_write(txt,text); _atomic_write(html_path,html)
+    _atomic_write(email_txt,email_text); _atomic_write(email_html_path,email_html)
     payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','event_context','analysis','score','signal_score','evidence_score','editorial_priority','priority_basis','status','filter_reason',
                                              'source_id','intelligence_lines','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
                                              'classification','market_validation','risk_flag','verification_note',
@@ -199,10 +213,12 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
                                          'run_id':run_id,'report_hash':report_hash,'items':payload_items},
                                         ensure_ascii=False,indent=2,default=str))
     manifest={'schema_version':2,'generated_at':local_now.isoformat(),'run_id':run_id,'report_hash':report_hash,
+              'email_report_hash':email_report_hash,
               'subject':subject,'article_count':len(payload_items),
-              'files':{'text':txt.name,'html':html_path.name,'items':items_path.name,'manifest':manifest_path.name},
+              'files':{'text':txt.name,'html':html_path.name,'items':items_path.name,'manifest':manifest_path.name,
+                       'email_text':email_txt.name,'email_html':email_html_path.name},
               'stats':stats or {},
-              'storage_note':'Generated analysis snapshot and report only; full source article bodies are not archived.'}
+              'storage_note':'Generated analysis snapshot, full report and the emailed brief only; full source article bodies are not archived.'}
     _atomic_write(manifest_path,json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
     return str(txt),report_hash
 
@@ -356,21 +372,28 @@ def _alert(store,s,reason):
     except Exception:
         logging.exception('Failed to send alert email'); return False
 
-def _render_only(store,s,cfg):
-    """Rebuild the report from stored analyses without calling the model or re-scoring."""
+def _stored_items(store,sources,since=None,keys=None):
+    """Rebuild report items from stored analyses, without calling the model.
+
+    Shared by --render-only and by a run that analysed nothing new. The report says
+    "conclusions carry over" in that case; it has to actually carry them over instead of
+    printing an empty page under a promise, which is what overwrote a good report on
+    2026-11-08 11:28.
+    """
     from .lanes import derive_lane
-    rows=load_sources()
-    by_id,by_name,ambiguous=source_index(rows)
-    if ambiguous: logging.warning('Ambiguous source names after normalisation, ignored for backfill: %s',', '.join(sorted(ambiguous)))
+    by_id,by_name,ambiguous=source_index(sources)
+    if ambiguous:
+        logging.warning('Ambiguous source names after normalisation, ignored for backfill: %s',', '.join(sorted(ambiguous)))
     unresolved=matched_id=matched_name=0
     items=[]
-    for r in store.list_analyses(500):
+    for r in store.list_analyses(500,since=since):
+        if keys is not None and Store.key(r['url']) not in keys: continue
         try: d=json.loads(r['result_json'])
         except (ValueError,TypeError): continue
         sc=d.get('scoring',{}); meta=d.get('meta',{})
-        # Records stored before lanes existed still have a source; route them the same
-        # way a live run would instead of dumping everything into lane A.
-        sid=str(meta.get('source_id') or '')
+        # The stored id is authoritative; FreshRSS feed titles differ from registry names,
+        # and name matching alone left half the articles unattributed to a line.
+        sid=str(meta.get('source_id') or r.get('source_id') or '')
         if sid and sid in by_id: source=by_id[sid]; matched_id+=1
         else:
             source=by_name.get(_norm_name(r['source_name']))
@@ -381,7 +404,7 @@ def _render_only(store,s,cfg):
         lane=sc.get('lane') or derive_lane({},d.get('analysis',{}),source,sc.get('classification',{}))
         items.append({'title':r['title'],'url':r['url'],'source_name':r['source_name'],'analysis':d.get('analysis',{}),
                       'score':r['score'],'status':sc.get('status','filtered'),'filter_reason':sc.get('filter_reason',''),
-                      'source_id':meta.get('source_id',''),
+                      'source_id':meta.get('source_id','') or r.get('source_id',''),
                       'intelligence_lines':getattr(source,'intelligence_lines',''),
                       'lane':lane,'content_basis_estimate':sc.get('content_basis_estimate',''),
                       'evidence_basis':sc.get('evidence_basis',''),
@@ -391,10 +414,30 @@ def _render_only(store,s,cfg):
                       'risk_flag':sc.get('risk_flag',''),'verification_note':sc.get('verification_note',''),
                       'evidence':sc.get('evidence',[]),'evidence_integrity':sc.get('evidence_integrity',''),
                       'components':sc.get('components',{}),'meta':d.get('meta',{})})
+    return items,{'matched_id':matched_id,'matched_name':matched_name,'unresolved':unresolved,
+                  'ambiguous':len(ambiguous)}
+
+
+def _render_only(store,s,cfg):
+    """Rebuild the report from stored analyses without calling the model or re-scoring."""
+    rows=load_sources()
+    # Scope to the newest run that analysed something, not to every analysis ever stored.
+    since=store.last_analysis_run_started_at()
+    items,matched=_stored_items(store,rows,since=since)
+    unresolved=matched['unresolved']; matched_id=matched['matched_id']; matched_name=matched['matched_name']
+    ambiguous=range(matched['ambiguous'])
     lane_weights,lane_thresholds=lane_display_config(cfg)
     attach_event_context(store, items, write=False)
     caps=apply_source_caps(items,rows)
-    stats={'fetched':len(items),'new':0,'updated':0,'queued':0,'analyzed':len(items),'failed':0,'skipped':0,
+    # A re-render must report the run it renders, not "as many as it found": the run fetched
+    # 40 articles and analysed 21 of them, and saying 21 hides the 19 already-analyzed ones.
+    run=store.latest_run() or {}
+    run_fetched=int(run.get('article_count') or len(items))
+    run_analyzed=int(run.get('analyzed_count') or len(items))
+    stats={'fetched':run_fetched,'new':0,'updated':0,'queued':run_analyzed,'analyzed':run_analyzed,
+           'failed':int(run.get('error_count') or 0),
+           'skipped':max(0,run_fetched-run_analyzed-int(run.get('error_count') or 0)),
+           'coverage':run.get('coverage'),'publication_status':run.get('publication_status'),
            'counts':{k:sum(1 for x in items if x.get('status')==k) for k in ('priority','watch','filtered')},
            'rules_version':RULES_VERSION,'lane_weights':lane_weights,'lane_thresholds':lane_thresholds,
            'render_only':True,'unresolved_sources':unresolved,'deferred':caps['deferred'],
@@ -404,7 +447,10 @@ def _render_only(store,s,cfg):
     stats['prompt_hash']=next((x['meta'].get('prompt_hash') for x in items if x.get('meta',{}).get('prompt_hash')),'')
     stats['empty_reason']=empty_reason(stats)
     stats['watchlist']=build_watchlist(store, None)
-    subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html,archive=False)
+    subject,body=render_digest(items,stats)
+    email_body=render_digest(items,stats,include_appendix=False)[1]
+    html=render_html(items,stats); email_html=render_html(items,stats,include_appendix=False)
+    _write(s.report_dir,subject,body,html,archive=False,email_body=email_body,email_html=email_html)
     print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
 
 def _source_sync_note(report_dir):
@@ -657,7 +703,7 @@ def main(argv=None):
         model=LocalAnalyzer(s.llm_base_url,s.llm_model,s.llm_timeout,s.llm_max_tokens,api_key=s.llm_api_key,
                             connect_retries=s.llm_connect_retries,timeout_retries=s.llm_timeout_retries,
                             backoff=parse_backoff(s.llm_retry_backoff),retry_after_max=s.llm_retry_after_max,
-                            retry_max_seconds=s.llm_retry_max_seconds)
+                            retry_max_seconds=s.llm_retry_max_seconds,api_style=s.llm_api_style)
         queued=skipped=not_attempted=0
         circuit_open=False
         causes=Counter()
@@ -698,6 +744,9 @@ def main(argv=None):
                 item['intelligence_lines']=getattr(source_by_feed.get(a.feed_id),'intelligence_lines','')
                 store.save_analysis(key,result,item['scoring'],item['meta'])
                 items.append(item); analyzed+=1
+                # A run can spend an hour here; without this line the launcher log, the CLI log
+                # and stdout all stay empty, and a working run is indistinguishable from a hang.
+                logging.info('Analyzed %d of %d article(s): %s',analyzed,len(articles),a.url)
                 consecutive_transport_failures=0
             except Exception as exc:
                 errors+=1
@@ -718,6 +767,14 @@ def main(argv=None):
                                       'the rest will be recorded as not attempted',cause,consecutive_transport_failures)
                 else:
                     consecutive_transport_failures=0
+        if analyzed==0 and skipped>0:
+            # Nothing new since the last run: the brief is about the day's items, so it
+            # carries them over, clearly labelled, instead of becoming an empty page.
+            fetched_keys={Store.key(a.url) for a in articles}
+            carried,_match=_stored_items(store,sources,keys=fetched_keys)
+            if carried:
+                items=carried
+                logging.info('No new analysis; carried %d stored item(s) into the report',len(items))
         caps=apply_source_caps(items,sources)
         attach_event_context(store, items, write=True)
         # One production chain: the daily run now produces Evidence/Claim/Entity/
@@ -755,11 +812,22 @@ def main(argv=None):
         if win_start or win_end:
             stats['sample_window']={'since':s.sample_since,'until':s.sample_until,
                                     'pool':len(raw),'in_window':len(in_window),'sampled':len(articles)}
-        subject,body=render_digest(items,stats); html=render_html(items,stats)
+        subject,body=render_digest(items,stats)
+        # The email edition stops after the basis-of-preparation section; the appendices
+        # are stored in SQLite and the archive instead of being mailed to every recipient.
+        email_body=render_digest(items,stats,include_appendix=False)[1]
+        html=render_html(items,stats)
+        email_html=render_html(items,stats,include_appendix=False)
         if args.period=='auto' and not args.dry_run:
             stats['period_reports']=_maybe_period_reports(s)
         store.update_run(rid,stage='rendering')
-        archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid)
+        archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid,
+                                              email_body=email_body,email_html=email_html)
+        try:
+            _brief,appendix_sections=split_report(body)
+            store.save_report_sections(report_hash,[('email_brief','邮件正文（不含附录）',email_body)]+appendix_sections,run_id=rid)
+        except Exception:
+            logging.exception('Report appendices could not be stored in the database; the archive still holds them')
         out=Path(s.report_dir)/'latest-digest.txt'
         if args.dry_run:
             status=dry_run_status(analyzed,errors)
@@ -803,7 +871,8 @@ def main(argv=None):
                              archive_path,report_hash,exit_code=0,publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             logging.info('No new content; digest not sent.')
             print(body); print(f'No new content; report saved to {out} but not emailed.'); return 0
-        key=hashlib.sha256(f'{subject}|{report_hash}'.encode()).hexdigest()[:32]
+        # Idempotency is about what the recipient saw: the emailed brief, not the local appendix.
+        key=hashlib.sha256(f'{subject}|{email_body}'.encode()).hexdigest()[:32]
         recipients=parse_recipients(s.email_to)
         already=store.sent_recipients(key)
         pending=[r for r in recipients if r.casefold() not in already]
@@ -815,7 +884,7 @@ def main(argv=None):
             logging.info('Duplicate report; email skipped.')
             print(f'Same report already sent to all recipients; email skipped. Report saved to {out}.'); return 0 if status=='success' else 1
         store.update_run(rid,stage='sending')
-        results=send_email_detailed(s.smtp_host,s.smtp_port,s.smtp_username,s.smtp_password,s.email_from,pending,subject,body,s.smtp_starttls,html=html,security=s.smtp_security)
+        results=send_email_detailed(s.smtp_host,s.smtp_port,s.smtp_username,s.smtp_password,s.email_from,pending,subject,email_body,s.smtp_starttls,html=email_html,security=s.smtp_security)
         failed=[]
         for res in results:
             store.delivery(rid,'sent' if res['ok'] else 'failed',res.get('error',''),key,res['recipient'])

@@ -18,9 +18,49 @@ Only one llama-server may use 8080. `start-model.ps1` waits for a foreign listen
 opens a second port and never kills another process. `run-digest.ps1` stops only the server
 it started (pid file + command line carrying `--api-key`).
 
+The port wait is capped at **1800 s (30 min)** and then exits 75, recorded as
+`port 8080 stayed busy for 1800s; this run is deferred`. The old 28800 s default could never
+complete inside the task's 180-minute limit: it only made the run look hung and then be killed
+with a start line and no ending.
+
+## Analyzer backend
+
+Analysis is one HTTP client (`analyzer.LocalAnalyzer`) with two transports over the same
+contract. Two setups are known to work:
+
+| Backend | `OR_LLM_API_STYLE` | `OR_LLM_BASE_URL` | `OR_LLM_MODEL` | `OR_LLM_MAX_TOKENS` |
+|---|---|---|---|---|
+| Local llama-server (CPU-only) | `openai` | `http://127.0.0.1:8080/v1` | `Qwen3-30B-A3B-Instruct-2507-Q4_K_M` | `1400` |
+| cc-switch proxy, Claude Code route | `anthropic` | `http://127.0.0.1:15721/v1` | `claude-sonnet-5` | `4000` |
+
+`OR_LLM_API_STYLE` picks the wire protocol: `openai` posts to `{base}/chat/completions`,
+`anthropic` posts to `{base}/messages` (top-level `system`, `x-api-key` +
+`anthropic-version`, answer in `content` text blocks). The cc-switch proxy serves both, but
+only the Anthropic route is the one Claude Code itself uses; the proxy labels the other
+`Codex endpoint`, and it is not used here. Everything above the transport — prompt, parser,
+retries, failure causes — is shared, so the backend does not change what is asked or how the
+answer is checked.
+
+`run-digest.ps1` starts `start-model.ps1` only when `OR_LLM_BASE_URL` resolves to
+`127.0.0.1:8080`; with any other endpoint it logs `analyzer endpoint is external` and leaves
+the local model alone.
+
+**The token budget is not a per-backend preference.** On the proxy, the V7 system prompt
+spends ~1400-1800 reasoning tokens before any JSON is emitted, and long articles spend
+more. With `OR_LLM_MAX_TOKENS=1400` the completion came back empty and looked like a dead
+model; at 4000, 3 of 20 articles on 2026-11-08 still returned no text. Keep it at 8000.
+An empty answer is recorded as cause `empty_completion` (not a circuit-breaker cause) and
+retried once with double the budget before the article is counted as failed.
+
+Health: `health_ok` accepts both `{"status":"ok"}` (llama.cpp) and
+`{"status":"healthy"}` (the cc-switch proxy). Anything else is treated as a dead endpoint.
+
+Rollback to the local instance: restore `.env.bak-2026-11-08-local-qwen` over `.env`
+(`OR_MODEL_AUTOSTART=1` restarts the local server from the CLI if it is down).
+
 ## Daily task
 
-`OpportunityRadarDaily` runs at 08:00 and calls:
+`OpportunityRadarDaily` runs at 06:00 and calls:
 
 ```
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<project>\deploy\windows\run-digest.ps1"
@@ -33,6 +73,27 @@ economic engine reads today's observations), then runs
 post-analysis pipeline for isolated tests; `OR_CLAIM_PIPELINE_MAX_ARTICLES` (default 8)
 bounds how many new articles go through N0–N5 each run. The task has `StartWhenAvailable`,
 battery restrictions off, `MultipleInstances=IgnoreNew` and a **180-minute** execution limit.
+
+Launcher phases and their ceilings (all inside the 180-minute limit, 10200 s in total):
+
+| Phase | Wait | On expiry |
+|---|---|---|
+| docker | 600 s — starts Docker Desktop if the engine is down (`AutoStart=false` on this machine, so a reboot leaves it closed) | `LAUNCHER ERROR in phase docker` |
+| model | 2400 s (1800 s of port wait + 600 s cold load); `start-model` defers on a busy port after 1800 s | exit 75 recorded as deferred |
+| sources | 900 s | warning, digest continues |
+| cli | 6300 s | exit 124, `TIMEOUT` line |
+
+The CLI gets the largest share because a cold CPU-only run spent 55 minutes on 19 analyses
+alone on 2026-11-08, before the post-analysis pipeline; a 3600 s ceiling killed a run that was
+still working. Every analysed article now logs `Analyzed n of m article(s)`, and the CLI runs
+with `-u`, so a long run shows progress instead of an empty log.
+
+Each child script writes `reports\<phase>.out.log` / `.err.log` and is read back into
+`reports/scheduler-run.log` when it exits. Child output must never travel through a
+PowerShell pipeline (`| Out-String`): inheritable pipe handles reach grandchildren, and a
+`llama-server` holding the write end leaves the launcher waiting for an EOF that never comes.
+That was the 2026-11-04..11-07 failure, where every run left a start line, no ending, and an
+`launcher-inflight.json` marker that the next day reported.
 `--period auto` writes the daily brief, plus a weekly report every 7 days and a monthly
 report every 30 days (catch-up uses the last report's mtime).
 
@@ -57,7 +118,8 @@ Failure semantics:
 - Duplicate: report-hash idempotency per recipient, no second send.
 - HOLD sends neither subscription nor alert mail; the local report and `runs` row are kept.
 - A launcher killed from outside leaves `reports/launcher-inflight.json`; the next run
-  reports it.
+  reports it, including whether the recorded launcher pid was still alive (a hang) or gone
+  (a kill).
 
 ## Commands
 
@@ -100,8 +162,13 @@ Isolated stores:
 
 ## Reports and logs
 
-- `reports/latest-digest.{txt,html}`; archive `reports/archive/YYYY/MM/DD/` with text, HTML,
+- `reports/latest-digest.{txt,html}` is the complete report (with appendices);
+  `reports/latest-digest-email.{txt,html}` is the exact edition mailed. Admin resend reads the
+  email edition, never the full one.
+- Archive `reports/archive/YYYY/MM/DD/` keeps text, HTML, `*.email.txt`, `*.email.html`,
   `items.json` and `manifest.json`.
+- Appendix sections are also stored in SQLite `report_sections` keyed by report hash;
+  `GET /api/report/sections` returns the latest stored brief and appendices.
 - Weekly/monthly: `reports/weekly-*.txt|json`, `reports/monthly-*.txt|json`, archived under
   `reports/archive/`.
 - Quality: `reports/quality/latest.{json,md}`.

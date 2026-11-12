@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INSTALL = ROOT / 'deploy' / 'windows' / 'install-task.ps1'
 RUN = ROOT / 'deploy' / 'windows' / 'run-digest.ps1'
 SOURCES = ROOT / 'deploy' / 'windows' / 'run-sources.ps1'
+START_MODEL = ROOT / 'deploy' / 'windows' / 'start-model.ps1'
 
 
 def text_of(path):
@@ -73,7 +74,7 @@ class RunDigestTests(unittest.TestCase):
     def test_the_child_pid_is_written_before_waiting(self):
         text = text_of(RUN)
         marker_write = text.index('"cli_pid":')
-        wait = text.index('$proc.WaitForExit()')
+        wait = text.index('while (-not $proc.HasExited)', marker_write)
         self.assertLess(marker_write, wait,
                         'a terminated launcher must leave the pid of the process it left behind')
 
@@ -109,7 +110,7 @@ class SourceSyncTests(unittest.TestCase):
         self.assertIn('run-sources.ps1', text)
         self.assertLess(text.index('run-sources.ps1'), text.index("'opportunity_radar.cli'"),
                         'the economic engine must read sources synced by the same run')
-        body = text[text.index('$sourceOut'):text.index("$phase = 'cli'")]
+        body = text[text.index("Invoke-ChildScript -Name 'run-sources'"):text.index("$phase = 'cli'")]
         self.assertIn('WARNING: source sync reported', body)
         self.assertNotIn('throw', body, 'a source outage must not stop the digest')
 
@@ -128,6 +129,78 @@ class SourceSyncTests(unittest.TestCase):
         self.assertIn("'bls','--live'", text)
         self.assertIn("2 { 'not_configured' }", text)
         self.assertIn("default { 'failed' }", text)
+
+
+
+class LauncherBudgetTests(unittest.TestCase):
+    """Every wait is bounded and the bounds fit inside the task's 180-minute limit.
+
+    A TerminateProcess kill at 11:00 runs no finally block, so an unbounded wait is
+    indistinguishable from a hang: that is how 2026-11-04..11-07 lost four runs.
+    """
+
+    TASK_LIMIT_SECONDS = 180 * 60
+
+    def ceilings(self):
+        text = text_of(RUN)
+        pairs = re.findall(r'\$(\w+Seconds)\s*=\s*(\d+)', text)
+        return {name: int(value) for name, value in pairs}
+
+    def test_every_wait_is_numeric(self):
+        found = self.ceilings()
+        for name in ('DockerWaitSeconds', 'ModelPortWaitSeconds', 'ModelTimeoutSeconds',
+                     'SourcesTimeoutSeconds', 'CliTimeoutSeconds'):
+            self.assertIn(name, found, name)
+            self.assertGreater(found[name], 0, name)
+
+    def test_the_ceilings_fit_inside_the_task_limit(self):
+        found = self.ceilings()
+        total = (found['DockerWaitSeconds'] + found['ModelTimeoutSeconds']
+                 + found['SourcesTimeoutSeconds'] + found['CliTimeoutSeconds'])
+        self.assertLess(total, self.TASK_LIMIT_SECONDS,
+                        'the launcher must fail on its own before the task is killed')
+
+    def test_the_model_ceiling_contains_the_port_wait(self):
+        found = self.ceilings()
+        self.assertGreater(found['ModelTimeoutSeconds'], found['ModelPortWaitSeconds'])
+
+    def test_a_busy_port_is_reported_as_deferred(self):
+        text = text_of(RUN)
+        self.assertIn('-ExtraArgs "-MaxWaitSeconds $ModelPortWaitSeconds"', text)
+        self.assertIn('this run is deferred', text)
+        self.assertIn('$model.exit -eq 75', text)
+
+    def test_child_output_never_travels_through_a_pipeline(self):
+        text = text_of(RUN)
+        self.assertNotIn('& powershell.exe', text,
+                         'a pipeline hands grandchildren the write end and blocks on EOF forever')
+        self.assertIn('-RedirectStandardOutput $outFile -RedirectStandardError $errFile', text)
+
+    def test_a_child_holding_its_log_open_does_not_break_the_run(self):
+        # llama-server inherits the redirected handle, so the file is still open at read time.
+        text = text_of(RUN)
+        self.assertIn('FileShare]::ReadWrite', text)
+        self.assertNotIn('[IO.File]::ReadAllText(', text)
+
+    def test_the_engine_is_started_when_a_reboot_left_docker_closed(self):
+        text = text_of(RUN)
+        self.assertIn('Docker Desktop.exe', text)
+        self.assertIn('docker engine is not reachable', text)
+        self.assertIn('docker engine did not come up within', text)
+
+
+class StartModelTests(unittest.TestCase):
+    def test_the_port_wait_is_shorter_than_the_task_limit(self):
+        text = text_of(START_MODEL)
+        match = re.search(r'\[int\]\$MaxWaitSeconds\s*=\s*(\d+)', text)
+        self.assertIsNotNone(match, 'the port wait must be an explicit default')
+        self.assertLess(int(match.group(1)), 180 * 60,
+                        'a wait longer than the task limit can only end in a silent kill')
+
+    def test_giving_up_on_a_busy_port_is_its_own_exit_code(self):
+        text = text_of(START_MODEL)
+        self.assertIn('This run is deferred', text)
+        self.assertIn('exit 75', text)
 
 
 if __name__ == '__main__':

@@ -18,6 +18,14 @@ class HealthTests(unittest.TestCase):
             opener.return_value.__enter__.return_value = body
             self.assertTrue(model_service.health_ok(Settings.llm_base_url))
 
+    def test_healthy_status_is_accepted(self):
+        # The cc-switch proxy in front of DeepSeek answers {"status":"healthy"}; llama.cpp
+        # answers "ok". Reading only "ok" made a reachable endpoint look like a dead model.
+        body = io.BytesIO(b'{"status":"healthy"}')
+        with mock.patch.object(model_service, "urlopen") as opener:
+            opener.return_value.__enter__.return_value = body
+            self.assertTrue(model_service.health_ok(Settings.llm_base_url))
+
     def test_bad_payload_is_not_healthy(self):
         body = io.BytesIO(b"<html>no</html>")
         with mock.patch.object(model_service, "urlopen") as opener:

@@ -36,7 +36,7 @@ class Tests(unittest.TestCase):
   self.assertIn('招聘/企业动态',html)
  def test_includes_data_overview_charts(self):
   html=render_html([item()],stats(),'2026-10-20')
-  self.assertIn('数据概览',html);self.assertIn('处理漏斗',html);self.assertIn('<svg',html);self.assertIn('来源贡献',html)
+  self.assertIn('证据与方法',html);self.assertIn('处理漏斗',html);self.assertIn('<svg',html);self.assertIn('来源贡献',html)
 
 class ConflictBlockTests(unittest.TestCase):
  def test_the_conflict_block_renders_both_sides(self):
@@ -45,3 +45,15 @@ class ConflictBlockTests(unittest.TestCase):
  def test_no_block_without_conflicts(self):
   self.assertNotIn('数据冲突',render_html([item()],stats(),'2026-10-20'))
 
+
+
+class EmailEditionTests(unittest.TestCase):
+ def test_email_edition_has_no_appendix_cards(self):
+  html=render_html([item()],stats(),'2026-10-20',include_appendix=False)
+  self.assertIn('执行摘要',html)
+  self.assertNotIn('附录 A · 条目明细',html)
+  self.assertNotIn('class="card"',html)
+  self.assertIn('完整附录',html)
+ def test_full_edition_keeps_appendices(self):
+  html=render_html([item()],stats(),'2026-10-20')
+  self.assertIn('附录 A · 条目明细',html)

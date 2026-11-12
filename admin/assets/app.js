@@ -325,7 +325,7 @@ async function runDigest() {
 async function saveSchedule() {
   $('schedule-result').textContent = '正在注册…';
   try {
-    const d = await api('/api/schedule', 'POST', {start_time: $('schedule-time').value || '08:00'});
+    const d = await api('/api/schedule', 'POST', {start_time: $('schedule-time').value || '06:00'});
     $('schedule-result').textContent = d.output || '定时任务已注册';
     const sch = d.scheduler || {};
     if (sch.available) $('sched-state').textContent = `计划任务：${sch.state || '未知'} · 上次 ${sch.last_run || '—'} · 结果 ${sch.last_result ?? '—'} · 下次 ${sch.next_run || '—'}`;
