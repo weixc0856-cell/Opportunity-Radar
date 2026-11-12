@@ -31,7 +31,8 @@ class RenderOnlyRegressionTests(unittest.TestCase):
 
     def _render(self, db_path):
         env = {'OR_DB_PATH': str(db_path), 'OR_REPORT_DIR': str(self.report_dir),
-               'OR_LOG_PATH': str(self.tmp / 'render.log')}
+               'OR_LOG_PATH': str(self.tmp / 'render.log'),
+               'OR_DISCOVERY_ENABLED': '0', 'OR_YOUTUBE_ENABLED': '0'}
         with mock.patch.dict(os.environ, env, clear=False):
             from opportunity_radar.cli import main
             with mock.patch('sys.stdout') as out:

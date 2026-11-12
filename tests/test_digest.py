@@ -1,5 +1,5 @@
 import unittest
-from opportunity_radar.digest import render_digest, management_note
+from opportunity_radar.digest import render_digest, management_note, readiness_of, decision_request
 
 def item(status='watch',score=60,title='t',reason=''):
     return {'title':title,'url':'https://example.invalid/a','source_name':'s','analysis':{},'score':score,'status':status,
@@ -9,6 +9,19 @@ def news(status='priority',score=88,title='Acme raises guidance'):
     return {'title':title,'url':'https://example.invalid/n','source_name':'News','analysis':{},
             'score':score,'status':status,'filter_reason':'','evidence_level':'summary','evidence_state':'rss_excerpt_only',
             'classification':{'article_type':'funding','signal_type':'payment_demand','buyer_type':'enterprise_it'},'risk_flag':''}
+
+def validation_item(status='priority',score=80,title='real candidate'):
+    it=item(status,score,title)
+    it['evidence']=[{'id':'e1','quote':'q','field':'summary'}]
+    it['evidence_state']='rss_excerpt_only'
+    it['market_validation']='single_source'
+    it['classification']={'article_type':'user_pain','signal_type':'user_pain','pain_evidence':'repeated'}
+    it['analysis']={'actionability':'investigate','summary_zh':title,
+                    'facts':[{'ordinal':1,'text':'f','quote':'q','status':'located','evidence_id':'e1'}],
+                    'gaps':[{'missing':'m','why_it_matters':'w','how_to_close':'h'}],
+                    'actions':[{'step':'s','kind':'verify_fact','done_when':'d'}]}
+    return it
+
 
 LANE_WEIGHTS={
  'A':{'importance':25,'source_reliability':20,'evidence_completeness':20,'novelty':15,'relevance':10,'timeliness':10},
@@ -58,9 +71,9 @@ class Tests(unittest.TestCase):
   _,body=render_digest([],stats(fetched=10,new=2,updated=1,queued=3,analyzed=3,failed=1,skipped=7),'2026-10-20')
   self.assertIn('获取 10',body);self.assertIn('新增 2',body);self.assertIn('内容更新 1',body);self.assertIn('已有结果跳过 7',body)
  def test_conclusion_first(self):
-  _,body=render_digest([item('watch',62,'ParaView crinkle')],stats(fetched=10,analyzed=10),'2026-10-20')
+  _,body=render_digest([validation_item('watch',62,'ParaView crinkle')],stats(fetched=10,analyzed=10),'2026-10-20')
   head=body.split('一、执行摘要（核心判断）\n')[1].split('\n')[0].strip()
-  self.assertIn('建议集中核实',head);self.assertIn('ParaView crinkle',head)
+  self.assertIn('验证级',head);self.assertIn('不投入产品开发',head)
  def test_next_step_is_inline(self):
   it=item('watch',62,'ParaView crinkle'); it['analysis']={'suggested_next_step':'联系 3 位 ParaView 用户确认复现条件'}
   _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
@@ -111,7 +124,7 @@ class Tests(unittest.TestCase):
   self.assertIn('初判：用户报告了下载问题',body);self.assertNotIn('下载问题 none',body)
 
  def test_key_judgments_are_capped_at_four(self):
-  items=[item('priority',90-i,f'item {i}') for i in range(6)]
+  items=[validation_item('priority',90-i,f'item {i}') for i in range(6)]
   _,body=render_digest(items,stats(fetched=6,analyzed=6),'2026-10-20')
   block=body.split('二、关键判断\n')[1].split('三、建议行动')[0]
   self.assertEqual(block.count('KJ'),4)
@@ -157,9 +170,7 @@ class LegacyRecordTests(unittest.TestCase):
 class OutputConsistencyTests(unittest.TestCase):
  """Every surface must describe the same item the same way."""
  def _rich(self):
-  it=item('priority',80,'same item')
-  it['evidence']=[{'id':'e1','quote':'q','field':'summary'}]
-  it['evidence_state']='rss_excerpt_only'; it['market_validation']='single_source'
+  it=validation_item('priority',80,'same item')
   return it
  def test_brief_and_card_agree_on_evidence_and_validation(self):
   _,body=render_digest([self._rich()],stats(fetched=1,analyzed=1),'2026-10-20')
@@ -286,3 +297,112 @@ class EmailEditionTests(unittest.TestCase):
   self.assertEqual([k for k,_,_ in sections],['appendix_a','appendix_b','appendix_c'])
   self.assertTrue(sections[0][2].startswith('八、附录 A'))
   self.assertIn('十、附录 C',sections[2][2])
+
+
+class ReadinessTests(unittest.TestCase):
+ def test_existing_purchase_is_validation_not_decision(self):
+  it=validation_item('priority',80,'paid user complaint')
+  it['classification']['buyer_payment_evidence']='existing_purchase'
+  it['analysis']['actionability']='investigate'
+  self.assertEqual(readiness_of(it),'validation')
+
+ def test_explicit_budget_with_evidence_and_action_is_decision(self):
+  it=validation_item('priority',80,'budgeted buyer')
+  it['classification']['buyer_payment_evidence']='explicit_budget'
+  it['analysis']['actionability']='decide'
+  it['market_validation']='multi_source'
+  it['evidence_state']='full_text_verified'
+  self.assertEqual(readiness_of(it),'decision')
+
+ def test_same_family_coverage_is_not_independent_enough_for_a_decision(self):
+  it=validation_item('priority',80,'budgeted buyer')
+  it['classification']['buyer_payment_evidence']='explicit_budget'
+  it['analysis']['actionability']='decide'; it['evidence_state']='full_text_verified'
+  it['market_validation']='multi_source'
+  it['event']={'independent_corroboration':False,'source_families':['one-family'],
+               'independent_source_units':1,'members':[{},{}]}
+  self.assertEqual(readiness_of(it),'validation')
+
+ def test_two_source_families_with_budget_are_decision_grade(self):
+  it=validation_item('priority',80,'budgeted buyer')
+  it['classification']['buyer_payment_evidence']='explicit_budget'
+  it['analysis']['actionability']='decide'; it['evidence_state']='full_text_verified'
+  it['event']={'independent_corroboration':True,'source_families':['a','b'],
+               'independent_source_units':2,'members':[{},{}]}
+  self.assertEqual(readiness_of(it),'decision')
+
+ def test_title_only_signal_is_monitor(self):
+  it=validation_item('priority',80,'title only')
+  it['evidence']=[]; it['evidence_state']='title_only'
+  it['analysis']['facts']=[]
+  self.assertEqual(readiness_of(it),'monitor')
+
+ def test_single_forum_post_is_validation_when_pain_repeats(self):
+  it=validation_item('watch',60,'forum pain')
+  self.assertEqual(readiness_of(it),'validation')
+
+
+class DecisionSummaryTests(unittest.TestCase):
+ def test_no_decision_grade_item_says_so_before_detail(self):
+  _,body=render_digest([validation_item('watch',60)],stats(fetched=1,analyzed=1),'2026-10-20')
+  head=body.split('一、执行摘要（核心判断）\n')[1].split('\n')[0]
+  self.assertIn('没有决策级机会',head)
+  self.assertIn('不投入产品开发',head)
+
+ def test_decision_request_is_explicit_and_defaults_to_no_investment(self):
+  items=[validation_item('watch',60)]
+  request=decision_request(items,stats(fetched=1,analyzed=1))
+  self.assertIn('限时验证',request)
+  self.assertIn('默认不投入',request)
+
+ def test_verification_ledger_names_gap_and_stop_condition(self):
+  _,body=render_digest([validation_item('watch',60,'ledger candidate')],stats(fetched=1,analyzed=1),'2026-10-20')
+  ledger=body.split('验证台账（候选')[1]
+  self.assertIn('关键缺口',ledger)
+  self.assertIn('停止条件',ledger)
+  self.assertIn('不是市场规模或收入预测',ledger)
+
+ def test_risk_register_is_a_table_not_a_bullet_list(self):
+  _,body=render_digest([validation_item('watch',60)],stats(fetched=1,analyzed=1),'2026-10-20')
+  block=body.split('五、风险与反证\n')[1].split('六、监测清单')[0]
+  self.assertIn('风险 | 触发条件 | 影响 | 应对',block)
+  self.assertIn('单一来源',block)
+
+ def test_validation_records_are_shown_in_the_judgment_and_ledger(self):
+  it=validation_item('watch',60,'validated candidate')
+  it['validation']=[{'kind':'interview','result':'supports','note':'买方确认预算','recorded_at':'2026-11-12T00:00:00+00:00'}]
+  _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
+  self.assertIn('验证记录：访谈 / 支持',body)
+  self.assertIn('验证记录（最近）',body)
+  self.assertIn('买方确认预算',body)
+
+ def test_v9_executive_fields_override_fallbacks(self):
+  it=validation_item('watch',60,'v9 item')
+  it['analysis'].update({'action_title':'模型给出的完整执行标题',
+                         'so_what':'模型给出的决策含义。',
+                         'why_now':'本周发布新版本。',
+                         'kill_criteria':['两周内找不到第二来源']})
+  _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
+  self.assertIn('KJ1｜模型给出的完整执行标题',body)
+  self.assertIn('影响（so what）：模型给出的决策含义。',body)
+  self.assertIn('时效性：本周发布新版本。',body)
+  self.assertIn('停止条件：两周内找不到第二来源',body)
+
+
+class ProvenanceRenderingTests(unittest.TestCase):
+ def test_youtube_and_search_provenance_are_printed(self):
+  it=validation_item('watch',60,'provenance item')
+  it['youtube']={'channel':'Test Channel','transcript_kind':'auto',
+                 'excerpt_start':75.0,'excerpt_end':180.0}
+  it['discovery']={'provider':'google_news','query_id':'gnews-ai',
+                   'publisher':'Reuters','page_status':'not_attempted'}
+  s=stats(fetched=1,analyzed=1,
+          youtube={'candidates':2,'selected':1,'fetched':1,'analyzed':1,'skipped_reason':{}},
+          discovery={'queries':1,'candidates':3,'selected':1,'page_fetched':0,
+                     'page_skipped':0,'providers':{'google_news':3}})
+  _,body=render_digest([it],s,'2026-10-20')
+  self.assertIn('YouTube：Test Channel · 字幕 自动字幕',body)
+  self.assertIn('公开检索：google_news · gnews-ai',body)
+  self.assertIn('YouTube 字幕：候选 2',body)
+  self.assertIn('公开检索：查询 1',body)
+  self.assertIn('按 E1 上限处理',body)

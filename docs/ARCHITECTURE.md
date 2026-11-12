@@ -9,7 +9,9 @@
    (`evidence_state`); `lanes.py` routes the article to editorial lane A, B or C; `scoring.py`
    computes a deterministic per-lane ranking that is gated by the evidence state.
 7. `digest.py` renders two editions from one item set: the emailed brief (sections 1–7 plus an
-   appendix note) and the complete report with traceable appendices. `render_html.py` follows the
+   appendix note) and the complete report with traceable appendices. Before rendering it computes
+   a deterministic readiness level per item (decision / validation / monitor); only the first two
+   may lead, and `existing_purchase` alone never supports a decision. `render_html.py` follows the
    same split; `Store.save_report_sections` keeps appendices in SQLite by report hash.
 8. `email_sender.py` sends SMTP mail using the brief edition only.
 9. SQLite stores analysis and run records.
@@ -143,3 +145,15 @@ RSS content is untrusted input and may contain prompt injection. The model has n
     unconfirmed event-candidate links; both digest editions print them in “待观察信号”.
     This changes no score, no gate and no stored row — a weak signal is kept and shown, not
     promoted.
+
+23. `youtube_source.py` is an opt-in interview channel. It reads public metadata and
+    creator/auto subtitles, keeps the full subtitle file under `data/youtube/`, and passes a
+    bounded keyword-selected excerpt through the same analysis pipeline. A YouTube item is
+    E1: a subtitle quote is located, but no reviewer has declared the video full-text.
+    `--youtube-check` probes one URL; `config/youtube_sources.json` is local and approved-only.
+
+24. `web_discovery.py` is the public-search channel. Google News RSS, GDELT, NewsAPI, Brave
+    and Guardian return headline/snippet/link metadata; optional page fetching goes through
+    `fulltext.FullTextFetcher` and therefore obeys robots.txt, same-host redirects, 401/403/429
+    and paywall stops. Results are attributed to the publisher in `source_name` and to the
+    query in `source_id`; they are discovery aids, not independent corroboration.

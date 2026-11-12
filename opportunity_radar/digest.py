@@ -3,7 +3,7 @@ from collections import Counter
 from datetime import datetime
 from .analytics import funnel,source_breakdown,evidence_breakdown,denominator_note,lane_breakdown
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL, summarize
-from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES, state_of
+from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES, state_of, rank_of
 from .publication import disclosure, headline_notice
 from .unified import (EVENT_CONTEXT_AVAILABLE, EVENT_CONTEXT_LABEL)
 from .lanes import LANES, LANE_LABEL, LANE_PROMISE, item_lane as _lane
@@ -104,6 +104,15 @@ def event_context_line(item):
         return ''
     return (f'   事件上下文：{note}；文章证据等级 {_evidence_text(item)} '
             '不是事件级核验结论')
+
+
+def _clock(seconds):
+    total=max(0,int(float(seconds or 0)))
+    return f'{total//3600:02d}:{(total%3600)//60:02d}:{total%60:02d}'
+
+
+def _transcript_label(kind):
+    return {'manual':'人工字幕','auto':'自动字幕','whisper':'本地转写'}.get(str(kind or ''),str(kind or '字幕'))
 
 
 def _locator_text(raw):
@@ -232,29 +241,27 @@ def decision_headline(items,stats):
     return headline_notice(stats)+_decision_body(items,stats)
 
 def _decision_body(items,stats):
-    visible=_shown(items); pri=[x for x in visible if x.get('status')=='priority']; watch=[x for x in visible if x.get('status')=='watch']
+    """The headline is a decision statement, not a reading-list recommendation."""
+    visible=_shown(items); counts=_readiness_counts(items)
     deferred=_deferred(items)
-    if pri:
-        # Name something the brief will actually argue for. A priority item with no
-        # commercial edge is a high score, not a recommendation.
-        pick=next((x for x in sorted(pri,key=_pool_key) if _has_commercial_edge(x)),None)
-        if pick:
-            return f"本期筛选出 {len(pri)} 条达到验证门槛的信号，建议优先核实《{pick['title']}》。"
-        edge=sorted([x for x in _shown(items) if _has_commercial_edge(x)],key=_pool_key)
-        if edge:
-            return (f"本期筛选出 {len(pri)} 条达到验证门槛的信号，但均无付费或采购证据；"
-                    f"建议先核实《{edge[0]['title']}》。")
-        return f"本期筛选出 {len(pri)} 条达到验证门槛的信号，建议优先核实《{_top(pri)['title']}》。"
-    if watch:
-        return f"本期尚未发现经过验证的付费机会，建议集中核实一项：{_top(watch)['title']}。"
-    if deferred and (watch or pri):
-        return f"本期筛选出 {len(pri)} 条优先、{len(watch)} 条观察信号，另有 {len(deferred)} 条受来源单期配额限制未进入阅读区，详见附录。"
-    if deferred: return f"本期有 {len(deferred)} 条达到观察或验证门槛，但受来源单期配额限制未进入阅读区，详见附录。"
-    if not stats.get('fetched',stats.get('article_count',0)): return '本轮未获取到新内容，无法形成商业判断。'
-    # A failed analysis is not "nothing new". Check it first, or a run in which every new
-    # article failed prints "no new analysis tasks" while the stats line says "failed 5".
-    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('failed',stats.get('error_count',0))>0: return '本轮分析未完成，暂不形成商业判断。'
-    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('skipped',0)>0: return '本轮没有新增分析任务，结论沿用已有结果；不代表没有机会。'
+    if not stats.get('fetched',stats.get('article_count',0)):
+        return '本轮未获取到新内容，无法形成商业判断。'
+    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('failed',stats.get('error_count',0))>0:
+        return '本轮分析未完成，暂不形成商业判断。'
+    if stats.get('analyzed',stats.get('analyzed_count',0))==0 and stats.get('skipped',0)>0:
+        return '本轮没有新增分析任务，结论沿用已有结果；不代表没有机会。'
+    if counts['decision']:
+        pick=next((x for x in _judgment_pool(items) if readiness_of(x)=='decision'),None)
+        name=f'，首项为《{_one_line(pick.get("title",""),40)}》' if pick else ''
+        return f'本期出现 {counts["decision"]} 条决策级信号{name}；建议进入投入/不投入决策。'
+    if counts['validation']:
+        return (f'本期没有决策级机会；{counts["validation"]} 条达到验证级，建议限时验证，'
+                '先补齐付费与独立来源证据，不投入产品开发。')
+    if deferred and not visible:
+        return f'本期有 {len(deferred)} 条达到观察或验证门槛，但受来源单期配额限制未进入阅读区，详见附录。'
+    if visible:
+        return (f'本期入选 {len(visible)} 条，但没有达到验证级的信号；'
+                '建议维持监测，不投入产品开发。')
     return '本期没有信号通过筛选门槛，建议维持观察。'
 
 def management_note(items):
@@ -450,6 +457,14 @@ def _card(i,x):
     if not v5:
         lines+=[f"   关键未知：{unknown}",
                 f"   下一步观察：{a.get('suggested_next_step','人工复核')}"]
+    yt=x.get('youtube') or {}
+    if yt:
+        lines.append(f"   YouTube：{yt.get('channel') or x.get('source_name','')} · 字幕 {_transcript_label(yt.get('transcript_kind'))}"
+                     f" · 节选 {_clock(yt.get('excerpt_start'))}–{_clock(yt.get('excerpt_end'))} · 全文字幕已存档")
+    disc=x.get('discovery') or {}
+    if disc:
+        lines.append(f"   公开检索：{disc.get('provider','')} · {disc.get('query_id','')}"
+                     f" · 出版方 {disc.get('publisher','')} · 页面 {disc.get('page_status','not_attempted')}")
     lines.append(f"   来源：{x.get('source_name','Unknown')} · {x.get('url','')}")
     return lines
 
@@ -469,8 +484,24 @@ def _one_line(value,limit=60):
     return text[:limit-1]+'…'
 
 def _action_title(x):
-    """A conclusion, not a topic label. The model's summary already states one."""
-    return _one_line((x.get('analysis') or {}).get('summary_zh') or x.get('title',''),56)
+    """A complete conclusion sentence, not a topic label cut mid-clause.
+
+    MBB action titles are sentences. The model's summary is already a conclusion; take its
+    first sentence and only truncate at a punctuation boundary when it is genuinely long.
+    An optional `action_title` field (prompt v9) overrides the summary when present.
+    """
+    a=x.get('analysis') or {}
+    text=_one_line(str(a.get('action_title') or '').strip() or a.get('summary_zh') or x.get('title',''),400)
+    if not text: return ''
+    for sep in ('。','；'):
+        cut=text.find(sep)
+        if cut>=8:
+            text=text[:cut]; break
+    if len(text)>76:
+        boundary=max(text.rfind('，',0,76),text.rfind('：',0,76))
+        # A clause boundary is a complete title; only a mid-clause cut gets an ellipsis.
+        text=(text[:boundary] if boundary>=38 else text[:76]+'…').rstrip('，；：')
+    return text.strip('，；： ')
 
 def _evidence_basis(x):
     cls=x.get('classification',{})
@@ -483,10 +514,22 @@ def _evidence_basis(x):
     return ' · '.join(parts)
 
 def _confidence(x):
-    """The model's confidence, downgraded where the evidence cannot carry it."""
+    """Model confidence, capped by what the evidence can actually carry.
+
+    The cap names the binding constraint, so a reader can see why a high model confidence
+    became medium. No single source can carry a high-confidence conclusion.
+    """
     raw=_confidence_label((x.get('analysis') or {}).get('confidence'))
     if raw=='—': return '未评估'
-    if raw=='高' and _market(x)!='buyer_confirmed': return '中（单一来源，未独立佐证）'
+    rank=rank_of(_state(x)); market=_market(x); quality=(x.get('classification') or {}).get('source_quality')
+    cap,reason='高',''
+    if rank=='E0': cap,reason='低','证据只到标题或引文无法定位'
+    elif market=='single_source': cap,reason='中','单一来源'
+    elif quality in {'secondhand_report','vendor_marketing'}: cap,reason='中','二手报道或卖方自述'
+    elif market!='buyer_confirmed': cap,reason='中','未获买方确认'
+    order={'低':0,'中':1,'高':2}
+    if order.get(raw,0)>order.get(cap,2):
+        return f'{cap}（{reason}）'
     return raw
 
 def _implication(x):
@@ -494,7 +537,7 @@ def _implication(x):
     a=x.get('analysis',{}); cls=x.get('classification',{}); lane=_lane(x); comp=x.get('components') or {}
     buyer=BUYER_LABEL.get(cls.get('buyer_type'),'未知买方')
     if lane=='B':
-        pain=_one_line(a.get('pain_point'),48) or '未描述具体问题'
+        pain=_one_line(a.get('pain_point'),80) or '未描述具体问题'
         pay=PAY_LABEL.get(cls.get('buyer_payment_evidence',cls.get('payment_evidence')),'无证据')
         delivery=DELIVERY_LABEL.get(cls.get('delivery_fit'),'未评估')
         subject='' if buyer in ('未知买方','未知','') else buyer
@@ -542,37 +585,256 @@ def _pool_key(x):
     actionability=str((x.get('analysis') or {}).get('actionability') or '').lower()
     return (ACTION_RANK.get(actionability,5),LANE_RANK.get(_lane(x),3),_order_key(x))
 
+PAY_DECISION={'explicit_budget'}
+PAY_VALIDATION={'explicit_budget','existing_purchase','stated_willingness'}
+READINESS_LABEL={'decision':'决策级','validation':'验证级','monitor':'观察级'}
+READINESS_ORDER={'decision':0,'validation':1,'monitor':2}
+READINESS_MEANING={
+ 'decision':'有明确预算与可定位证据，可以进入投入/不投入决策。',
+ 'validation':'有商业信号但缺付费或独立佐证，只适合限时验证，不足以支持投入。',
+ 'monitor':'信号不足或不改变行动，维持监测。',
+}
+ACTIONABILITY_LABEL={'none':'无','monitor':'监测','investigate':'调查','decide':'决策','act':'行动',
+                     'missing':'未记录','invalid':'无效'}
+
+
+def _located_facts(x):
+    return sum(1 for f in (x.get('analysis') or {}).get('facts') or []
+               if isinstance(f,dict) and f.get('status')=='located')
+
+
+def _pay_evidence(x):
+    cls=x.get('classification') or {}
+    return str(cls.get('buyer_payment_evidence') or cls.get('payment_evidence') or '')
+
+
+def _independent_corroboration(x):
+    """Independent corroboration means different source families, not different URLs.
+
+    When the event layer is present, it is authoritative: two outlets in one family or a
+    recognised syndication group are coverage, not corroboration. Without event context we
+    fall back to the stored market label and say so in the readiness reason.
+    """
+    event=x.get('event') or {}
+    if event:
+        units=event.get('independent_source_units',event.get('corroborating_units'))
+        families=event.get('source_families') or []
+        if event.get('independent_corroboration') is not True:
+            return False
+        if units is not None and int(units or 0)<2:
+            return False
+        return len(families)>=2
+    return _market(x) in {'multi_source','buyer_confirmed'}
+
+
+def readiness_of(x):
+    """How far this item can carry a decision, using structured fields only.
+
+    'existing_purchase' proves a budget exists somewhere, not that it is available to us;
+    only 'explicit_budget' can support a decision-grade item. This keeps a user complaint
+    about a product they already pay for out of the investment recommendation.
+    """
+    a=x.get('analysis') or {}; cls=x.get('classification') or {}
+    pay=_pay_evidence(x); rank=rank_of(_state(x)); located=_located_facts(x)
+    action=str(a.get('actionability') or '').lower()
+    pain_ev=str(cls.get('pain_evidence') or '')
+    if (pay in PAY_DECISION and rank=='E2' and located>0
+            and action in {'act','decide'} and _independent_corroboration(x)):
+        return 'decision'
+    if (_has_commercial_edge(x) and rank in {'E1','E2'} and located>0
+            and (action in {'act','decide','investigate'} or pain_ev=='repeated'
+                 or pay in PAY_VALIDATION)):
+        return 'validation'
+    return 'monitor'
+
+
+def readiness_reason(x):
+    """The binding fact behind the readiness label, not a general caveat."""
+    a=x.get('analysis') or {}; cls=x.get('classification') or {}
+    pay=_pay_evidence(x); rank=rank_of(_state(x)); located=_located_facts(x)
+    action=str(a.get('actionability') or '').lower()
+    pain_ev=str(cls.get('pain_evidence') or '')
+    ready=readiness_of(x)
+    if ready=='decision':
+        event=x.get('event') or {}
+        units=event.get('independent_source_units',event.get('corroborating_units'))
+        families=len(event.get('source_families') or []) if event else 0
+        detail=(f'独立来源单元 {units} 个 · 来源族 {families} 个' if event else
+                f'独立佐证 {MARKET_LABEL.get(_market(x),_market(x))}')
+        return f'明确预算 · {rank} · {located} 条可定位事实 · {detail}'
+    if ready=='validation':
+        if pay=='existing_purchase':
+            return '已为其他产品付费（预算存在的弱证据），尚不能证明会为我们的方案付费'
+        if pay=='stated_willingness':
+            return '表达了付费意愿，但尚无采购或预算证据'
+        if action in {'act','decide','investigate'}:
+            return f'可执行性 {ACTIONABILITY_LABEL.get(action,action)} · {rank} · {located} 条可定位事实'
+        if pain_ev=='repeated':
+            return f'同类痛点重复出现 · {rank} · {located} 条可定位事实'
+        return '有商业信号，但证据不足以支持投入'
+    if rank=='E0':
+        return '证据只到标题或引文无法定位'
+    if not _has_commercial_edge(x):
+        return '没有客户、预算、价格或采购迹象'
+    if _market(x)=='single_source':
+        return '单一来源，未获独立佐证'
+    return '缺少可执行动作或验证路径'
+
+
+def _readiness_counts(items):
+    visible=_shown(items)
+    return {key:sum(1 for x in visible if readiness_of(x)==key) for key in READINESS_ORDER}
+
+
+def decision_request(items,stats):
+    """What the reader is asked to decide today, stated before any detail."""
+    counts=_readiness_counts(items)
+    if stats.get('coverage') is not None and stats['coverage']<1:
+        return '先完成缺失分析并确认覆盖率，本期不据此作投入决定；已入选条目仅作线索保留。'
+    if counts['decision']:
+        return (f"建议对 {counts['decision']} 条决策级信号作出投入/不投入决定；"
+                f"{counts['validation']} 条验证级候选按台账限时验证。")
+    if counts['validation']:
+        return (f'建议批准 {counts["validation"]} 条验证级候选进入限时验证（2 周），'
+                '先确认付费意愿与独立来源；其余维持监测。若不批准，默认不投入。')
+    return '本期没有达到验证级的信号，建议维持监测，不投入产品开发。'
+
+
+def decision_implication(x):
+    """The 'so what for the reader's decision', not a restatement of the article."""
+    custom=str((x.get('analysis') or {}).get('so_what') or '').strip()
+    if custom: return custom
+    ready=readiness_of(x)
+    if ready=='decision':
+        return '已有明确预算与可定位证据，足以进入投入/不投入决策；决策前确认预算归属、采购时点与验收标准。'
+    if ready=='validation':
+        return '信号支持限时验证，但不足以支持投入；先用一次小规模访谈或试用确认付费意愿、重复频率和决策人。'
+    return '仅作监测线索，不改变当前行动。'
+
+
+def _capability_fit(x):
+    cls=x.get('classification') or {}
+    buyer=cls.get('buyer_type'); delivery=cls.get('delivery_fit')
+    if buyer=='engineering_team' and delivery in {'custom_tool','service'}:
+        return '工程团队 + 定制工具，与你既有的工程验证背景重叠最高。'
+    if buyer in {'smb','enterprise_it'}:
+        return f'{BUYER_LABEL.get(buyer,buyer)}，需要销售/采购路径；与现有工程背景的匹配度中等。'
+    return ''
+
+
+def _stop_condition(x):
+    custom=[c for c in (x.get('analysis') or {}).get('kill_criteria') or [] if str(c).strip()]
+    if custom: return _one_line(custom[0],80)
+    if readiness_of(x)=='decision':
+        return '若预算归属、采购时点或验收标准不成立，否决该机会。'
+    gaps=[g for g in (x.get('analysis') or {}).get('gaps') or []
+          if isinstance(g,dict) and g.get('missing')]
+    if gaps:
+        return f'若「{_one_line(gaps[0]["missing"],36)}」在验证期内无法确认，停止投入并降级观察。'
+    return '若 2 周内没有独立来源或付费证据，停止投入并降级观察。'
+
+
+def _next_step(x):
+    for action in (x.get('analysis') or {}).get('actions') or []:
+        if not isinstance(action,dict): continue
+        step=_one_line(action.get('step'),64)
+        if not step: continue
+        done=_one_line(action.get('done_when'),64)
+        return step, done
+    return '', ''
+
+
 def _judgment_pool(items):
-    """Items that may lead: commercial edge first, ordered by what can be acted on."""
-    return sorted([x for x in _shown(items) if _has_commercial_edge(x)],key=_pool_key)
+    """Items that may lead: only decision-grade or validation-grade signals.
+
+    A single forum post, a product launch or a high editorial score with no located
+    evidence is not a key judgment. It stays visible in the monitor layer instead.
+    """
+    return sorted([x for x in _shown(items) if readiness_of(x) in {'decision','validation'}],key=_pool_key)
+
+
+def _decision_label(x):
+    ready=readiness_of(x)
+    if ready=='decision': return '进入投入/不投入决策'
+    if ready=='validation': return '限时验证（默认 2 周），不做投入'
+    return '维持监测'
+
 
 def _key_judgments(items):
-    """Three to five conclusions. With no commercial edge, the brief says so instead."""
+    """Three to five decision-relevant conclusions, each with a stop condition."""
     ranked=_judgment_pool(items)[:KJ_LIMIT]
     lines=[]
     if not ranked:
-        lines.append('  本期入选条目的分析结论均为「无商业信号」：没有客户、预算、价格或采购迹象。')
-        lines.append('  因此本节不设关键判断；条目仍保留在附录 A 供追溯，不作为行动依据。')
+        visible=sorted(_shown(items),key=_pool_key)
+        lines.append('  本期没有达到验证级的判断：没有一条同时具备商业信号、可定位证据和可执行路径。')
+        if visible:
+            lines.append('  以下为观察级线索，仅用于监测，不构成建议：')
+            for x in visible[:3]:
+                lines.append(f'    · {_one_line(_action_title(x),48)}（{readiness_reason(x)}）')
+        else:
+            lines.append('  本期没有入选条目，无法形成判断。')
         return lines
     for i,x in enumerate(ranked,1):
-        summary=_one_line((x.get('analysis') or {}).get('summary_zh') or x.get('title',''),140)
-        lines+=[f'  KJ{i}｜{_action_title(x)}',
+        summary=_one_line((x.get('analysis') or {}).get('summary_zh') or x.get('title',''),160)
+        step,done=_next_step(x)
+        lines+=[f'  KJ{i}｜{_action_title(x)}  [{READINESS_LABEL[readiness_of(x)]}]',
                 f'       判断：{summary}',
-                f'       依据：{_evidence_basis(x)}']
+                f'       依据：{_evidence_basis(x)}',
+                f'       就绪度：{readiness_reason(x)}']
         implication=_implication(x)
-        if implication: lines.append(f'       影响：{implication}')
+        if implication: lines.append(f'       业务含义：{implication}')
+        lines.append(f'       影响（so what）：{decision_implication(x)}')
+        lines.append(f'       决策建议：{_decision_label(x)}')
+        why_now=str((x.get('analysis') or {}).get('why_now') or '').strip()
+        if why_now and why_now.lower() not in {'unknown','none','n/a','无','未知'}:
+            lines.append(f'       时效性：{why_now}')
+        fit=_capability_fit(x)
+        if fit: lines.append(f'       能力匹配：{fit}')
+        lines.append(f'       停止条件：{_stop_condition(x)}')
+        if step:
+            lines.append(f'       下一步：{step}'+(f'（完成标准：{done}）' if done else ''))
+        records=x.get('validation') or []
+        if records:
+            latest=records[0]
+            lines.append(f"       验证记录：{VALIDATION_KIND_LABEL.get(latest.get('kind'),latest.get('kind') or '')}"
+                         f" / {VALIDATION_RESULT_LABEL.get(latest.get('result'),latest.get('result') or '')}"
+                         + (f" · {_one_line(latest.get('note'),48)}" if latest.get('note') else ''))
         lines.append(f'       置信度：{_confidence(x)}')
+    counts=_readiness_counts(items)
     rest=len(_shown(items))-len(ranked)
     if rest>0:
-        lines.append(f'  另有 {rest} 条入选条目没有可识别的商业信号（评测、预告、纯技术动态），'
-                     '保留在附录 A 供追溯，不进入行动层。')
+        extra=max(0,counts['validation']-len(ranked))
+        if extra:
+            lines.append(f'  另有 {rest} 条未进入判断层（验证级 {extra} 条受条数上限、'
+                         f'观察级 {counts["monitor"]} 条），保留在附录 A 供追溯。')
+        else:
+            lines.append(f'  另有 {counts["monitor"]} 条观察级条目未进入判断层，保留在附录 A 供追溯。')
     return lines
 
-def _next_actions(items):
-    """The actions the analysis already proposed. Nothing is invented for the table.
+VALIDATION_KIND_LABEL={'interview':'访谈','pricing':'定价/付费','buyer':'买方','decision':'决策','other':'其他'}
+VALIDATION_RESULT_LABEL={'supports':'支持','contradicts':'反证','unknown':'未知'}
 
-    Each row cites the key judgment it serves (KJ1) rather than repeating that judgment's
-    full sentence, which is what made the table unreadable.
+
+def _validation_rows(items):
+    rows=[]
+    for x in _judgment_pool(items)[:6]:
+        for record in (x.get('validation') or [])[:2]:
+            rows.append((_one_line(_action_title(x),26),
+                         VALIDATION_KIND_LABEL.get(record.get('kind'),record.get('kind') or ''),
+                         VALIDATION_RESULT_LABEL.get(record.get('result'),record.get('result') or ''),
+                         _one_line(record.get('note'),40) or '—',
+                         str(record.get('recorded_at') or '')[:10]))
+    return rows
+
+
+ACTION_WHEN={'verify_fact':'本周','contact_sales':'2 周内','test_product':'2-4 周',
+             'make_decision':'本期复盘前','monitor_trend':'持续'}
+
+def _next_actions(items):
+    """The actions the analysis already proposed, with a suggested time box.
+
+    Nothing is invented for the table. Each row cites the key judgment it serves (KJ1)
+    rather than repeating that judgment's full sentence.
     """
     pool=_judgment_pool(items)
     kj={id(x):i for i,x in enumerate(pool[:KJ_LIMIT],1)}
@@ -584,7 +846,9 @@ def _next_actions(items):
             step=_one_line(action.get('step'),70)
             if not step or step in seen: continue
             seen.add(step)
-            rows.append((step,_one_line(action.get('done_when'),50) or '—',basis))
+            kind=str(action.get('kind') or '')
+            rows.append((step,_one_line(action.get('done_when'),50) or '—',basis,
+                         ACTION_WHEN.get(kind,'待定'),'待指派'))
             if len(rows)>=ACTION_LIMIT: return rows
     return rows
 
@@ -601,25 +865,68 @@ def _hypotheses(items):
             if len(rows)>=4: return rows
     return rows
 
-def _risks(items):
-    """What would falsify this issue: single sources, unlocated quotes, open gaps."""
+def _risk_rows(items,stats=None):
+    """A risk register a reader can act on: risk, trigger, impact, response."""
     rows=[]
     visible=_shown(items)
     single=[x for x in visible if _market(x)=='single_source']
     if single:
-        rows.append(f'单一来源：{len(single)} 条判断只有 1 个来源，未获独立佐证，不得当作已验证结论。')
+        rows.append((f'单一来源（{len(single)} 条）','没有第二个独立来源',
+                     '不能当作已验证结论，也不能支持投入决策','先找第二来源或买方确认'))
+    strong=sum(1 for x in visible if _pay_evidence(x) in PAY_STRONG)
+    if visible and strong==0:
+        rows.append(('无付费或采购证据','未出现预算、价格或采购记录',
+                     '不能证明有人愿意为解决方案付费','限时验证付费意愿与预算归属'))
     unlocated=sum(1 for x in items for f in (x.get('analysis') or {}).get('facts') or []
                   if isinstance(f,dict) and f.get('status')!='located')
     if unlocated:
-        rows.append(f'引文未定位：{unlocated} 条事实无法在原文中定位，已从事实层移出。')
-    for x in sorted(visible,key=_order_key)[:3]:
+        rows.append((f'引文未定位（{unlocated} 条事实）','引文在原文中找不到',
+                     '已从事实层移出，不能作为依据','回查原文或降到推断层'))
+    shown_gaps=0
+    for x in sorted(visible,key=_order_key):
         gaps=[g for g in (x.get('analysis') or {}).get('gaps') or []
               if isinstance(g,dict) and g.get('missing')]
-        if gaps:
-            short=_one_line(x.get('title',''),28)
-            rows.append(f'证据缺口（{short}）：{_one_line(gaps[0].get("missing"),50)}')
-    if not rows: rows.append('本期没有记录到会推翻现有判断的反证；这表示证据没有被检验过，不等于证据可靠。')
+        if not gaps: continue
+        gaps=gaps[0]
+        rows.append((f'证据缺口：{_one_line(x.get("title",""),24)}',
+                     _one_line(gaps.get('missing'),44),
+                     _one_line(gaps.get('why_it_matters'),44) or '会影响判断是否成立',
+                     _one_line(gaps.get('how_to_close'),44) or '补充一手来源或访谈'))
+        shown_gaps+=1
+        if shown_gaps>=3: break
+    if not rows:
+        rows.append(('未记录到反证','当前证据没有被检验','不等于证据可靠','继续监测并主动寻找反证'))
     return rows
+
+def _risks(items):
+    """Text bullet view of the same risk register."""
+    return [f'{risk}：{impact}；触发条件：{trigger}；应对：{response}'
+            for risk,trigger,impact,response in _risk_rows(items)]
+
+
+def _quantified_text(x):
+    claims=[c for c in (x.get('analysis') or {}).get('claims') or [] if isinstance(c,dict)]
+    numbers=[c for c in claims if c.get('value_num') is not None]
+    if not numbers: return '无商业量化（仅定性）'
+    first=numbers[0]
+    detail=_one_line(first.get('value_text') or first.get('predicate') or '',24)
+    return f'{len(numbers)} 条文中数字'+(f'（如 {detail}）' if detail else '')
+
+
+def _verification_rows(items):
+    """The validation ledger: what is ready, what is missing, how it closes, when to stop."""
+    rows=[]
+    for x in _judgment_pool(items)[:6]:
+        gaps=[g for g in (x.get('analysis') or {}).get('gaps') or []
+              if isinstance(g,dict) and g.get('missing')]
+        gap=gaps[0] if gaps else {}
+        rows.append((_one_line(_action_title(x),30),READINESS_LABEL[readiness_of(x)],
+                     _quantified_text(x),
+                     _one_line(gap.get('missing'),36) or '未记录关键缺口',
+                     _one_line(gap.get('how_to_close'),40) or '补充一手来源或访谈',
+                     _one_line(_stop_condition(x),44)))
+    return rows
+
 
 def _watch_rows(items):
     """Watch-list rows: subject, the trigger that would change the judgment, current score."""
@@ -707,21 +1014,72 @@ def render_digest(items,stats,date_label=None,include_appendix=True):
     lines += ['','一、执行摘要（核心判断）','  '+decision_headline(items,stats)]
     note=management_note(items)
     if note: lines.append('  '+note)
+    lines.append('  决策请求：'+decision_request(items,stats))
+    lane_counts=Counter(_lane(x) for x in shown)
+    watch_lanes=[f'{LANE_LABEL[l]} {lane_counts[l]} 条' for l in ('A','C') if lane_counts.get(l)]
+    if watch_lanes:
+        lines.append('  战略/技术情报：'+'，'.join(watch_lanes)+'，只用于跟踪，不进入机会决策。')
+    preview=_judgment_pool(items)[:3]
+    if preview:
+        lines.append('  本期判断：')
+        for i,x in enumerate(preview,1):
+            lines.append(f'   {i}. {_action_title(x)}（{READINESS_LABEL[readiness_of(x)]}）')
+    else:
+        lines.append('  本期判断：无达到验证级的判断；观察级线索见第六节与附录 A。')
+    preview_actions=_next_actions(items)[:3]
+    if preview_actions:
+        lines.append('  建议行动：')
+        for i,(step,_done,_base,when,_owner) in enumerate(preview_actions,1):
+            lines.append(f'   {i}. {step}（{when}）')
+    preview_risks=_risk_rows(items)[:2]
+    if preview_risks:
+        lines.append('  主要风险：'+'；'.join(f'{risk} → {response}' for risk,_t,_i,response in preview_risks))
+    lines.append('  下次复盘：下一期日报；若出现独立来源或付费证据，提前升级为验证/决策议题。')
 
     lines += ['','二、关键判断',
-              '  按可执行性、通道与信号分排序；每条只回答一个问题：这条信息是否改变我们的行动。']
+              '  按可执行性、通道与信号分排序；每条只回答一个问题：这条信息是否改变我们的行动。',
+              '  就绪度口径：决策级=明确预算 + E2 + 可定位事实 + 可执行；验证级=商业信号 + E1/E2 +'
+              ' 可定位事实 +（可执行或重复痛点）；其余为观察级。']
     lines += _key_judgments(items)
 
     actions=_next_actions(items)
-    lines += ['','三、建议行动']
+    readiness=_readiness_counts(items)
+    lines += ['','三、建议行动与验证台账','   决策选项：']
+    if readiness['decision']:
+        lines += ['   A. 进入决策（建议）：对决策级信号作投入/不投入判断，并确认预算归属与采购时点。',
+                  '   B. 仅验证：先补齐独立来源与验收标准。',
+                  '   C. 维持监测：不投入。']
+    elif readiness['validation']:
+        lines += [f'   A. 批准验证（建议）：{readiness["validation"]} 条验证级候选'
+                  + ('进入限时验证（2 周）' if readiness['validation']==1 else '各限时 2 周')
+                  + '，先确认付费意愿与独立来源。',
+                  '   B. 仅监测：不投入，等待下一期。',
+                  '   C. 放弃本期候选。']
+    else:
+        lines += ['   A. 维持监测（建议）：本期没有验证级候选。',
+                  '   B. 扩大来源或提高抓取量，等待下一期。']
     if actions:
-        lines.append('   序号  行动 | 完成标准 | 依据')
-        for i,(step,done,base) in enumerate(actions,1):
+        lines.append('   序号  行动 | 完成标准 | 依据 | 建议时限 | 负责人')
+        for i,(step,done,base,when,owner) in enumerate(actions,1):
             lines.append(f'   {i}. {step}')
-            lines.append(f'      完成标准：{done}')
+            lines.append(f'      完成标准：{done} · 建议时限：{when} · 负责人：{owner}')
             lines.append(f'      依据：{base}')
     else:
         lines.append('   本期没有达到可执行程度的条目；维持监测，不启动新动作。')
+    ledger=_verification_rows(items)
+    lines += ['','   验证台账（候选 / 就绪度 / 已量化 / 关键缺口 / 关闭方式 / 停止条件）']
+    if ledger:
+        lines.append('   候选 | 就绪度 | 已量化 | 关键缺口 | 关闭方式 | 停止条件')
+        for row in ledger:
+            lines.append('   '+' | '.join(row))
+        lines.append('   注：已量化指文中出现的数字（技术/运营事实），不是市场规模或收入预测；商业量化缺口见“关键缺口”。')
+    else:
+        lines.append('   本期没有进入验证级的候选。')
+    validation=_validation_rows(items)
+    if validation:
+        lines += ['','   验证记录（最近）：','   候选 | 类型 | 结果 | 说明 | 记录时间']
+        for row in validation:
+            lines.append('   '+' | '.join(row))
 
     hypotheses=_hypotheses(items)
     lines += ['','四、待验证假设','   以下是分析给出、但尚未被证据支持的推断。不作为结论使用。']
@@ -732,8 +1090,9 @@ def render_digest(items,stats,date_label=None,include_appendix=True):
     else:
         lines.append('   无。')
 
-    lines += ['','五、风险与反证']
-    lines += ['   - '+row for row in _risks(items)]
+    lines += ['','五、风险与反证','   风险 | 触发条件 | 影响 | 应对']
+    for row in _risk_rows(items):
+        lines.append('   '+' | '.join(row))
 
     watch=_watch_rows(items)
     lines += ['','六、监测清单']
@@ -758,6 +1117,10 @@ def render_digest(items,stats,date_label=None,include_appendix=True):
         lines.append('   通道分布：'+'，'.join(f"{LANE_LABEL[r['lane']]} 入选 {r['shown']} · 分析 {r['items']}" for r in lanes))
     lines.append(f"   入选分布：优先验证：{counts['priority']} · 持续观察：{counts['watch']}"
                  f" · 未纳入分发：{len(deferred)} · 明确付费证据：{strong}")
+    rc=_readiness_counts(items)
+    lines.append(f"   决策就绪度：决策级 {rc['decision']} · 验证级 {rc['validation']} · 观察级 {rc['monitor']}")
+    markets=Counter(_market(x) for x in shown)
+    lines.append('   证据独立性：'+('，'.join(f"{MARKET_LABEL.get(k,k)} {v}" for k,v in markets.items()) or '无'))
     ev=evidence_breakdown(items)
     lines.append('   证据强度：'+('，'.join(f"{STATE_LABEL.get(e['state'],e['state'])} {e['count']}" for e in ev) or '无'))
     present={_state(x) for x in items}
@@ -780,6 +1143,18 @@ def render_digest(items,stats,date_label=None,include_appendix=True):
                      + (f" · 警告：{','.join(pipeline.get('warnings') or [])}" if pipeline.get('warnings') else ''))
     lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'}（{stats.get('prompt_hash') or 'hash未记录'}）· 规则 {stats.get('rules_version','v2')}")
     lines.append('   局限：本报告只覆盖已成功分析的条目；单一来源、未定位引文与未验证推断均已逐条标注，不构成对营收、市场规模或法律许可的结论。')
+    lines.append('   外部对标：本期未做竞品/替代方案对照、市场规模测算与财务测算；这些是投入决策前必须补齐的外部数据。')
+    yt=stats.get('youtube') or {}
+    if yt:
+        lines.append(f"   YouTube 字幕：候选 {yt.get('candidates',0)} · 选取 {yt.get('selected',0)}"
+                     f" · 抓取 {yt.get('fetched',0)} · 分析 {yt.get('analyzed',0)}"
+                     f" · 跳过 {sum((yt.get('skipped_reason') or {}).values())} 篇。字幕为人工/自动字幕节选，未核对讲话人，按 E1 上限处理。")
+    disc=stats.get('discovery') or {}
+    if disc:
+        providers='，'.join(f'{k} {v}' for k,v in (disc.get('providers') or {}).items()) or '无'
+        lines.append(f"   公开检索：查询 {disc.get('queries',0)} · 候选 {disc.get('candidates',0)}"
+                     f" · 入选 {disc.get('selected',0)} · 页面抓取 {disc.get('page_fetched',0)}"
+                     f"（跳过 {disc.get('page_skipped',0)}）· 来源 {providers}。只使用公开 RSS/API 与 robots 允许的页面；标题/摘要可能不完整。")
 
     if not include_appendix:
         lines += ['','附：完整附录已存档，不随邮件发送','   '+appendix_note(items,stats)]

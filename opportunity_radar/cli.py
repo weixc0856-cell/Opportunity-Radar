@@ -20,6 +20,8 @@ from .fulltext import apply_article_bodies
 from .model_service import ensure_model, health_ok
 from .log_util import rotate_log, RedactFilter
 from . import publication
+from . import youtube_source
+from . import web_discovery
 
 def _norm_name(value):
     """FreshRSS feed titles and registry names differ only in punctuation far more often
@@ -61,6 +63,13 @@ def resolve_source(item,by_id,by_name):
     if sid and sid in by_id: return by_id[sid]
     key=_norm_name((item or {}).get('source_name'))
     return by_name.get(key) if key else None
+
+def source_for_article(article,by_feed,by_id):
+    """Resolve a pipeline source for RSS (feed id) and YouTube (source id) records."""
+    sid=str(getattr(article,'source_id','') or '')
+    if sid and sid in by_id: return by_id[sid]
+    return by_feed.get(getattr(article,'feed_id',''))
+
 
 def apply_source_caps(items,sources):
     """Decide what enters this issue, without rewriting what the item is worth.
@@ -207,7 +216,7 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     _atomic_write(email_txt,email_text); _atomic_write(email_html_path,email_html)
     payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','event_context','analysis','score','signal_score','evidence_score','editorial_priority','priority_basis','status','filter_reason',
                                              'source_id','intelligence_lines','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
-                                             'classification','market_validation','risk_flag','verification_note',
+                                             'classification','market_validation','risk_flag','verification_note','youtube','discovery',
                                              'evidence','evidence_integrity','components','meta','scoring')} for item in (items or [])]
     _atomic_write(items_path,json.dumps({'schema_version':2,'generated_at':local_now.isoformat(),
                                          'run_id':run_id,'report_hash':report_hash,'items':payload_items},
@@ -413,17 +422,21 @@ def _stored_items(store,sources,since=None,keys=None):
                       'classification':sc.get('classification',{}),'market_validation':sc.get('market_validation',''),
                       'risk_flag':sc.get('risk_flag',''),'verification_note':sc.get('verification_note',''),
                       'evidence':sc.get('evidence',[]),'evidence_integrity':sc.get('evidence_integrity',''),
-                      'components':sc.get('components',{}),'meta':d.get('meta',{})})
+                      'components':sc.get('components',{}),'meta':d.get('meta',{}),
+                      'youtube':meta.get('youtube') or {},
+                      'discovery':meta.get('discovery') or {}})
     return items,{'matched_id':matched_id,'matched_name':matched_name,'unresolved':unresolved,
                   'ambiguous':len(ambiguous)}
 
 
 def _render_only(store,s,cfg):
     """Rebuild the report from stored analyses without calling the model or re-scoring."""
-    rows=load_sources()
+    rows=(load_sources()+youtube_source.source_objects(youtube_source.load_config())
+          +web_discovery.source_objects(web_discovery.load_config()))
     # Scope to the newest run that analysed something, not to every analysis ever stored.
     since=store.last_analysis_run_started_at()
     items,matched=_stored_items(store,rows,since=since)
+    attach_validation(store,items)
     unresolved=matched['unresolved']; matched_id=matched['matched_id']; matched_name=matched['matched_name']
     ambiguous=range(matched['ambiguous'])
     lane_weights,lane_thresholds=lane_display_config(cfg)
@@ -452,6 +465,31 @@ def _render_only(store,s,cfg):
     html=render_html(items,stats); email_html=render_html(items,stats,include_appendix=False)
     _write(s.report_dir,subject,body,html,archive=False,email_body=email_body,email_html=email_html)
     print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
+
+def _record_validation(s,args):
+    """Append one interview/pricing/decision observation; never rewrite an older one."""
+    if not args.candidate.strip():
+        print('--validation-record needs --candidate <URL or exact title>',file=sys.stderr); return 2
+    try:
+        store=Store(s.db_path,migrate=False)
+    except SchemaVersionError as exc:
+        print(f'Database schema check failed: {exc}',file=sys.stderr); return 4
+    row=store.find_article(args.candidate)
+    if not row:
+        print(f'Candidate not found by URL or exact title: {args.candidate}',file=sys.stderr); return 2
+    rid=store.record_validation(Store.key(row['url']),row['title'],args.validation_kind,
+                                args.validation_result,args.validation_note,args.validation_evidence)
+    print(json.dumps({'recorded':rid,'candidate':row['title'],'url':row['url'],
+                      'kind':args.validation_kind,'result':args.validation_result,
+                      'note':args.validation_note},ensure_ascii=False,indent=2))
+    return 0
+
+
+def attach_validation(store,items):
+    for item in items or []:
+        rows=store.validation_records(Store.key(item.get('url','')))
+        if rows: item['validation']=rows
+
 
 def _source_sync_note(report_dir):
     """Status of the isolated source sync that the launcher ran before this CLI.
@@ -608,8 +646,22 @@ def main(argv=None):
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except (AttributeError, ValueError):
         pass
-    p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); p.add_argument('--period',choices=('daily','weekly','monthly','auto'),default='daily'); args=p.parse_args(argv)
+    p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); p.add_argument('--period',choices=('daily','weekly','monthly','auto'),default='daily'); p.add_argument('--youtube-check',metavar='URL',default='',help='fetch one YouTube transcript and print its excerpt, without analysis'); p.add_argument('--search-check',metavar='QUERY',default='',help='run one public search query and print results, without analysis'); p.add_argument('--search-provider',choices=('google_news','gdelt','newsapi','brave','guardian'),default='google_news'); p.add_argument('--validation-record',action='store_true',help='append one validation observation to the local log'); p.add_argument('--candidate',default='',help='candidate URL or exact title for --validation-record'); p.add_argument('--validation-kind',choices=('interview','pricing','buyer','decision','other'),default='interview'); p.add_argument('--validation-result',choices=('supports','contradicts','unknown'),default='unknown'); p.add_argument('--validation-note',default=''); p.add_argument('--validation-evidence',default=''); args=p.parse_args(argv)
+    if args.youtube_check:
+        try:
+            result=youtube_source.explain(args.youtube_check)
+        except Exception as exc:
+            print(f'YouTube check failed: {type(exc).__name__}: {exc}',file=sys.stderr); return 2
+        print(json.dumps(result,ensure_ascii=False,indent=2)); return 0
+    if args.search_check:
+        try:
+            result=web_discovery.explain(args.search_check,args.search_provider)
+        except Exception as exc:
+            print(f'Search check failed: {type(exc).__name__}: {exc}',file=sys.stderr); return 2
+        print(json.dumps(result,ensure_ascii=False,indent=2)); return 0
     s=Settings.from_env(); Path(s.log_path).parent.mkdir(parents=True,exist_ok=True)
+    if args.validation_record:
+        return _record_validation(s,args)
     rotate_log(s.log_path)
     handlers=[logging.FileHandler(s.log_path,encoding='utf-8'),logging.StreamHandler(sys.stdout)]
     for h in handlers: h.addFilter(RedactFilter())
@@ -660,13 +712,18 @@ def main(argv=None):
         print(f'Source registry has {len(audit_errors)} blocking error(s). Run python -m opportunity_radar.source_audit and fix config/sources.csv.',file=sys.stderr)
         return 3
     sources=[x for x in registry if is_approved(x)]
+    youtube_config=youtube_source.load_config()
+    youtube_sources=youtube_source.source_objects(youtube_config)
+    discovery_config=web_discovery.load_config()
+    discovery_sources=web_discovery.source_objects(discovery_config)
     approved_feed_ids={x.freshrss_feed_id for x in sources}
     source_by_feed={x.freshrss_feed_id:x for x in sources}
+    source_by_id={x.source_id:x for x in sources+youtube_sources+discovery_sources}
     try:
         win_start,win_end=parse_window(s.sample_since,s.sample_until)
     except ValueError as e:
         print(f'Invalid sample window: {e}',file=sys.stderr); return 2
-    if not sources:
+    if not sources and not youtube_sources and not discovery_sources:
         msg='No approved sources in config/sources.csv. Keep sources disabled until reviewed.'
         if not args.dry_run: print(msg,file=sys.stderr); return 3
         items=[]; stats=_stats(items,lane_weights=lane_weights,lane_thresholds=lane_thresholds,source_issues=source_issues)
@@ -690,11 +747,35 @@ def main(argv=None):
         # A windowed run has to look past max_articles to still fill the window; the
         # ceiling keeps a low-frequency feed from triggering an unbounded fetch.
         pool_limit=s.max_articles if not (win_start or win_end) else max(s.max_articles,200)
-        raw=[a for a in client.fetch_articles(pool_limit,feed_ids=ordered_feed_ids(approved_feed_ids)) if a.feed_id in approved_feed_ids]
+        raw=[]
+        if approved_feed_ids:
+            raw=[a for a in client.fetch_articles(pool_limit,feed_ids=ordered_feed_ids(approved_feed_ids)) if a.feed_id in approved_feed_ids]
         in_window=filter_articles(raw,win_start,win_end)
-        articles=in_window[:s.max_articles]; fetched=len(articles)
+        articles=in_window[:s.max_articles]
         # Opt-in page fetch: the registry decides per source; the evidence rules do not move.
         pages_fetched=apply_article_bodies(articles,source_by_feed)
+        # YouTube is optional and isolated: a failed collector is reported, never fatal.
+        youtube_stats={'sources':0,'candidates':0,'selected':0,'fetched':0,'analyzed':0,
+                       'skipped_seen':0,'skipped_filter':0,'skipped_reason':{}}
+        try:
+            yt_articles,youtube_stats,yt_issues=youtube_source.collect(youtube_config,store=store)
+            articles.extend(yt_articles)
+            source_issues.extend(yt_issues)
+        except Exception as exc:
+            logging.exception('YouTube collector failed; continuing with RSS sources')
+            source_issues.append({'severity':'warning','code':'youtube_failed',
+                                  'source_id':'youtube','message':f'{type(exc).__name__}: {exc}'})
+        discovery_stats={'queries':0,'candidates':0,'selected':0,'fetched':0,'analyzed':0,
+                         'page_fetched':0,'page_skipped':0,'skipped_seen':0,'skipped_reason':{},'providers':{}}
+        try:
+            d_articles,discovery_stats,d_issues=web_discovery.collect(discovery_config,store=store)
+            articles.extend(d_articles)
+            source_issues.extend(d_issues)
+        except Exception as exc:
+            logging.exception('Web discovery failed; continuing with the other sources')
+            source_issues.append({'severity':'warning','code':'discovery_failed',
+                                  'source_id':'discovery','message':f'{type(exc).__name__}: {exc}'})
+        fetched=len(articles)
         if win_start or win_end:
             logging.info('Sample window %s..%s: pool=%d in_window=%d sampled=%d',
                          s.sample_since or '(open)',s.sample_until or '(open)',len(raw),len(in_window),len(articles))
@@ -710,10 +791,11 @@ def main(argv=None):
         consecutive_transport_failures=0
         for a in articles:
             key=Store.key(a.url)
+            src=source_for_article(a,source_by_feed,source_by_id)
             was_analyzed=store.analyzed(key)
             previous_input_hash=store.analysis_input_hash(key) if was_analyzed else None
             current_input_hash=analysis_input_hash(a.url,a.title,a.summary,s.llm_model)
-            new_count+=store.save_article(a,key,source_id=getattr(source_by_feed.get(a.feed_id),'source_id',''))
+            new_count+=store.save_article(a,key,source_id=getattr(src,'source_id',''))
             if was_analyzed and previous_input_hash==current_input_hash:
                 skipped+=1; continue
             if was_analyzed and previous_input_hash!=current_input_hash:
@@ -737,12 +819,21 @@ def main(argv=None):
                 prior_sources=store.event_sources(Store.event_key(a.title),key)
                 multi_source=len(prior_sources|{a.source_name})>=2
                 result=model.analyze(a.title,a.summary,a.source_name,a.url,published=a.published)
-                item=evaluate(a,result,thresholds=None,model=s.llm_model,source=source_by_feed.get(a.feed_id),
+                item=evaluate(a,result,thresholds=None,model=s.llm_model,source=src,
                               lanes_config=lanes_cfg,multi_source=multi_source,event_seen_before=bool(prior_sources),
                               min_full_text_chars=min_chars)
                 # Reporting only: which intelligence mainline(s) this source was registered for.
-                item['intelligence_lines']=getattr(source_by_feed.get(a.feed_id),'intelligence_lines','')
+                item['intelligence_lines']=getattr(src,'intelligence_lines','')
+                if getattr(a,'youtube',None):
+                    item['youtube']=a.youtube; item['meta']['youtube']=a.youtube
+                if getattr(a,'discovery',None):
+                    item['discovery']=a.discovery; item['meta']['discovery']=a.discovery
                 store.save_analysis(key,result,item['scoring'],item['meta'])
+                if getattr(a,'youtube',None):
+                    store.mark_youtube_analyzed(key)
+                    youtube_stats['analyzed']=int(youtube_stats.get('analyzed') or 0)+1
+                if getattr(a,'discovery',None):
+                    discovery_stats['analyzed']=int(discovery_stats.get('analyzed') or 0)+1
                 items.append(item); analyzed+=1
                 # A run can spend an hour here; without this line the launcher log, the CLI log
                 # and stdout all stay empty, and a working run is indistinguishable from a hang.
@@ -775,7 +866,7 @@ def main(argv=None):
             if carried:
                 items=carried
                 logging.info('No new analysis; carried %d stored item(s) into the report',len(items))
-        caps=apply_source_caps(items,sources)
+        caps=apply_source_caps(items,sources+youtube_sources+discovery_sources)
         attach_event_context(store, items, write=True)
         # One production chain: the daily run now produces Evidence/Claim/Entity/
         # Opportunity/quality after analysis instead of leaving them to manual CLIs.
@@ -806,12 +897,15 @@ def main(argv=None):
         stats['model']=s.llm_model; stats['prompt_version']=PROMPT_VERSION; stats['prompt_hash']=PROMPT_HASH
         stats['pipeline']=pipe
         stats['watchlist']=build_watchlist(store, pipe)
+        stats['youtube']=youtube_stats
+        stats['discovery']=discovery_stats
         sync=_source_sync_note(s.report_dir)
         if sync: stats['source_sync']=sync
         if pages_fetched: stats['full_text_fetched']=pages_fetched
         if win_start or win_end:
             stats['sample_window']={'since':s.sample_since,'until':s.sample_until,
                                     'pool':len(raw),'in_window':len(in_window),'sampled':len(articles)}
+        attach_validation(store,items)
         subject,body=render_digest(items,stats)
         # The email edition stops after the basis-of-preparation section; the appendices
         # are stored in SQLite and the archive instead of being mailed to every recipient.
