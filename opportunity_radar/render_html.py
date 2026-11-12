@@ -16,7 +16,11 @@ from .digest import (REASON_LABEL, SOURCE_LABEL, MARKET_LABEL, WEIGHT_LABEL,
                      _why, _evidence_text, _market, _commercial_line, _lane, _state, _shown, _deferred,
                      STATUS_LABEL, group_by_event, event_summary_lines, event_status_note, _v5_sections,
                      _one_line, _action_title, _evidence_basis, _implication, _confidence,
-                     _next_actions, _hypotheses, _risks, _watch_rows, _judgment_pool, _order_key)
+                     _next_actions, _hypotheses, _risks, _watch_rows, _judgment_pool, _order_key,
+                     _pool_key, READINESS_LABEL, readiness_of, readiness_reason, decision_request,
+                     _clock, _transcript_label, decision_implication, _decision_label, _capability_fit, _stop_condition,
+                     _next_step, _risk_rows, _verification_rows, _readiness_counts, _validation_rows,
+                     VALIDATION_KIND_LABEL, VALIDATION_RESULT_LABEL)
 from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL, summarize
 from .lanes import LANE_LABEL, LANE_PROMISE
@@ -213,6 +217,15 @@ def _finding(x):
                  + _kv('关键未知', _e('；'.join(a.get('uncertainties', [])) or '未填写'))
                  + _kv('下一步观察', _e(a.get('suggested_next_step', '人工复核')))
                  + _kv('来源', f'{_e(x.get("source_name", "Unknown"))} · {link}'))
+    yt = x.get('youtube') or {}
+    if yt:
+        rows += _kv('YouTube', f"{_e(yt.get('channel', ''))} · 字幕 {_e(_transcript_label(yt.get('transcript_kind')))}"
+                               f" · 节选 {_e(_clock(yt.get('excerpt_start')))}–{_e(_clock(yt.get('excerpt_end')))}"
+                               ' · 全文字幕已存档')
+    disc = x.get('discovery') or {}
+    if disc:
+        rows += _kv('公开检索', f"{_e(disc.get('provider', ''))} · {_e(disc.get('query_id', ''))}"
+                               f" · 出版方 {_e(disc.get('publisher', ''))} · 页面 {_e(disc.get('page_status', 'not_attempted'))}")
     priority = x.get('editorial_priority', '—')
     return (f'<article class="card">'
             f'<h4><span class="score">{_e(x.get("score", 0))}</span>{_e(x.get("title", ""))}</h4>'
@@ -225,32 +238,91 @@ def _finding(x):
 def _kj_block(items):
     ranked = _judgment_pool(items)[:4]
     if not ranked:
-        return ('<p class="panel">本期入选条目的分析结论均为「无商业信号」：没有客户、预算、价格或采购迹象。'
-                '本节不设关键判断；条目仍保留在附录 A 供追溯，不作为行动依据。</p>')
+        visible = sorted(_shown(items), key=_pool_key)
+        body = ''.join(f'<div class="item"><div class="t">{_e(_one_line(_action_title(x), 70))}</div>'
+                       f'<div class="m">{_e(readiness_reason(x))}</div></div>'
+                       for x in visible[:3])
+        return ('<p class="panel">本期没有达到验证级的判断：没有一条同时具备商业信号、可定位证据和可执行路径。'
+                '以下为观察级线索，仅用于监测，不构成建议。</p>'
+                + (f'<div class="hy">{body}</div>' if body else ''))
     out = []
     for i, x in enumerate(ranked, 1):
-        summary = _one_line((x.get('analysis') or {}).get('summary_zh') or x.get('title', ''), 140)
+        summary = _one_line((x.get('analysis') or {}).get('summary_zh') or x.get('title', ''), 160)
         implication = _implication(x)
+        step, done = _next_step(x)
+        fit = _capability_fit(x)
         rows = (_kv('判断', _e(summary)) + _kv('依据', _e(_evidence_basis(x)))
-                + (_kv('影响', _e(implication)) if implication else '')
+                + _kv('就绪度', _e(readiness_reason(x)))
+                + (_kv('业务含义', _e(implication)) if implication else '')
+                + _kv('影响（so what）', _e(decision_implication(x)))
+                + _kv('决策建议', _e(_decision_label(x)))
+                + (_kv('时效性', _e(str((x.get('analysis') or {}).get('why_now') or '').strip()))
+                   if str((x.get('analysis') or {}).get('why_now') or '').strip().lower()
+                   not in {'', 'unknown', 'none', 'n/a', '无', '未知'} else '')
+                + (_kv('能力匹配', _e(fit)) if fit else '')
+                + _kv('停止条件', _e(_stop_condition(x)))
+                + (_kv('下一步', _e(step) + (f'（完成标准：{_e(done)}）' if done else '')) if step else '')
                 + _kv('置信度', _e(_confidence(x))))
-        out.append(f'<div class="item"><div class="tag">KJ{i}</div>'
+        out.append(f'<div class="item"><div class="tag">KJ{i} · {_e(READINESS_LABEL[readiness_of(x)])}</div>'
                    f'<h3>{_e(_action_title(x))}</h3><dl class="kv">{rows}</dl></div>')
+    counts = _readiness_counts(items)
     rest = len(_shown(items)) - len(ranked)
-    tail = (f'<p class="muted" style="margin-top:12px;">另有 {rest} 条入选条目没有可识别的商业信号'
-            '（评测、预告、纯技术动态），保留在附录 A 供追溯，不进入行动层。</p>') if rest > 0 else ''
+    extra = max(0, counts['validation'] - len(ranked))
+    if rest > 0 and extra:
+        tail_text = (f'另有 {rest} 条未进入判断层（验证级 {extra} 条受条数上限、'
+                     f'观察级 {counts["monitor"]} 条），保留在附录 A 供追溯。')
+    elif rest > 0:
+        tail_text = f'另有 {counts["monitor"]} 条观察级条目未进入判断层，保留在附录 A 供追溯。'
+    else:
+        tail_text = ''
+    tail = f'<p class="muted" style="margin-top:12px;">{_e(tail_text)}</p>' if tail_text else ''
     return f'<div class="kj">{"".join(out)}</div>{tail}'
 
 
 def _actions_block(items):
     rows = _next_actions(items)
-    if not rows:
-        return '<p class="panel">本期没有达到可执行程度的条目；维持监测，不启动新动作。</p>'
-    out = ['<ol class="ol">']
-    for step, done, basis in rows:
-        out.append(f'<li><div><div class="step">{_e(step)}</div>'
-                   f'<div class="done">完成标准：{_e(done)} · 依据：{_e(basis)}</div></div></li>')
-    out.append('</ol>')
+    counts = _readiness_counts(items)
+    if counts['decision']:
+        options = ('<li><strong>A. 进入决策（建议）：</strong>对决策级信号作投入/不投入判断，并确认预算归属与采购时点。</li>'
+                   '<li><strong>B. 仅验证：</strong>先补齐独立来源与验收标准。</li>'
+                   '<li><strong>C. 维持监测：</strong>不投入。</li>')
+    elif counts['validation']:
+        label = (f'{counts["validation"]} 条验证级候选进入限时验证（2 周）'
+                 if counts['validation'] == 1 else f'{counts["validation"]} 条验证级候选各限时 2 周')
+        options = (f'<li><strong>A. 批准验证（建议）：</strong>{_e(label)}，先确认付费意愿与独立来源。</li>'
+                   '<li><strong>B. 仅监测：</strong>不投入，等待下一期。</li>'
+                   '<li><strong>C. 放弃本期候选。</strong></li>')
+    else:
+        options = ('<li><strong>A. 维持监测（建议）：</strong>本期没有验证级候选。</li>'
+                   '<li><strong>B. 扩大来源或提高抓取量，等待下一期。</strong></li>')
+    out = ['<div class="panel" style="margin-bottom:16px;"><strong>决策选项</strong><ul class="risk" style="margin-top:6px;">'
+           + options + '</ul></div>']
+    if rows:
+        out.append('<ol class="ol">')
+        for step, done, basis, when, owner in rows:
+            out.append(f'<li><div><div class="step">{_e(step)}</div>'
+                       f'<div class="done">完成标准：{_e(done)} · 建议时限：{_e(when)} · '
+                       f'负责人：{_e(owner)} · 依据：{_e(basis)}</div></div></li>')
+        out.append('</ol>')
+    else:
+        out.append('<p class="panel">本期没有达到可执行程度的条目；维持监测，不启动新动作。</p>')
+    ledger = _verification_rows(items)
+    if ledger:
+        body = ''.join('<tr>' + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>' for row in ledger)
+        out.append('<p class="muted" style="margin:20px 0 8px;"><strong>验证台账</strong>'
+                   '（就绪度 / 已量化 / 关键缺口 / 关闭方式 / 停止条件）</p>'
+                   '<table><thead><tr><th>候选</th><th>就绪度</th><th>已量化</th><th>关键缺口</th>'
+                   '<th>关闭方式</th><th>停止条件</th></tr></thead>'
+                   f'<tbody>{body}</tbody></table>'
+                   '<p class="muted" style="margin-top:8px;">注：已量化指文中出现的数字（技术/运营事实），'
+                   '不是市场规模或收入预测；商业量化缺口见“关键缺口”。</p>')
+    validation = _validation_rows(items)
+    if validation:
+        body = ''.join('<tr>' + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>' for row in validation)
+        out.append('<p class="muted" style="margin:20px 0 8px;"><strong>验证记录</strong>'
+                   '（最近；访谈/定价/买方/决策）</p>'
+                   '<table><thead><tr><th>候选</th><th>类型</th><th>结果</th><th>说明</th>'
+                   f'<th>记录时间</th></tr></thead><tbody>{body}</tbody></table>')
     return ''.join(out)
 
 
@@ -268,8 +340,11 @@ def _hypotheses_block(items):
 
 
 def _risks_block(items):
-    rows = _risks(items)
-    return '<ul class="risk">' + ''.join(f'<li>{_e(row)}</li>' for row in rows) + '</ul>'
+    rows = _risk_rows(items)
+    body = ''.join(f'<tr><td>{_e(risk)}</td><td>{_e(trigger)}</td><td>{_e(impact)}</td><td>{_e(response)}</td></tr>'
+                   for risk, trigger, impact, response in rows)
+    return ('<table><thead><tr><th>风险</th><th>触发条件</th><th>影响</th><th>应对</th></tr></thead>'
+            f'<tbody>{body}</tbody></table>')
 
 
 def _watchlist_block(items):
@@ -392,14 +467,33 @@ def render_html(items, stats, date_label=None, include_appendix=True):
     parts.append(f'<p class="governing">{_e(decision_headline(items, stats))}</p>')
     note = ('样例仅用于演示字段和版式，不构成对真实需求的判断。' if stats.get('sample_mode')
             else management_note(items))
-    parts.append(f'<p class="note">{_e(note)}</p></section>')
+    parts.append(f'<p class="note">{_e(note)}</p>')
+    parts.append(f'<div class="panel" style="margin-top:14px;"><strong>决策请求：</strong>'
+                 f'{_e(decision_request(items, stats))}</div>')
+    lane_counts = Counter(_lane(x) for x in shown)
+    watch_lanes = [f'{LANE_LABEL[l]} {lane_counts[l]} 条' for l in ('A', 'C') if lane_counts.get(l)]
+    if watch_lanes:
+        parts.append(f'<p class="muted" style="margin-top:10px;"><strong>战略/技术情报：</strong>'
+                     f'{_e("，".join(watch_lanes))}，只用于跟踪，不进入机会决策。</p>')
+    preview = _judgment_pool(items)[:3]
+    if preview:
+        rows = ''.join(f'<li>{_e(_action_title(x))}（{_e(READINESS_LABEL[readiness_of(x)])}）</li>'
+                       for x in preview)
+        parts.append(f'<div style="margin-top:14px;"><div class="muted" style="font-weight:700;'
+                     f'color:var(--ink);">本期判断</div><ul class="risk">{rows}</ul></div>')
+    else:
+        parts.append('<p class="muted" style="margin-top:14px;">本期没有达到验证级的判断；'
+                     '观察级线索见第六节与附录 A。</p>')
+    parts.append('</section>')
 
     parts.append(_section(2, '关键判断', 'Key judgments'))
     parts.append('<p class="muted" style="margin:-4px 0 10px;">按可执行性、通道与信号分排序；'
-                 '每条只回答一个问题：这条信息是否改变我们的行动。</p>')
+                 '每条只回答一个问题：这条信息是否改变我们的行动。<br>'
+                 '就绪度口径：决策级=明确预算 + E2 + 可定位事实 + 可执行；'
+                 '验证级=商业信号 + E1/E2 + 可定位事实 +（可执行或重复痛点）；其余为观察级。</p>')
     parts.append(_kj_block(items) + '</section>')
 
-    parts.append(_section(3, '建议行动', 'Next actions'))
+    parts.append(_section(3, '建议行动与验证台账', 'Next actions and validation ledger'))
     parts.append(_actions_block(items) + '</section>')
 
     parts.append(_section(4, '待验证假设', 'Hypotheses'))
@@ -423,6 +517,14 @@ def render_html(items, stats, date_label=None, include_appendix=True):
         parts.append(_chart_block('情报主线（分析条目）', line_rows))
     parts.append(_chart_block('证据强度（条目数）',
                               [(STATE_LABEL.get(e['state'], e['state']), e['count']) for e in evidence_breakdown(items)]))
+    readiness = _readiness_counts(items)
+    parts.append(_chart_block('决策就绪度（入选条目）',
+                              [(READINESS_LABEL[k], readiness[k]) for k in ('decision', 'validation', 'monitor')],
+                              '口径：本轮入选条目；观察级不进入判断层。'))
+    markets = Counter(_market(x) for x in shown)
+    parts.append(_chart_block('证据独立性（入选条目）',
+                              [(MARKET_LABEL.get(k, k), v) for k, v in markets.items()],
+                              '口径：按来源声明与已分析条目统计；单一来源不等于独立佐证。'))
     parts.append(f'<p class="muted" style="margin-top:10px;">{_e(denominator_note(stats))}</p>')
     present = {_state(x) for x in items}
     meanings = [STATE_MEANING[st] for st in EVIDENCE_STATES if st in present and st in STATE_MEANING]
@@ -433,7 +535,23 @@ def render_html(items, stats, date_label=None, include_appendix=True):
                  f'（{_e(stats.get("prompt_hash") or "hash未记录")}）· 规则 {_e(stats.get("rules_version", "v2"))}</div>'
                  f'<div style="margin-top:4px;">本轮获取 {_e(fetched)} 篇 · 新增分析 {_e(analyzed)} 篇'
                  + (f' · 已有结果跳过 {_e(skipped)} 篇' if skipped else '')
-                 + f' · 入选 {len(shown)} 条 · 明确付费证据 {strong} 条</div></div></section>')
+                 + f' · 入选 {len(shown)} 条 · 明确付费证据 {strong} 条</div>'
+                 '<div style="margin-top:4px;">外部对标：本期未做竞品/替代方案对照、市场规模测算与'
+                 '财务测算；这些是投入决策前必须补齐的外部数据。</div>')
+    yt_stats = stats.get('youtube') or {}
+    if yt_stats:
+        parts.append(f'<div style="margin-top:4px;">YouTube 字幕：候选 {_e(yt_stats.get("candidates", 0))}'
+                     f' · 选取 {_e(yt_stats.get("selected", 0))} · 抓取 {_e(yt_stats.get("fetched", 0))}'
+                     f' · 分析 {_e(yt_stats.get("analyzed", 0))}。字幕为人工/自动字幕节选，未核对讲话人，按 E1 上限处理。</div>')
+    disc_stats = stats.get('discovery') or {}
+    if disc_stats:
+        providers = '，'.join(f'{k} {v}' for k, v in (disc_stats.get('providers') or {}).items()) or '无'
+        parts.append(f'<div style="margin-top:4px;">公开检索：查询 {_e(disc_stats.get("queries", 0))}'
+                     f' · 候选 {_e(disc_stats.get("candidates", 0))} · 入选 {_e(disc_stats.get("selected", 0))}'
+                     f' · 页面抓取 {_e(disc_stats.get("page_fetched", 0))}'
+                     f'（跳过 {_e(disc_stats.get("page_skipped", 0))}）· 来源 {_e(providers)}。'
+                     '只使用公开 RSS/API 与 robots 允许的页面；标题/摘要可能不完整。</div>')
+    parts.append('</div></section>')
 
     if include_appendix:
         parts.append(_section(8, '附录 A · 条目明细', 'Evidence appendix'))

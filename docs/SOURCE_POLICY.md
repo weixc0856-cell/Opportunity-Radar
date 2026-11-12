@@ -102,3 +102,20 @@ whether the body is complete, and enabling it does **not** raise the evidence ra
 `declared` 是人工声明，不是独立核验；只有 `verified` 才可作为已核验状态。当前谱系行全部为
 `declared`。`syndication_group` 留空表示没有已确认的联合发布证据，不能用标题相似度替代。
 `source_name` 是 FreshRSS/feed 标签，不是发布机构；`PUBLISHED_BY` 不从它推导。
+
+## Optional YouTube and public-search channels
+
+- **YouTube**: public metadata and creator/auto subtitles only; no video download, no cookies,
+  no login, no paywall bypass, no Chinese auto-translation. Personal non-commercial analysis;
+  the report quotes short excerpts and links to the video. Subtitle evidence is capped at E1
+  because an auto-caption is not a reviewed full text and may mis-hear the speaker.
+- **Google News RSS**: personal, non-commercial feed-reader use as stated in the feed's
+  copyright notice. Store headline, publisher, date and link; do not copy article bodies.
+- **GDELT**: public DOC 2.0 API; respect the documented one-request-per-five-seconds limit.
+- **NewsAPI / Brave / Guardian**: official APIs with the operator's key; use the publisher
+  snippet and link, not a copied body.
+- **Page fetch**: only through `FullTextFetcher`, which reads `robots.txt` first, refuses
+  cross-host redirects, stops on 401/403/429 and suspected paywalls, and bounds the text.
+  A fetched page is still E1 until a reviewer declares the source full-text.
+- Search and YouTube results are discovery aids. They do not establish source independence;
+  the publisher/`source_name` still decides independence and syndication.

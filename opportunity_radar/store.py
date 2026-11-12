@@ -5,6 +5,18 @@ from datetime import datetime, timezone
 from .unified import (SCHEMA as UNIFIED_SCHEMA, SCHEMA_VERSION as UNIFIED_SCHEMA_VERSION,
                       SchemaVersionError, require_schema)
 
+VALIDATION_DDL=('CREATE TABLE IF NOT EXISTS validation_log('
+                'id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_key TEXT NOT NULL, '
+                'candidate_title TEXT, kind TEXT NOT NULL, result TEXT NOT NULL, note TEXT, '
+                'evidence_url TEXT, recorded_at TEXT NOT NULL, run_id INTEGER)')
+
+YOUTUBE_DDL=('CREATE TABLE IF NOT EXISTS youtube_videos('
+              'video_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, channel TEXT, title TEXT NOT NULL, '
+              'url TEXT NOT NULL, published TEXT, duration INTEGER, transcript_kind TEXT, '
+              'transcript_path TEXT, transcript_chars INTEGER, excerpt_start REAL, excerpt_end REAL, '
+              'excerpt_chars INTEGER, status TEXT NOT NULL, reason TEXT, article_key TEXT, '
+              'fetched_at TEXT NOT NULL, analyzed_at TEXT)')
+
 REPORT_SECTIONS_DDL=('CREATE TABLE IF NOT EXISTS report_sections('
                      'report_hash TEXT NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL, '
                      'title TEXT NOT NULL, body TEXT NOT NULL, run_id INTEGER, created_at TEXT NOT NULL, '
@@ -50,6 +62,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
 ''')
             c.execute(REPORT_SECTIONS_DDL)
+            c.execute(YOUTUBE_DDL)
+            c.execute(VALIDATION_DDL)
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
             for name in ('fetched_at','content_source','retrieval_status','event_key','source_id'):
                 if name not in cols:
@@ -286,6 +300,80 @@ class Store:
             except sqlite3.OperationalError:
                 return []
         return self.report_sections(row['report_hash'],kind) if row else []
+    def article_exists(self,article_key):
+        with self.connect() as c:
+            return c.execute('SELECT 1 FROM articles WHERE article_key=?',(article_key,)).fetchone() is not None
+    def youtube_video_seen(self,video_id):
+        """Only a fetched/analysed video is a duplicate; a failed fetch may be retried."""
+        with self.connect() as c:
+            try:
+                row=c.execute("SELECT status,article_key FROM youtube_videos WHERE video_id=?",(video_id,)).fetchone()
+            except sqlite3.OperationalError:
+                return False
+        if not row: return False
+        if row['status']=='analyzed': return True
+        # A fetched-but-unanalysed video is retried; a completed one is not re-fetched.
+        return bool(row['status']=='fetched' and row['article_key'] and self.analyzed(row['article_key']))
+    def save_youtube_video(self,record):
+        columns=('video_id','source_id','channel','title','url','published','duration',
+                 'transcript_kind','transcript_path','transcript_chars','excerpt_start',
+                 'excerpt_end','excerpt_chars','status','reason','article_key','fetched_at')
+        values=[record.get(k) for k in columns]
+        with self.connect() as c:
+            c.execute(YOUTUBE_DDL)
+            c.execute(f"INSERT INTO youtube_videos({','.join(columns)},analyzed_at) "
+                      f"VALUES({','.join('?' for _ in columns)},?) "
+                      "ON CONFLICT(video_id) DO UPDATE SET "
+                      + ','.join(f'{k}=excluded.{k}' for k in columns if k!='video_id')
+                      + ", analyzed_at=COALESCE(excluded.analyzed_at, youtube_videos.analyzed_at)",
+                      (*values, record.get('analyzed_at')))
+    def mark_youtube_analyzed(self,article_key):
+        with self.connect() as c:
+            try:
+                cursor=c.execute("UPDATE youtube_videos SET status='analyzed', analyzed_at=? WHERE article_key=?",
+                                 (now(), article_key))
+            except sqlite3.OperationalError:
+                return 0
+            return cursor.rowcount
+    def youtube_videos(self,limit=20):
+        with self.connect() as c:
+            try:
+                rows=c.execute('SELECT * FROM youtube_videos ORDER BY fetched_at DESC LIMIT ?',(int(limit),)).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [dict(r) for r in rows]
+    def find_article(self,query):
+        """Resolve a validation target by URL or by a unique title match."""
+        q=str(query or '').strip()
+        if not q: return None
+        with self.connect() as c:
+            if q.startswith(('http://','https://')):
+                row=c.execute('SELECT article_key,title,url,source_name FROM articles WHERE article_key=?',
+                              (self.key(q),)).fetchone()
+            else:
+                rows=c.execute('SELECT article_key,title,url,source_name FROM articles WHERE title=? LIMIT 2',
+                               (q,)).fetchall()
+                row=rows[0] if len(rows)==1 else None
+        return dict(row) if row else None
+    def record_validation(self,candidate_key,candidate_title,kind,result,note='',evidence_url='',run_id=None):
+        with self.connect() as c:
+            c.execute(VALIDATION_DDL)
+            cur=c.execute('INSERT INTO validation_log(candidate_key,candidate_title,kind,result,note,'
+                          'evidence_url,recorded_at,run_id) VALUES(?,?,?,?,?,?,?,?)',
+                          (candidate_key,candidate_title,kind,result,note,evidence_url,now(),run_id))
+            return cur.lastrowid
+    def validation_records(self,candidate_key=None,limit=100):
+        with self.connect() as c:
+            try:
+                if candidate_key:
+                    rows=c.execute('SELECT * FROM validation_log WHERE candidate_key=? ORDER BY recorded_at DESC, id DESC LIMIT ?',
+                                   (candidate_key,int(limit))).fetchall()
+                else:
+                    rows=c.execute('SELECT * FROM validation_log ORDER BY recorded_at DESC, id DESC LIMIT ?',
+                                   (int(limit),)).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [dict(r) for r in rows]
     def consecutive_failures(self):
         with self.connect() as c:
             rows=[r['status'] for r in c.execute("SELECT status FROM runs WHERE status IN ('success','no_new_content','failed','analysis_failed','partial_failed') ORDER BY run_id DESC LIMIT 30")]

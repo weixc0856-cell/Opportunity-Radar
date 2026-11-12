@@ -77,6 +77,23 @@ class EmailEditionArchiveTests(unittest.TestCase):
    self.assertIn('email_text',manifest['files']); self.assertIn('email_html',manifest['files'])
    self.assertIn('email_report_hash',manifest)
 
+class ValidationRecordTests(unittest.TestCase):
+ def test_cli_record_appends_to_the_store(self):
+  from types import SimpleNamespace
+  from opportunity_radar.cli import _record_validation
+  from opportunity_radar.store import Store
+  with tempfile.TemporaryDirectory() as d:
+   db=str(Path(d)/'v.sqlite3'); store=Store(db)
+   a=SimpleNamespace(article_id='1',title='Candidate',url='https://example.org/c',published='',
+                     source_name='s',summary='body')
+   store.save_article(a,Store.key(a.url))
+   settings=SimpleNamespace(db_path=db)
+   args=SimpleNamespace(candidate=a.url,validation_kind='interview',validation_result='supports',
+                        validation_note='budget confirmed',validation_evidence='https://example.org/e')
+   self.assertEqual(_record_validation(settings,args),0)
+   rows=store.validation_records(Store.key(a.url))
+   self.assertEqual(rows[0]['kind'],'interview'); self.assertEqual(rows[0]['result'],'supports')
+
 class SourceCapTests(unittest.TestCase):
  def test_cap_defers_extras_without_rewriting_their_verdict(self):
   from opportunity_radar.cli import apply_source_caps

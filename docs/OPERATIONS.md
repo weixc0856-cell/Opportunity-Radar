@@ -8,7 +8,7 @@
 | Local model | `http://127.0.0.1:8080/v1` | `.\deploy\windows\start-model.ps1` | stop the pid in `reports\llama-server.pid` |
 | Admin UI | `http://127.0.0.1:8090` | `.\deploy\windows\start-admin.ps1` | Ctrl+C |
 
-The production analysis prompt is `prompts/analyst_v7.md` (`OR_PROMPT_PATH`); v6 is rollback only.
+The production analysis prompt is `prompts/analyst_v9.md` (`OR_PROMPT_PATH`); v8 is rollback; v7 and v6 are retained.
 The project model instance is **CPU-only** (`-ngl 0`, 64K context, q8_0 not needed on CPU).
 The 8 GB Arc A750 is reserved for ComfyUI. The GPU/MoE split measured ~0.8 tok/s at 64K on
 2026-11-03; the CPU-only instance measured ~10.8 tok/s on the same model. Do not raise the
@@ -184,11 +184,48 @@ only after the publication gate passes and the report is not a duplicate.
 
 ## Prompt version and rollback
 
-Production uses `prompts/analyst_v7.md` through `OR_PROMPT_PATH`. V6
-(`prompts/analyst.md`) is retained only as the rollback prompt. The analysis input hash now
-includes the model, prompt version and prompt hash, so changing the prompt invalidates the
-old analysis instead of silently reusing it.
+Production uses `prompts/analyst_v9.md` through `OR_PROMPT_PATH`. V9 adds `action_title`,
+`so_what`, `why_now` and `kill_criteria` to the v5 contract; they are optional, so v8/v7/v6
+records keep rendering. `prompts/analyst_v8.md` is the rollback prompt. The analysis input
+hash includes the model, prompt version and prompt hash, so changing the prompt invalidates
+the old analysis instead of silently reusing it.
 
-Rollback: set `OR_PROMPT_PATH=prompts/analyst.md`, restart the CLI; restore
-`data/archive/v7-switch-2026-11-03/pre-v7-run.sqlite3` only if the V7 run's database changes
-must be undone. The live task keeps using `--period auto` and the same pipeline.
+Rollback: set `OR_PROMPT_PATH=prompts/analyst_v8.md`, restart the CLI. The v7-switch database
+backup remains only for the historical V7 run; V9 adds no required field, so existing
+analyses and rows remain valid. The live task keeps using `--period auto` and the same pipeline.
+
+## Optional source expansion (YouTube and public search)
+
+Both channels are opt-in and additive. They never change scoring, the evidence gate or the
+publication gate; a failure is recorded as a source issue and the run continues.
+
+| Channel | Local config | Environment flag | Probe |
+|---|---|---|---|
+| YouTube interviews | `config/youtube_sources.json` | `OR_YOUTUBE_ENABLED=1` | `python -m opportunity_radar.cli --youtube-check "<URL>"` |
+| Public news search | `config/discovery_sources.json` | `OR_DISCOVERY_ENABLED=1` | `python -m opportunity_radar.cli --search-check "<query>" --search-provider google_news` |
+
+- YouTube uses `OR_YTDLP` (default `E:/YouTube-B/.venv/Scripts/yt-dlp.exe`), public metadata
+  and creator/auto subtitles only. No video download, no cookies, no Chinese auto-translation.
+  The full subtitle file stays under `data/youtube/<video_id>/`; the article carries a bounded
+  keyword-selected excerpt and is graded at E1.
+- Search providers: Google News RSS (no key), GDELT (no key, one request per 5 s), NewsAPI,
+  Brave and Guardian (keys via `OR_NEWSAPI_KEY`, `OR_BRAVE_API_KEY`, `OR_GUARDIAN_API_KEY`).
+  Google News RSS is headline/publisher/date/link only; snippets require one of the keyed
+  providers. GDELT currently answers HTTP 429 from this network and is disabled locally.
+- Optional page fetching goes through `FullTextFetcher`: robots.txt first, same-host redirects
+  only, 401/403/429 and paywall pages stop, text is bounded. A fetched page is still E1 until a
+  reviewer declares the source `content_access_level=full_text`.
+- The local JSON registries are ignored by Git; the tracked `.example.json` files are disabled.
+  Both require `permission_status=approved` and the environment flag before they run.
+
+## Validation log (append-only)
+
+Record an interview, pricing check, buyer conversation or decision against a candidate:
+
+```text
+python -m opportunity_radar.cli --validation-record   --candidate "<article URL or exact title>"   --validation-kind interview --validation-result supports   --validation-note "buyer confirmed a budget and a 2-week evaluation window"   --validation-evidence "<URL or file reference>"
+```
+
+Rows go to SQLite `validation_log` and are never rewritten. The next report shows them on the
+matching judgment and in the validation ledger. `supports` / `contradicts` / `unknown` describe
+what the observation says, not a probability.

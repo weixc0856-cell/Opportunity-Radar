@@ -68,8 +68,10 @@ Federal Register / BLS Pilot ──> 独立 Pilot 库 ──> 经济数据引擎
   按 `reports/archive/YYYY/MM/DD/` 归档两个版本、`.items.json`（分析快照）与
   `.manifest.json`（运行 ID、报告哈希、统计）；附录同时写入 SQLite `report_sections`。
   `--render-only` 只刷新 latest，不新增归档，也不写数据库。
-- 邮件结构：执行摘要 → 关键判断 → 建议行动 → 待验证假设 → 风险与反证 → 监测清单 →
-  证据与方法 → 附录说明（计数 + 存档位置）。逐条明细、未纳入条目与来源附录留在本地完整版。
+- 邮件结构：执行摘要（含决策请求）→ 关键判断（决策级/验证级/观察级）→ 建议行动与验证台账
+  → 待验证假设 → 风险登记表 → 监测清单 → 证据与方法 → 附录说明。
+  逐条明细、未纳入条目与来源附录留在本地完整版。没有决策级机会时，报告第一句直说，
+  并给出“默认不投入”的决策请求。
 - **事件视图**：同属一个事件的报道只占一张卡片。事件证据状态分为 `EVIDENCE_BACKED`、
   `NO_EVIDENCE`、`INSUFFICIENT_EVIDENCE`；无 Evidence 的事件仍保留，但卡片明确显示“证据状态：无证据
   （仅线索，不作为已核实事实）”。文本、HTML 和邮件共用同一 `event_summary_lines`，归档 JSON 保留原始
@@ -289,6 +291,26 @@ R5 经济库位于 `data/economic/economic.sqlite3`：`datasets` / `observations
   `python -m opportunity_radar.datasets --check` 探测最新期间；许可未核对的数据集保持 `blocked`。
 - `config/page_watch.csv` + `opportunity_radar/page_monitor.py`：无 Feed 的官方页面低频变更监测，
   只保存链接与标题，先读 robots.txt，401/403/429 不重试，不执行 JavaScript。
+
+## 可选扩展源：YouTube 访谈与公开检索（默认关闭）
+
+两条扩展通道只在本地配置启用后运行，不改变评分、证据门槛或发布门禁：
+
+| 通道 | 配置 | 试跑 | 边界 |
+|---|---|---|---|
+| YouTube 访谈字幕 | `config/youtube_sources.json`（示例 `config/youtube_sources.example.json`） | `python -m opportunity_radar.cli --youtube-check "<URL>"` | 只取公开元数据与人工/自动字幕；不下载整片、不用 cookies、不取中文自动翻译；字幕按 E1 处理 |
+| 全网新闻检索 | `config/discovery_sources.json`（示例 `config/discovery_sources.example.json`） | `python -m opportunity_radar.cli --search-check "<query>" --search-provider google_news` | Google News RSS / GDELT / NewsAPI / Brave / Guardian；只读公开 RSS/API；可选页面抓取先读 robots.txt，遇 401/403/429/付费墙即停止 |
+
+- 两个功能还受 `OR_YOUTUBE_ENABLED=1`、`OR_DISCOVERY_ENABLED=1` 控制；默认 `0`。
+- 每日运行会把可选源与 FreshRSS 文章合并分析；失败写入来源审计，不会阻断日报。
+- 没有 API key 时 Google News RSS 只有标题/出版方/日期/链接；需要摘要时配置
+  `OR_NEWSAPI_KEY`、`OR_BRAVE_API_KEY` 或 `OR_GUARDIAN_API_KEY`。GDELT 当前从本机返回 429，
+  已保留但默认关闭。
+- YouTube 字幕提取使用 `OR_YTDLP`（默认 `E:/YouTube-B/.venv/Scripts/yt-dlp.exe`）；
+  没有 yt-dlp 时该通道自动跳过。
+
+验证记录：`python -m opportunity_radar.cli --validation-record --candidate "<URL 或精确标题>"`
+把访谈/定价/买方/决策结果追加到 SQLite `validation_log`，下一期报告在对应判断与台账中显示。
 
 ## 运行与运维
 

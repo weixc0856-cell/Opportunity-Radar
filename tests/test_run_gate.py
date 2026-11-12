@@ -43,7 +43,7 @@ def settings_for(tmp):
            'OR_FRESHRSS_API_KEY': 'k', 'OR_LLM_MODEL': 'm', 'OR_SMTP_HOST': '127.0.0.1',
            'OR_SMTP_PORT': '2525', 'OR_EMAIL_FROM': 'qa@example.invalid',
            'OR_EMAIL_TO': 'qa@example.invalid', 'OR_MAX_ARTICLES': '10',
-           'OR_MODEL_AUTOSTART': '0'}
+           'OR_MODEL_AUTOSTART': '0', 'OR_DISCOVERY_ENABLED': '0', 'OR_YOUTUBE_ENABLED': '0'}
     with mock.patch.dict(os.environ, env, clear=False):
         base = Settings.from_env()
     return dataclasses.replace(base, db_path=env['OR_DB_PATH'], report_dir=env['OR_REPORT_DIR'],
@@ -101,7 +101,7 @@ class GateRunTests(unittest.TestCase):
             sent.append({'to': list(to), 'subject': subject, 'body': body, 'html': html})
             return [{'ok': True, 'recipient': r} for r in to]
 
-        with mock.patch('opportunity_radar.cli.Settings.from_env', return_value=self.settings), \
+        with mock.patch.dict(os.environ, {'OR_DISCOVERY_ENABLED': '0', 'OR_YOUTUBE_ENABLED': '0'}),              mock.patch('opportunity_radar.cli.Settings.from_env', return_value=self.settings), \
              mock.patch('opportunity_radar.cli.ensure_model', return_value=ensure), \
              mock.patch('opportunity_radar.cli.load_sources', return_value=[SOURCE]), \
              mock.patch('opportunity_radar.cli.audit_sources', return_value=[]), \
