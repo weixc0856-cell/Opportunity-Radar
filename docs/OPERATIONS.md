@@ -60,7 +60,7 @@ Rollback to the local instance: restore `.env.bak-2026-11-08-local-qwen` over `.
 
 ## Daily task
 
-`OpportunityRadarDaily` runs at 08:00 and calls:
+`OpportunityRadarDaily` runs at 06:00 and calls:
 
 ```
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<project>\deploy\windows\run-digest.ps1"
@@ -162,8 +162,13 @@ Isolated stores:
 
 ## Reports and logs
 
-- `reports/latest-digest.{txt,html}`; archive `reports/archive/YYYY/MM/DD/` with text, HTML,
+- `reports/latest-digest.{txt,html}` is the complete report (with appendices);
+  `reports/latest-digest-email.{txt,html}` is the exact edition mailed. Admin resend reads the
+  email edition, never the full one.
+- Archive `reports/archive/YYYY/MM/DD/` keeps text, HTML, `*.email.txt`, `*.email.html`,
   `items.json` and `manifest.json`.
+- Appendix sections are also stored in SQLite `report_sections` keyed by report hash;
+  `GET /api/report/sections` returns the latest stored brief and appendices.
 - Weekly/monthly: `reports/weekly-*.txt|json`, `reports/monthly-*.txt|json`, archived under
   `reports/archive/`.
 - Quality: `reports/quality/latest.{json,md}`.

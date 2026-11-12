@@ -63,10 +63,13 @@ Federal Register / BLS Pilot ──> 独立 Pilot 库 ──> 经济数据引擎
 
 ## 日报
 
-- 输出 `reports/latest-digest.txt`、`latest-digest.html`，并按 `reports/archive/YYYY/MM/DD/`
-  归档文本、HTML、`.items.json`（分析快照）与 `.manifest.json`（运行 ID、报告哈希、统计）。
+- 输出 `reports/latest-digest.txt`、`latest-digest.html`（完整版，含附录）与
+  `latest-digest-email.txt|html`（实际发送的邮件版，只含执行摘要到证据与方法）。
+  按 `reports/archive/YYYY/MM/DD/` 归档两个版本、`.items.json`（分析快照）与
+  `.manifest.json`（运行 ID、报告哈希、统计）；附录同时写入 SQLite `report_sections`。
   `--render-only` 只刷新 latest，不新增归档，也不写数据库。
-- 结构：执行摘要 → 三个编辑通道（A 商业/科技/经济、B 商业机会、C 技术观察）→ 数据概览 → 附录。
+- 邮件结构：执行摘要 → 关键判断 → 建议行动 → 待验证假设 → 风险与反证 → 监测清单 →
+  证据与方法 → 附录说明（计数 + 存档位置）。逐条明细、未纳入条目与来源附录留在本地完整版。
 - **事件视图**：同属一个事件的报道只占一张卡片。事件证据状态分为 `EVIDENCE_BACKED`、
   `NO_EVIDENCE`、`INSUFFICIENT_EVIDENCE`；无 Evidence 的事件仍保留，但卡片明确显示“证据状态：无证据
   （仅线索，不作为已核实事实）”。文本、HTML 和邮件共用同一 `event_summary_lines`，归档 JSON 保留原始
@@ -289,7 +292,7 @@ R5 经济库位于 `data/economic/economic.sqlite3`：`datasets` / `observations
 
 ## 运行与运维
 
-- 计划任务：`.\deploy\windows\install-task.ps1`（每日 08:00）。启动器 `run-digest.ps1` 记录运行 ID、
+- 计划任务：`.\deploy\windows\install-task.ps1`（每日 06:00）。启动器 `run-digest.ps1` 记录运行 ID、
   各阶段、CLI 进程号与退出码；启动器被外部终止时会留下 `reports/launcher-inflight.json`，
   下次运行会报出这条未完成记录。任务的电源设置显式关闭了"使用电池时停止"。
 - 外部数据源：启动器先运行 `run-sources.ps1`（SEC、EIA、Federal Register、BLS，各自独立库）；

@@ -2,7 +2,7 @@ from collections import Counter
 import argparse, hashlib, json, logging, os, re, sqlite3, sys
 from pathlib import Path
 from .config import Settings, load_scoring, parse_backoff
-from .digest import render_digest, empty_reason
+from .digest import render_digest, empty_reason, split_report
 from .email_sender import send_email, send_email_detailed, parse_recipients
 from .freshrss_client import FreshRSSClient, ordered_feed_ids
 from .render_html import render_html
@@ -169,19 +169,31 @@ def _validate_report(subject,body,html,items=None,stats=None):
 def _atomic_write(path,text):
     tmp=Path(str(path)+'.tmp'); tmp.write_text(text,encoding='utf-8'); os.replace(tmp,path)
 
-def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=None,stats=None,run_id=None):
+def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=None,stats=None,run_id=None,
+           email_body=None,email_html=None):
     """Write the latest report plus a dated local archive of the report and structured results.
 
+    `body`/`html` are the complete report kept locally; `email_body`/`email_html` are the
+    edition actually mailed. Both are validated; the archive keeps both so the emailed
+    brief and the traceable appendices stay auditable side by side.
     The archive stores this application's generated analysis, evidence metadata and report
     artifacts. It intentionally does not snapshot full third-party article bodies.
     """
     from datetime import datetime
     d=Path(report_dir); d.mkdir(parents=True,exist_ok=True)
     text=subject+'\n\n'+body
+    email_body=email_body if email_body is not None else body
+    email_html=email_html if email_html is not None else html
+    email_text=subject+chr(10)+chr(10)+email_body
     _validate_report(subject,body,html,items,stats)
+    _validate_report(subject,email_body,email_html,items,stats)
     report_hash=hashlib.sha256(text.encode()).hexdigest()[:16]
+    email_report_hash=hashlib.sha256(email_text.encode()).hexdigest()[:16]
     _atomic_write(d/f'{name}.txt',text)
     _atomic_write(d/f'{name}.html',html)
+    # The exact mailed edition, so resend and audit never fall back to the full appendix.
+    _atomic_write(d/f'{name}-email.txt',email_text)
+    _atomic_write(d/f'{name}-email.html',email_html)
     if not archive: return '',report_hash
     local_now=datetime.now().astimezone()
     stamp=local_now.strftime('%Y-%m-%d-%H%M%S')
@@ -190,7 +202,9 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
     arch.mkdir(parents=True,exist_ok=True)
     txt=arch/f'{stamp}.txt'; html_path=arch/f'{stamp}.html'
     items_path=arch/f'{stamp}.items.json'; manifest_path=arch/f'{stamp}.manifest.json'
+    email_txt=arch/f'{stamp}.email.txt'; email_html_path=arch/f'{stamp}.email.html'
     _atomic_write(txt,text); _atomic_write(html_path,html)
+    _atomic_write(email_txt,email_text); _atomic_write(email_html_path,email_html)
     payload_items=[{k:item.get(k) for k in ('title','url','source_name','published','event','event_context','analysis','score','signal_score','evidence_score','editorial_priority','priority_basis','status','filter_reason',
                                              'source_id','intelligence_lines','lane','distribution','evidence_level','evidence_state','evidence_rank','evidence_basis','content_basis_estimate',
                                              'classification','market_validation','risk_flag','verification_note',
@@ -199,10 +213,12 @@ def _write(report_dir,subject,body,html,name='latest-digest',archive=True,items=
                                          'run_id':run_id,'report_hash':report_hash,'items':payload_items},
                                         ensure_ascii=False,indent=2,default=str))
     manifest={'schema_version':2,'generated_at':local_now.isoformat(),'run_id':run_id,'report_hash':report_hash,
+              'email_report_hash':email_report_hash,
               'subject':subject,'article_count':len(payload_items),
-              'files':{'text':txt.name,'html':html_path.name,'items':items_path.name,'manifest':manifest_path.name},
+              'files':{'text':txt.name,'html':html_path.name,'items':items_path.name,'manifest':manifest_path.name,
+                       'email_text':email_txt.name,'email_html':email_html_path.name},
               'stats':stats or {},
-              'storage_note':'Generated analysis snapshot and report only; full source article bodies are not archived.'}
+              'storage_note':'Generated analysis snapshot, full report and the emailed brief only; full source article bodies are not archived.'}
     _atomic_write(manifest_path,json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
     return str(txt),report_hash
 
@@ -431,7 +447,10 @@ def _render_only(store,s,cfg):
     stats['prompt_hash']=next((x['meta'].get('prompt_hash') for x in items if x.get('meta',{}).get('prompt_hash')),'')
     stats['empty_reason']=empty_reason(stats)
     stats['watchlist']=build_watchlist(store, None)
-    subject,body=render_digest(items,stats); html=render_html(items,stats); _write(s.report_dir,subject,body,html,archive=False)
+    subject,body=render_digest(items,stats)
+    email_body=render_digest(items,stats,include_appendix=False)[1]
+    html=render_html(items,stats); email_html=render_html(items,stats,include_appendix=False)
+    _write(s.report_dir,subject,body,html,archive=False,email_body=email_body,email_html=email_html)
     print(body); print(f'Saved to {Path(s.report_dir)/"latest-digest.txt"} and latest-digest.html (render only, no archive).'); return 0
 
 def _source_sync_note(report_dir):
@@ -793,11 +812,22 @@ def main(argv=None):
         if win_start or win_end:
             stats['sample_window']={'since':s.sample_since,'until':s.sample_until,
                                     'pool':len(raw),'in_window':len(in_window),'sampled':len(articles)}
-        subject,body=render_digest(items,stats); html=render_html(items,stats)
+        subject,body=render_digest(items,stats)
+        # The email edition stops after the basis-of-preparation section; the appendices
+        # are stored in SQLite and the archive instead of being mailed to every recipient.
+        email_body=render_digest(items,stats,include_appendix=False)[1]
+        html=render_html(items,stats)
+        email_html=render_html(items,stats,include_appendix=False)
         if args.period=='auto' and not args.dry_run:
             stats['period_reports']=_maybe_period_reports(s)
         store.update_run(rid,stage='rendering')
-        archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid)
+        archive_path,report_hash=_write(s.report_dir,subject,body,html,items=items,stats=stats,run_id=rid,
+                                              email_body=email_body,email_html=email_html)
+        try:
+            _brief,appendix_sections=split_report(body)
+            store.save_report_sections(report_hash,[('email_brief','邮件正文（不含附录）',email_body)]+appendix_sections,run_id=rid)
+        except Exception:
+            logging.exception('Report appendices could not be stored in the database; the archive still holds them')
         out=Path(s.report_dir)/'latest-digest.txt'
         if args.dry_run:
             status=dry_run_status(analyzed,errors)
@@ -841,7 +871,8 @@ def main(argv=None):
                              archive_path,report_hash,exit_code=0,publication_status=pub,coverage=cov,failed_causes=dict(causes),not_attempted=not_attempted)
             logging.info('No new content; digest not sent.')
             print(body); print(f'No new content; report saved to {out} but not emailed.'); return 0
-        key=hashlib.sha256(f'{subject}|{report_hash}'.encode()).hexdigest()[:32]
+        # Idempotency is about what the recipient saw: the emailed brief, not the local appendix.
+        key=hashlib.sha256(f'{subject}|{email_body}'.encode()).hexdigest()[:32]
         recipients=parse_recipients(s.email_to)
         already=store.sent_recipients(key)
         pending=[r for r in recipients if r.casefold() not in already]
@@ -853,7 +884,7 @@ def main(argv=None):
             logging.info('Duplicate report; email skipped.')
             print(f'Same report already sent to all recipients; email skipped. Report saved to {out}.'); return 0 if status=='success' else 1
         store.update_run(rid,stage='sending')
-        results=send_email_detailed(s.smtp_host,s.smtp_port,s.smtp_username,s.smtp_password,s.email_from,pending,subject,body,s.smtp_starttls,html=html,security=s.smtp_security)
+        results=send_email_detailed(s.smtp_host,s.smtp_port,s.smtp_username,s.smtp_password,s.email_from,pending,subject,email_body,s.smtp_starttls,html=email_html,security=s.smtp_security)
         failed=[]
         for res in results:
             store.delivery(rid,'sent' if res['ok'] else 'failed',res.get('error',''),key,res['recipient'])

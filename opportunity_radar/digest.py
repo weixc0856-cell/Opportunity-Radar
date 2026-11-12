@@ -632,7 +632,53 @@ def _watch_rows(items):
                      f"{x.get('score',0)}/100"))
     return rows
 
-def render_digest(items,stats,date_label=None):
+REPORT_APPENDICES=(('appendix_a','八、附录 A · 条目明细（可追溯证据）'),
+                  ('appendix_b','九、附录 B · 未纳入与失败'),
+                  ('appendix_c','十、附录 C · 来源与数据源'))
+
+
+def appendix_note(items,stats):
+    """One compact line replacing the appendices in the email edition.
+
+    The counts stay visible so an excluded item never disappears silently, but the
+    traceability detail is stored in SQLite and the archive instead of being mailed.
+    """
+    shown=_shown(items); deferred=_deferred(items)
+    filtered=[x for x in items if x.get('status')=='filtered']
+    representatives,_siblings=group_by_event(shown)
+    parts=[f'条目明细 {len(representatives)} 条']
+    if deferred: parts.append(f'未纳入分发 {len(deferred)} 条')
+    if filtered: parts.append(f'已过滤 {len(filtered)} 篇')
+    if stats.get('watchlist'): parts.append('弱信号另行保留在库中')
+    issues=len(stats.get('source_issues') or [])
+    unresolved=int(stats.get('unresolved_sources') or 0)
+    if issues or unresolved: parts.append(f'来源审计问题 {issues+unresolved} 项')
+    return ('本次邮件只发送结论与证据方法部分；完整附录（'
+            + ' · '.join(parts)
+            + '）已写入本地数据库与归档报告，可追溯引文与未纳入条目请到管理台“日志与报告”查看完整版。')
+
+
+def split_report(body):
+    """Split a rendered report into its brief and the three appendix sections.
+
+    Email uses the brief; SQLite keeps the appendices keyed by report hash so traceability
+    survives archive cleanup. Returns (brief, [(kind,title,text), ...]).
+    """
+    lines=body.splitlines(); marks=[]
+    for kind,title in REPORT_APPENDICES:
+        for i,line in enumerate(lines):
+            if line.strip()==title:
+                marks.append((i,kind,title)); break
+    if not marks: return body, []
+    brief='\n'.join(lines[:marks[0][0]]).rstrip()
+    sections=[]
+    for n,(i,kind,title) in enumerate(marks):
+        end=marks[n+1][0] if n+1<len(marks) else len(lines)
+        sections.append((kind,title,'\n'.join(lines[i:end]).rstrip()))
+    return brief,sections
+
+
+def render_digest(items,stats,date_label=None,include_appendix=True):
     """Consulting-format brief: answer first, then the few judgments that carry it.
 
     Structure follows the pyramid principle used by MBB/Big Four briefs: a governing
@@ -734,6 +780,10 @@ def render_digest(items,stats,date_label=None):
                      + (f" · 警告：{','.join(pipeline.get('warnings') or [])}" if pipeline.get('warnings') else ''))
     lines.append(f"   分析记录：模型 {stats.get('model') or '未记录'} · 提示词 v{stats.get('prompt_version') or '未记录'}（{stats.get('prompt_hash') or 'hash未记录'}）· 规则 {stats.get('rules_version','v2')}")
     lines.append('   局限：本报告只覆盖已成功分析的条目；单一来源、未定位引文与未验证推断均已逐条标注，不构成对营收、市场规模或法律许可的结论。')
+
+    if not include_appendix:
+        lines += ['','附：完整附录已存档，不随邮件发送','   '+appendix_note(items,stats)]
+        return subject,'\n'.join(lines)
 
     lines += ['','八、附录 A · 条目明细（可追溯证据）']
     representatives,_siblings=group_by_event(shown)

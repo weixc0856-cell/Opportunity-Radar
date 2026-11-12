@@ -8,8 +8,10 @@
 6. `evidence.py` decides how much source text we hold (`content_basis`) and what it can support
    (`evidence_state`); `lanes.py` routes the article to editorial lane A, B or C; `scoring.py`
    computes a deterministic per-lane ranking that is gated by the evidence state.
-7. `digest.py` renders the briefing by lane, separating located quotations from unlocated ones.
-8. `email_sender.py` sends SMTP mail.
+7. `digest.py` renders two editions from one item set: the emailed brief (sections 1–7 plus an
+   appendix note) and the complete report with traceable appendices. `render_html.py` follows the
+   same split; `Store.save_report_sections` keeps appendices in SQLite by report hash.
+8. `email_sender.py` sends SMTP mail using the brief edition only.
 9. SQLite stores analysis and run records.
 10. `publication.py` decides PASS / PASS_WITH_LIMITATIONS / HOLD from analysis coverage; HOLD sends nothing.
 11. R1: `unified.py` builds events, evidences and claims from what was already stored; `linking.py` adds

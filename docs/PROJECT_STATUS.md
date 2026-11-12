@@ -1,6 +1,6 @@
 # 项目状态（2026-11-03）
 
-**结论：R0–R6 已接通同一条每日生产管线；生产库已迁移到 schema v9；每日任务 08:00
+**结论：R0–R6 已接通同一条每日生产管线；生产库已迁移到 schema v9；每日任务 06:00
 运行日报并自动生成到期的周报/月报。** 本文件只写当前事实；历史批次过程见 Git 与
 `docs/archive/`。
 
@@ -80,7 +80,7 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
 | R6 质量与回测 | `quality.py` | 指标快照 + 30/90 天回测（18 runs，77.78% success）；版本对比；聚类/阅读指标 `NOT_MEASURED` | **PARTIAL（可测项 PASS）** |
 | Opportunity 数据库 | `opportunity.py`、`opportunity_discovery.py` | 48 行 `signal_detected`，489 links，48 revisions | **PASS_VERIFIED（signal 层）** |
 | Source Pilot | `pilot/` | FR 17 / BLS 971；GDELT 429 | **PARTIAL（GDELT 阻断）** |
-| 每日自动化 | `run-digest.ps1 --period auto` | 计划任务 08:00；180 分钟上限 | **PASS_VERIFIED（配置）；真实 dry-run 见 §4** |
+| 每日自动化 | `run-digest.ps1 --period auto` | 计划任务 06:00；180 分钟上限 | **PASS_VERIFIED（配置）；真实 dry-run 见 §4** |
 
 ## 4. 真实验证
 
@@ -107,6 +107,14 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   N0–N5 处理 8 篇（1 篇已处理、1 篇无数字候选、0 失败），本批 8 篇均为非经济数字段落，
   未产出 r2-v4 Claim；实体 70 条 mention；Opportunity 新建 8、已有 51；经济库同步成功；
   质量快照 `PASS_MEASURED`；未发送邮件（dry-run），退出码 0。
+
+### 邮件版与完整版（2026-11-12）
+
+- 邮件只发送第一至七节与附录说明。用生产库 `--render-only` 实测：邮件版 9.3 KB，完整版 93.6 KB，
+  邮件正文不含附录 A/B/C。
+- 附录按 `report_hash` 写入 SQLite `report_sections`（首次保存时自建表，不改 schema 版本），
+  归档同时保存 `*.email.txt` / `*.email.html`；管理台 `GET /api/report/sections` 可读。
+- 测试：全量 1069 项通过（1 项环境跳过，2026-11-12）。
 
 ### 发现层与展示层分离
 
@@ -146,7 +154,7 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
 
 ## 6. 运行方式
 
-- 计划任务：`OpportunityRadarDaily`，每天 08:00，180 分钟上限，`--period auto`。
+- 计划任务：`OpportunityRadarDaily`，每天 06:00，180 分钟上限，`--period auto`。
 - 服务：FreshRSS `127.0.0.1:8088`（Docker Compose）；模型 `127.0.0.1:8080/v1`
   CPU-only、64K、单 slot；SMTP 163:465 SSL。
 - 生产迁移：`unified_main db-migrate --apply --backup <file>`；业务 CLI `migrate=False`，

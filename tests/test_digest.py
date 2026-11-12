@@ -248,3 +248,41 @@ class ConflictSectionTests(unittest.TestCase):
   _,body=render_digest([item()],stats(fetched=1,analyzed=1))
   self.assertNotIn('数据冲突',body)
 
+
+
+class EmailEditionTests(unittest.TestCase):
+ """The mail carries the brief; traceability lives in the database and archive."""
+ def _items(self):
+  it=item('priority',80,'real candidate'); it['evidence']=[{'id':'e1','quote':'q','field':'summary'}]
+  return [it]
+
+ def test_email_edition_omits_appendices(self):
+  _,body=render_digest(self._items(),stats(fetched=1,analyzed=1),'2026-10-20',include_appendix=False)
+  for heading in ('一、执行摘要（核心判断）','二、关键判断','三、建议行动','四、待验证假设',
+                  '五、风险与反证','六、监测清单','七、证据与方法'):
+   self.assertIn(heading,body)
+  for heading in ('八、附录 A','九、附录 B','十、附录 C'):
+   self.assertNotIn(heading,body)
+  self.assertIn('完整附录已存档',body)
+  self.assertIn('不随邮件发送',body)
+
+ def test_email_edition_keeps_excluded_counts_visible(self):
+  it=item('priority',94,'supply'); it['distribution']='deferred'
+  _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20',include_appendix=False)
+  self.assertIn('未纳入分发 1 条',body)
+  self.assertIn('本地数据库',body)
+
+ def test_email_edition_still_discloses_partial_coverage(self):
+  _,body=render_digest(self._items(),stats(fetched=10,queued=10,analyzed=6,failed=4,coverage=0.6,
+        publication_status='PASS_WITH_LIMITATIONS'),'2026-10-20',include_appendix=False)
+  self.assertIn('覆盖率 60%',body)
+  self.assertIn('运行完整性',body)
+
+ def test_split_report_keeps_the_appendices_for_storage(self):
+  from opportunity_radar.digest import split_report
+  _,body=render_digest(self._items(),stats(fetched=1,analyzed=1),'2026-10-20')
+  brief,sections=split_report(body)
+  self.assertNotIn('八、附录 A',brief)
+  self.assertEqual([k for k,_,_ in sections],['appendix_a','appendix_b','appendix_c'])
+  self.assertTrue(sections[0][2].startswith('八、附录 A'))
+  self.assertIn('十、附录 C',sections[2][2])

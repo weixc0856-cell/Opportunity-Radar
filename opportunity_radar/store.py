@@ -5,6 +5,11 @@ from datetime import datetime, timezone
 from .unified import (SCHEMA as UNIFIED_SCHEMA, SCHEMA_VERSION as UNIFIED_SCHEMA_VERSION,
                       SchemaVersionError, require_schema)
 
+REPORT_SECTIONS_DDL=('CREATE TABLE IF NOT EXISTS report_sections('
+                     'report_hash TEXT NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL, '
+                     'title TEXT NOT NULL, body TEXT NOT NULL, run_id INTEGER, created_at TEXT NOT NULL, '
+                     'PRIMARY KEY(report_hash,kind))')
+
 def now(): return datetime.now(timezone.utc).isoformat()
 class Store:
     def __init__(self,path,read_only=False,migrate=True):
@@ -42,7 +47,9 @@ class Store:
         CREATE TABLE IF NOT EXISTS analysis_failures(failure_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, article_key TEXT, url TEXT, stage TEXT, error TEXT, created_at TEXT NOT NULL, cause TEXT, attempts INTEGER);
         CREATE TABLE IF NOT EXISTS analysis_sections(section_id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, analyzed_at TEXT NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, evidence_id TEXT, meta_json TEXT, UNIQUE(article_key,analyzed_at,kind,ordinal));
         CREATE TABLE IF NOT EXISTS reviews(article_key TEXT PRIMARY KEY, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);''')
+        CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT, article_key TEXT NOT NULL, previous_label TEXT, label TEXT NOT NULL, note TEXT, reviewed_at TEXT NOT NULL);
+''')
+            c.execute(REPORT_SECTIONS_DDL)
             cols={r[1] for r in c.execute('PRAGMA table_info(articles)')}
             for name in ('fetched_at','content_source','retrieval_status','event_key','source_id'):
                 if name not in cols:
@@ -246,6 +253,39 @@ class Store:
     def latest_deliveries(self):
         r=self.latest_run()
         return self.run_deliveries(r['run_id']) if r else []
+    def save_report_sections(self,report_hash,sections,run_id=None):
+        """Persist the rendered report sections that are not emailed.
+
+        The email edition carries the brief; the appendices (item detail, exclusions,
+        sources) are stored here keyed by report hash so traceability survives archive
+        cleanup and can be re-read without re-analysing or re-rendering.
+        """
+        stamp=now()
+        with self.connect() as c:
+            # Additive, idempotent DDL: production runs open the store with migrate=False.
+            c.execute(REPORT_SECTIONS_DDL)
+            c.execute('DELETE FROM report_sections WHERE report_hash=?',(report_hash,))
+            c.executemany('INSERT INTO report_sections(report_hash,kind,ordinal,title,body,run_id,created_at) VALUES(?,?,?,?,?,?,?)',
+                          [(report_hash,kind,ordinal,title,body,run_id,stamp)
+                           for ordinal,(kind,title,body) in enumerate(sections)])
+    def report_sections(self,report_hash,kind=None):
+        with self.connect() as c:
+            try:
+                if kind:
+                    rows=c.execute('SELECT kind,ordinal,title,body,run_id,created_at FROM report_sections WHERE report_hash=? AND kind=? ORDER BY ordinal',(report_hash,kind)).fetchall()
+                else:
+                    rows=c.execute('SELECT kind,ordinal,title,body,run_id,created_at FROM report_sections WHERE report_hash=? ORDER BY ordinal',(report_hash,)).fetchall()
+            except sqlite3.OperationalError:
+                return []  # older database that has not stored a report since the upgrade
+        return [dict(r) for r in rows]
+    def latest_report_sections(self,kind=None):
+        """Sections of the most recently stored report, for the local admin view."""
+        with self.connect() as c:
+            try:
+                row=c.execute('SELECT report_hash FROM report_sections ORDER BY rowid DESC LIMIT 1').fetchone()
+            except sqlite3.OperationalError:
+                return []
+        return self.report_sections(row['report_hash'],kind) if row else []
     def consecutive_failures(self):
         with self.connect() as c:
             rows=[r['status'] for r in c.execute("SELECT status FROM runs WHERE status IN ('success','no_new_content','failed','analysis_failed','partial_failed') ORDER BY run_id DESC LIMIT 30")]

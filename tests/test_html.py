@@ -45,3 +45,15 @@ class ConflictBlockTests(unittest.TestCase):
  def test_no_block_without_conflicts(self):
   self.assertNotIn('数据冲突',render_html([item()],stats(),'2026-10-20'))
 
+
+
+class EmailEditionTests(unittest.TestCase):
+ def test_email_edition_has_no_appendix_cards(self):
+  html=render_html([item()],stats(),'2026-10-20',include_appendix=False)
+  self.assertIn('执行摘要',html)
+  self.assertNotIn('附录 A · 条目明细',html)
+  self.assertNotIn('class="card"',html)
+  self.assertIn('完整附录',html)
+ def test_full_edition_keeps_appendices(self):
+  html=render_html([item()],stats(),'2026-10-20')
+  self.assertIn('附录 A · 条目明细',html)

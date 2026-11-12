@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from .analytics import funnel, source_breakdown, evidence_breakdown, denominator_note, lane_breakdown
 from .digest import (REASON_LABEL, SOURCE_LABEL, MARKET_LABEL, WEIGHT_LABEL,
-                     decision_headline, management_note, empty_reason, _pay_strong, _judgment,
+                     decision_headline, appendix_note, management_note, empty_reason, _pay_strong, _judgment,
                      _why, _evidence_text, _market, _commercial_line, _lane, _state, _shown, _deferred,
                      STATUS_LABEL, group_by_event, event_summary_lines, event_status_note, _v5_sections,
                      _one_line, _action_title, _evidence_basis, _implication, _confidence,
@@ -352,7 +352,7 @@ def _watch_block(watch):
     return ''.join(out)
 
 
-def render_html(items, stats, date_label=None):
+def render_html(items, stats, date_label=None, include_appendix=True):
     date_label = date_label or datetime.now().astimezone().strftime('%Y-%m-%d')
     counts = stats.get('counts', {})
     strong = sum(1 for x in items if _pay_strong(x))
@@ -435,65 +435,70 @@ def render_html(items, stats, date_label=None):
                  + (f' · 已有结果跳过 {_e(skipped)} 篇' if skipped else '')
                  + f' · 入选 {len(shown)} 条 · 明确付费证据 {strong} 条</div></div></section>')
 
-    parts.append(_section(8, '附录 A · 条目明细', 'Evidence appendix'))
-    representatives, _siblings = group_by_event(shown)
-    if representatives:
-        for x in sorted(representatives, key=_order_key):
-            parts.append(_finding(x))
-            note = event_summary_lines(x)
-            if note:
-                parts.append('<div class="muted" style="margin:-8px 0 14px;">'
-                             + '<br>'.join(_e(line.strip()) for line in note) + '</div>')
+    if include_appendix:
+        parts.append(_section(8, '附录 A · 条目明细', 'Evidence appendix'))
+        representatives, _siblings = group_by_event(shown)
+        if representatives:
+            for x in sorted(representatives, key=_order_key):
+                parts.append(_finding(x))
+                note = event_summary_lines(x)
+                if note:
+                    parts.append('<div class="muted" style="margin:-8px 0 14px;">'
+                                 + '<br>'.join(_e(line.strip()) for line in note) + '</div>')
+        else:
+            parts.append(f'<p class="panel">{_e(reason)}</p>')
+        parts.append('</section>')
+
+        parts.append(_section(9, '附录 B · 未纳入与失败', 'Excluded'))
+        if deferred:
+            rows = ''.join(
+                f'<tr><td>[{_e(STATUS_LABEL.get(x.get("status"), x.get("status")))} · {_e(x.get("score", 0))}/100] '
+                f'{_e(x.get("title", ""))}</td><td class="mono">{_e(x.get("source_name", "Unknown"))}</td></tr>'
+                for x in sorted(deferred, key=lambda v: (-v.get('score', 0), v.get('title', ''))))
+            parts.append(f'<p class="muted" style="margin:0 0 8px;">本期未纳入分发（来源单期配额）：'
+                         f'{len(deferred)} 条，原始判断保留如下，不代表价值较低。</p>'
+                         f'<table><thead><tr><th>条目</th><th>来源</th></tr></thead><tbody>{rows}</tbody></table>')
+        if filtered:
+            for key, label in REASON_LABEL.items():
+                group = [x for x in filtered if x.get('filter_reason') == key]
+                if not group:
+                    continue
+                rows = ''.join(f'<tr><td>[{x.get("score", 0)}/100] {_e(x.get("title", ""))}</td></tr>'
+                               for x in group[:10])
+                parts.append(f'<p class="muted" style="margin:14px 0 8px;"><strong>{_e(label)}：{len(group)} 篇</strong></p>'
+                             f'<table><tbody>{rows}</tbody></table>')
+        if not deferred and not filtered:
+            parts.append('<p class="panel">无。</p>')
+        watch_list = stats.get('watchlist')
+        if watch_list:
+            parts.append('<div style="margin-top:22px;"><div class="muted" style="font-weight:700;color:var(--ink);">'
+                         '弱信号（保留在库中，不进入主阅读区）</div></div>')
+            parts.append(_watch_block(watch_list))
+        parts.append('</section>')
+
+        parts.append(_section(10, '附录 C · 来源与数据源', 'Sources'))
+        src_rows = [(r['source'], r['items'], f"引文 {r['located']}/{r['evidence']}" if r['evidence'] else '无引文')
+                    for r in source_breakdown(items)]
+        parts.append(_chart_block('来源贡献（分析条目）', src_rows))
+        sources = ', '.join(f'{k} {v}' for k, v in Counter(x.get('source_name', 'Unknown') for x in items).most_common()) or '无'
+        parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源分布：</strong>{_e(sources)}</p>')
+        quality = Counter(_evidence_text(x) for x in items)
+        q = ', '.join(f'{k} {v}' for k, v in quality.most_common()) or '无'
+        parts.append(f'<p class="muted" style="margin-top:4px;"><strong>数据质量：</strong>证据等级分布 {_e(q)}。'
+                     '仅标题或无法在原文中定位的摘录不能作为已验证需求。</p>')
+        conflict_lines = stats.get('conflicts') or []
+        if conflict_lines:
+            body = '<br>'.join(_e(line.strip()) for line in conflict_lines)
+            parts.append(f'<div class="warn" style="margin-top:12px;"><strong>数据冲突（记录，不判定对错）：</strong>'
+                         f'<br>{body}</div>')
+        parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源审计：</strong>{_audit_html(stats)}</p>')
+        parts.append(f'<p class="muted" style="margin-top:4px;"><strong>评分规则：</strong>'
+                     f'版本 {_e(stats.get("rules_version", "v2"))}。{_rules_html(stats)}</p>')
+        parts.append('</section>')
+
     else:
-        parts.append(f'<p class="panel">{_e(reason)}</p>')
-    parts.append('</section>')
-
-    parts.append(_section(9, '附录 B · 未纳入与失败', 'Excluded'))
-    if deferred:
-        rows = ''.join(
-            f'<tr><td>[{_e(STATUS_LABEL.get(x.get("status"), x.get("status")))} · {_e(x.get("score", 0))}/100] '
-            f'{_e(x.get("title", ""))}</td><td class="mono">{_e(x.get("source_name", "Unknown"))}</td></tr>'
-            for x in sorted(deferred, key=lambda v: (-v.get('score', 0), v.get('title', ''))))
-        parts.append(f'<p class="muted" style="margin:0 0 8px;">本期未纳入分发（来源单期配额）：'
-                     f'{len(deferred)} 条，原始判断保留如下，不代表价值较低。</p>'
-                     f'<table><thead><tr><th>条目</th><th>来源</th></tr></thead><tbody>{rows}</tbody></table>')
-    if filtered:
-        for key, label in REASON_LABEL.items():
-            group = [x for x in filtered if x.get('filter_reason') == key]
-            if not group:
-                continue
-            rows = ''.join(f'<tr><td>[{x.get("score", 0)}/100] {_e(x.get("title", ""))}</td></tr>'
-                           for x in group[:10])
-            parts.append(f'<p class="muted" style="margin:14px 0 8px;"><strong>{_e(label)}：{len(group)} 篇</strong></p>'
-                         f'<table><tbody>{rows}</tbody></table>')
-    if not deferred and not filtered:
-        parts.append('<p class="panel">无。</p>')
-    watch_list = stats.get('watchlist')
-    if watch_list:
-        parts.append('<div style="margin-top:22px;"><div class="muted" style="font-weight:700;color:var(--ink);">'
-                     '弱信号（保留在库中，不进入主阅读区）</div></div>')
-        parts.append(_watch_block(watch_list))
-    parts.append('</section>')
-
-    parts.append(_section(10, '附录 C · 来源与数据源', 'Sources'))
-    src_rows = [(r['source'], r['items'], f"引文 {r['located']}/{r['evidence']}" if r['evidence'] else '无引文')
-                for r in source_breakdown(items)]
-    parts.append(_chart_block('来源贡献（分析条目）', src_rows))
-    sources = ', '.join(f'{k} {v}' for k, v in Counter(x.get('source_name', 'Unknown') for x in items).most_common()) or '无'
-    parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源分布：</strong>{_e(sources)}</p>')
-    quality = Counter(_evidence_text(x) for x in items)
-    q = ', '.join(f'{k} {v}' for k, v in quality.most_common()) or '无'
-    parts.append(f'<p class="muted" style="margin-top:4px;"><strong>数据质量：</strong>证据等级分布 {_e(q)}。'
-                 '仅标题或无法在原文中定位的摘录不能作为已验证需求。</p>')
-    conflict_lines = stats.get('conflicts') or []
-    if conflict_lines:
-        body = '<br>'.join(_e(line.strip()) for line in conflict_lines)
-        parts.append(f'<div class="warn" style="margin-top:12px;"><strong>数据冲突（记录，不判定对错）：</strong>'
-                     f'<br>{body}</div>')
-    parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源审计：</strong>{_audit_html(stats)}</p>')
-    parts.append(f'<p class="muted" style="margin-top:4px;"><strong>评分规则：</strong>'
-                 f'版本 {_e(stats.get("rules_version", "v2"))}。{_rules_html(stats)}</p>')
-    parts.append('</section>')
+        parts.append(_section(8, '附录 · 本地存档', 'Appendix archived'))
+        parts.append(f'<p class="panel">{_e(appendix_note(items, stats))}</p></section>')
 
     parts.append('<div class="foot">免责声明：本报告为自动化初筛，不构成商业、法律或投资结论。'
                  '营收、利润、市场规模和法律许可等主张必须核对原始来源及独立证据。</div>')

@@ -206,3 +206,21 @@ class PublicationPersistenceTests(unittest.TestCase):
    try: self.assertEqual(probe.execute('PRAGMA integrity_check').fetchone()[0],'ok')
    finally: probe.close()
 
+
+
+class ReportSectionTests(unittest.TestCase):
+ def test_sections_are_stored_by_report_hash(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'sections.sqlite3'))
+   s.save_report_sections('abc123',[('email_brief','邮件正文','brief'),('appendix_a','附录 A','full')],run_id=7)
+   rows=s.report_sections('abc123')
+   self.assertEqual([r['kind'] for r in rows],['email_brief','appendix_a'])
+   self.assertEqual(rows[1]['body'],'full'); self.assertEqual(rows[0]['run_id'],7)
+   self.assertEqual(s.latest_report_sections('appendix_a')[0]['body'],'full')
+
+ def test_resaving_a_report_replaces_its_sections(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'sections.sqlite3'))
+   s.save_report_sections('abc123',[('email_brief','邮件正文','v1'),('appendix_a','附录 A','v1')])
+   s.save_report_sections('abc123',[('email_brief','邮件正文','v2')])
+   self.assertEqual([r['body'] for r in s.report_sections('abc123')],['v2'])
