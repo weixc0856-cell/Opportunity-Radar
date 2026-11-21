@@ -1,5 +1,5 @@
 import unittest
-from opportunity_radar.digest import render_digest, management_note
+from opportunity_radar.digest import render_digest, management_note, readiness_of, decision_request
 
 def item(status='watch',score=60,title='t',reason=''):
     return {'title':title,'url':'https://example.invalid/a','source_name':'s','analysis':{},'score':score,'status':status,
@@ -9,6 +9,19 @@ def news(status='priority',score=88,title='Acme raises guidance'):
     return {'title':title,'url':'https://example.invalid/n','source_name':'News','analysis':{},
             'score':score,'status':status,'filter_reason':'','evidence_level':'summary','evidence_state':'rss_excerpt_only',
             'classification':{'article_type':'funding','signal_type':'payment_demand','buyer_type':'enterprise_it'},'risk_flag':''}
+
+def validation_item(status='priority',score=80,title='real candidate'):
+    it=item(status,score,title)
+    it['evidence']=[{'id':'e1','quote':'q','field':'summary'}]
+    it['evidence_state']='rss_excerpt_only'
+    it['market_validation']='single_source'
+    it['classification']={'article_type':'user_pain','signal_type':'user_pain','pain_evidence':'repeated'}
+    it['analysis']={'actionability':'investigate','summary_zh':title,
+                    'facts':[{'ordinal':1,'text':'f','quote':'q','status':'located','evidence_id':'e1'}],
+                    'gaps':[{'missing':'m','why_it_matters':'w','how_to_close':'h'}],
+                    'actions':[{'step':'s','kind':'verify_fact','done_when':'d'}]}
+    return it
+
 
 LANE_WEIGHTS={
  'A':{'importance':25,'source_reliability':20,'evidence_completeness':20,'novelty':15,'relevance':10,'timeliness':10},
@@ -24,7 +37,7 @@ def stats(**kw):
 class Tests(unittest.TestCase):
  def test_sample_mode_disclaims_real_business_judgment(self):
   _,body=render_digest([item('watch',60,'synthetic')],stats(sample_mode=True,fetched=1,analyzed=1),'2026-10-20')
-  self.assertIn('不形成真实商业判断',body)
+  self.assertIn('不形成真实情报判断',body)
   self.assertIn('演示数据声明',body)
  def test_empty_no_data_is_honest(self):
   subject,body=render_digest([],stats(),'2026-10-20')
@@ -39,17 +52,17 @@ class Tests(unittest.TestCase):
  def test_failed_run_is_reported_as_empty(self):
   _,body=render_digest([],stats(fetched=10,failed=3),'2026-10-20')
   self.assertIn('分析结果为空',body)
- def test_a_priority_item_leads_the_key_judgments(self):
+ def test_a_priority_item_is_traceable_in_the_opportunity_appendix(self):
   _,body=render_digest([news()],stats(fetched=1,analyzed=1),'2026-10-20')
-  block=body.split('二、关键判断\n')[1].split('三、建议行动')[0]
+  block=body.split('四、附录 D')[1].split('五、附录 A')[0]
   self.assertIn('Acme raises guidance',block)
  def test_a_selected_item_is_traceable_in_the_appendix(self):
   _,body=render_digest([item('priority',80,'real candidate')],stats(fetched=1,analyzed=1),'2026-10-20')
   self.assertIn('[80/100] real candidate',body)
- def test_the_consulting_sections_are_always_present(self):
+ def test_the_intelligence_sections_are_always_present(self):
   _,body=render_digest([item('watch',60)],stats(fetched=1,analyzed=1),'2026-10-20')
-  for heading in ('一、执行摘要（核心判断）','二、关键判断','三、建议行动','四、待验证假设',
-                  '五、风险与反证','六、监测清单','七、证据与方法','八、附录 A'):
+  for heading in ('一、执行摘要（情报主线）','二、情报整合与长线关注','三、证据与方法',
+                  '四、附录 D','五、附录 A','六、附录 B','七、附录 C'):
    self.assertIn(heading,body)
  def test_filtered_grouped_by_reason(self):
   _,body=render_digest([item('filtered',20,'a job',reason='hiring')],stats(fetched=1,analyzed=1),'2026-10-20')
@@ -58,9 +71,10 @@ class Tests(unittest.TestCase):
   _,body=render_digest([],stats(fetched=10,new=2,updated=1,queued=3,analyzed=3,failed=1,skipped=7),'2026-10-20')
   self.assertIn('获取 10',body);self.assertIn('新增 2',body);self.assertIn('内容更新 1',body);self.assertIn('已有结果跳过 7',body)
  def test_conclusion_first(self):
-  _,body=render_digest([item('watch',62,'ParaView crinkle')],stats(fetched=10,analyzed=10),'2026-10-20')
-  head=body.split('一、执行摘要（核心判断）\n')[1].split('\n')[0].strip()
-  self.assertIn('建议集中核实',head);self.assertIn('ParaView crinkle',head)
+  it=validation_item('watch',62,'ParaView crinkle'); it['intelligence_lines']='macro_economy'
+  _,body=render_digest([it],stats(fetched=10,analyzed=10),'2026-10-20')
+  head=body.split('一、执行摘要（情报主线）\n')[1].split('\n')[0].strip()
+  self.assertIn('长线关注',head);self.assertIn('先核实',head)
  def test_next_step_is_inline(self):
   it=item('watch',62,'ParaView crinkle'); it['analysis']={'suggested_next_step':'联系 3 位 ParaView 用户确认复现条件'}
   _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
@@ -103,7 +117,7 @@ class Tests(unittest.TestCase):
  def test_basis_of_preparation_section(self):
   it=item('watch',60); it['evidence']=[{'id':'e1','quote':'q','field':'summary','start':0}]
   _,body=render_digest([it],stats(fetched=10,new=8,queued=6,analyzed=6,counts={'watch':1,'priority':0,'filtered':5}),'2026-10-20')
-  self.assertIn('七、证据与方法',body);self.assertIn('漏斗：本轮获取 10',body)
+  self.assertIn('三、证据与方法',body);self.assertIn('漏斗：本轮获取 10',body)
   self.assertIn('口径：本轮进入分析的 6 条',body)
  def test_none_commercial_signal_is_not_appended(self):
   it=item('watch',60); it['analysis']={'summary_zh':'用户报告了下载问题','commercial_signal':'none'}
@@ -111,9 +125,9 @@ class Tests(unittest.TestCase):
   self.assertIn('初判：用户报告了下载问题',body);self.assertNotIn('下载问题 none',body)
 
  def test_key_judgments_are_capped_at_four(self):
-  items=[item('priority',90-i,f'item {i}') for i in range(6)]
+  items=[validation_item('priority',90-i,f'item {i}') for i in range(6)]
   _,body=render_digest(items,stats(fetched=6,analyzed=6),'2026-10-20')
-  block=body.split('二、关键判断\n')[1].split('三、建议行动')[0]
+  block=body.split('  关键判断\n')[1].split('  建议行动与验证台账')[0]
   self.assertEqual(block.count('KJ'),4)
  def test_source_audit_section_reports_issues(self):
   s=stats(fetched=1,analyzed=1,source_issues=[{'severity':'warning','source_id':'x','code':'stale_last_verified_at','message':'re-review'}])
@@ -157,13 +171,11 @@ class LegacyRecordTests(unittest.TestCase):
 class OutputConsistencyTests(unittest.TestCase):
  """Every surface must describe the same item the same way."""
  def _rich(self):
-  it=item('priority',80,'same item')
-  it['evidence']=[{'id':'e1','quote':'q','field':'summary'}]
-  it['evidence_state']='rss_excerpt_only'; it['market_validation']='single_source'
+  it=validation_item('priority',80,'same item')
   return it
  def test_brief_and_card_agree_on_evidence_and_validation(self):
   _,body=render_digest([self._rich()],stats(fetched=1,analyzed=1),'2026-10-20')
-  brief=body.split('二、关键判断\n')[1].split('三、建议行动')[0]
+  brief=body.split('四、附录 D')[1].split('五、附录 A')[0]
   self.assertIn('E1 · 摘要引文已定位',brief)
   self.assertIn('单一来源',brief)
   card=next(l for l in body.splitlines() if l.startswith('   证据：'))
@@ -194,7 +206,7 @@ class DistributionTests(unittest.TestCase):
   self.assertNotIn('1. [94/100] 供应链中断公告',body)
  def test_headline_reports_deferral_instead_of_no_signal(self):
   _,body=render_digest([self._deferred()],stats(fetched=1,analyzed=1),'2026-10-20')
-  head=body.split('一、执行摘要（核心判断）\n')[1].split('\n')[0]
+  head=body.split('一、执行摘要（情报主线）\n')[1].split('\n')[0]
   self.assertIn('未进入阅读区',head)
   self.assertNotIn('没有信号通过筛选门槛',head)
  def test_stats_line_separates_verdict_from_distribution(self):
@@ -258,10 +270,9 @@ class EmailEditionTests(unittest.TestCase):
 
  def test_email_edition_omits_appendices(self):
   _,body=render_digest(self._items(),stats(fetched=1,analyzed=1),'2026-10-20',include_appendix=False)
-  for heading in ('一、执行摘要（核心判断）','二、关键判断','三、建议行动','四、待验证假设',
-                  '五、风险与反证','六、监测清单','七、证据与方法'):
+  for heading in ('一、执行摘要（情报主线）','二、情报整合与长线关注','三、证据与方法'):
    self.assertIn(heading,body)
-  for heading in ('八、附录 A','九、附录 B','十、附录 C'):
+  for heading in ('四、附录 D','五、附录 A','六、附录 B','七、附录 C'):
    self.assertNotIn(heading,body)
   self.assertIn('完整附录已存档',body)
   self.assertIn('不随邮件发送',body)
@@ -282,7 +293,146 @@ class EmailEditionTests(unittest.TestCase):
   from opportunity_radar.digest import split_report
   _,body=render_digest(self._items(),stats(fetched=1,analyzed=1),'2026-10-20')
   brief,sections=split_report(body)
-  self.assertNotIn('八、附录 A',brief)
-  self.assertEqual([k for k,_,_ in sections],['appendix_a','appendix_b','appendix_c'])
-  self.assertTrue(sections[0][2].startswith('八、附录 A'))
-  self.assertIn('十、附录 C',sections[2][2])
+  self.assertNotIn('四、附录 D',brief)
+  self.assertEqual([k for k,_,_ in sections],['appendix_d','appendix_a','appendix_b','appendix_c'])
+  self.assertTrue(sections[0][2].startswith('四、附录 D'))
+  self.assertIn('七、附录 C',sections[3][2])
+
+
+class ReadinessTests(unittest.TestCase):
+ def test_existing_purchase_is_validation_not_decision(self):
+  it=validation_item('priority',80,'paid user complaint')
+  it['classification']['buyer_payment_evidence']='existing_purchase'
+  it['analysis']['actionability']='investigate'
+  self.assertEqual(readiness_of(it),'validation')
+
+ def test_explicit_budget_with_evidence_and_action_is_decision(self):
+  it=validation_item('priority',80,'budgeted buyer')
+  it['classification']['buyer_payment_evidence']='explicit_budget'
+  it['analysis']['actionability']='decide'
+  it['market_validation']='multi_source'
+  it['evidence_state']='full_text_verified'
+  self.assertEqual(readiness_of(it),'decision')
+
+ def test_same_family_coverage_is_not_independent_enough_for_a_decision(self):
+  it=validation_item('priority',80,'budgeted buyer')
+  it['classification']['buyer_payment_evidence']='explicit_budget'
+  it['analysis']['actionability']='decide'; it['evidence_state']='full_text_verified'
+  it['market_validation']='multi_source'
+  it['event']={'independent_corroboration':False,'source_families':['one-family'],
+               'independent_source_units':1,'members':[{},{}]}
+  self.assertEqual(readiness_of(it),'validation')
+
+ def test_two_source_families_with_budget_are_decision_grade(self):
+  it=validation_item('priority',80,'budgeted buyer')
+  it['classification']['buyer_payment_evidence']='explicit_budget'
+  it['analysis']['actionability']='decide'; it['evidence_state']='full_text_verified'
+  it['event']={'independent_corroboration':True,'source_families':['a','b'],
+               'independent_source_units':2,'members':[{},{}]}
+  self.assertEqual(readiness_of(it),'decision')
+
+ def test_title_only_signal_is_monitor(self):
+  it=validation_item('priority',80,'title only')
+  it['evidence']=[]; it['evidence_state']='title_only'
+  it['analysis']['facts']=[]
+  self.assertEqual(readiness_of(it),'monitor')
+
+ def test_single_forum_post_is_validation_when_pain_repeats(self):
+  it=validation_item('watch',60,'forum pain')
+  self.assertEqual(readiness_of(it),'validation')
+
+
+class DecisionSummaryTests(unittest.TestCase):
+ def test_no_decision_grade_item_says_so_before_detail(self):
+  _,body=render_digest([validation_item('watch',60)],stats(fetched=1,analyzed=1),'2026-10-20')
+  head=body.split('一、执行摘要（情报主线）\n')[1].split('\n')[0]
+  self.assertIn('不据此投入',head)
+  self.assertIn('决策级 0',body)
+
+ def test_decision_request_is_explicit_and_defaults_to_no_investment(self):
+  items=[validation_item('watch',60)]
+  request=decision_request(items,stats(fetched=1,analyzed=1))
+  self.assertIn('限时验证',request)
+  self.assertIn('默认不投入',request)
+
+ def test_verification_ledger_names_gap_and_stop_condition(self):
+  _,body=render_digest([validation_item('watch',60,'ledger candidate')],stats(fetched=1,analyzed=1),'2026-10-20')
+  ledger=body.split('验证台账（候选')[1]
+  self.assertIn('关键缺口',ledger)
+  self.assertIn('停止条件',ledger)
+  self.assertIn('不是市场规模或收入预测',ledger)
+
+ def test_risk_register_is_a_table_not_a_bullet_list(self):
+  _,body=render_digest([validation_item('watch',60)],stats(fetched=1,analyzed=1),'2026-10-20')
+  block=body.split('  风险与反证\n')[1].split('  监测清单')[0]
+  self.assertIn('风险 | 触发条件 | 影响 | 应对',block)
+  self.assertIn('单一来源',block)
+
+ def test_validation_records_are_shown_in_the_judgment_and_ledger(self):
+  it=validation_item('watch',60,'validated candidate')
+  it['validation']=[{'kind':'interview','result':'supports','note':'买方确认预算','recorded_at':'2026-11-12T00:00:00+00:00'}]
+  _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
+  self.assertIn('验证记录：访谈 / 支持',body)
+  self.assertIn('验证记录（最近）',body)
+  self.assertIn('买方确认预算',body)
+
+ def test_v9_executive_fields_override_fallbacks(self):
+  it=validation_item('watch',60,'v9 item')
+  it['analysis'].update({'action_title':'模型给出的完整执行标题',
+                         'so_what':'模型给出的决策含义。',
+                         'why_now':'本周发布新版本。',
+                         'kill_criteria':['两周内找不到第二来源']})
+  _,body=render_digest([it],stats(fetched=1,analyzed=1),'2026-10-20')
+  self.assertIn('KJ1｜模型给出的完整执行标题',body)
+  self.assertIn('影响（so what）：模型给出的决策含义。',body)
+  self.assertIn('时效性：本周发布新版本。',body)
+  self.assertIn('停止条件：两周内找不到第二来源',body)
+
+
+class ProvenanceRenderingTests(unittest.TestCase):
+ def test_youtube_and_search_provenance_are_printed(self):
+  it=validation_item('watch',60,'provenance item')
+  it['youtube']={'channel':'Test Channel','transcript_kind':'auto',
+                 'excerpt_start':75.0,'excerpt_end':180.0}
+  it['discovery']={'provider':'google_news','query_id':'gnews-ai',
+                   'publisher':'Reuters','page_status':'not_attempted'}
+  s=stats(fetched=1,analyzed=1,
+          youtube={'candidates':2,'selected':1,'fetched':1,'analyzed':1,'skipped_reason':{}},
+          discovery={'queries':1,'candidates':3,'selected':1,'page_fetched':0,
+                     'page_skipped':0,'providers':{'google_news':3}})
+  _,body=render_digest([it],s,'2026-10-20')
+  self.assertIn('YouTube：Test Channel · 字幕 自动字幕',body)
+  self.assertIn('公开检索：google_news · gnews-ai',body)
+  self.assertIn('YouTube 字幕：候选 2',body)
+  self.assertIn('公开检索：查询 1',body)
+  self.assertIn('按 E1 上限处理',body)
+
+
+class ReadabilityTests(unittest.TestCase):
+ """Wording fixes: no slot-filled grammar, no repeated evidence row, a real watch trigger."""
+ def test_lane_b_implication_reads_as_a_sentence(self):
+  from opportunity_radar.digest import _implication
+  it=validation_item('priority',80,'grammar check')
+  it['classification']['buyer_type']='engineering_team'
+  it['classification']['delivery_fit']='custom_tool'
+  it['analysis']['pain_point']='无法动态获取面名称'
+  text=_implication(it)
+  self.assertIn('工程团队面临「无法动态获取面名称」的问题',text)
+  self.assertNotIn('存在「',text)
+
+ def test_readiness_reason_does_not_repeat_evidence_basis(self):
+  from opportunity_radar.digest import readiness_reason, _evidence_basis
+  it=validation_item('priority',80,'dedupe check')
+  reason=readiness_reason(it)
+  basis=_evidence_basis(it)
+  self.assertEqual(reason,'可执行性：调查')
+  self.assertIn('E1',basis)
+  self.assertNotIn('E1',reason)
+
+ def test_watch_trigger_is_the_unresolved_fact_not_the_action(self):
+  from opportunity_radar.digest import _watch_rows
+  it=validation_item('watch',60,'watch trigger check')
+  rows=_watch_rows([it])
+  self.assertEqual(len(rows),1)
+  _,trigger,_=rows[0]
+  self.assertEqual(trigger,'一旦确认：m')

@@ -244,6 +244,17 @@ def _parse_v5(d,article):
 
     d['schema_version']=5
     d['facts']=facts; d['inferences']=inferences; d['gaps']=gaps; d['actions']=actions
+    # Optional executive fields (prompt v9). They are additive: v7/v8 records simply do
+    # not carry them, and the renderer falls back to deterministic wording.
+    for key,limit in (('action_title',160),('so_what',300),('why_now',160)):
+        value=d.get(key)
+        if isinstance(value,str) and value.strip():
+            d[key]=value.strip()[:limit]
+        else:
+            d.pop(key,None)
+            if value not in (None,''):
+                deviations.append({'section':key,'ordinal':0,'reason':'invalid_text'})
+    d['kill_criteria']=_string_list(d.get('kill_criteria',[]),0,'kill_criteria',deviations,limit=2,max_len=200)
     d['evidence_quotes']=evidence_quotes
     d['uncertainties']=[g['missing'] for g in gaps]
     d['suggested_next_step']=actions[0]['step'] if actions else ''

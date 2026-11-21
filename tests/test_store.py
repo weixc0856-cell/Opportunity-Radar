@@ -224,3 +224,42 @@ class ReportSectionTests(unittest.TestCase):
    s.save_report_sections('abc123',[('email_brief','邮件正文','v1'),('appendix_a','附录 A','v1')])
    s.save_report_sections('abc123',[('email_brief','邮件正文','v2')])
    self.assertEqual([r['body'] for r in s.report_sections('abc123')],['v2'])
+
+
+class YoutubeMetadataTests(unittest.TestCase):
+ def test_video_metadata_is_stored_and_seen_only_after_analysis(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'youtube.sqlite3'))
+   record={'video_id':'vid1','source_id':'yt-test','channel':'Channel','title':'Interview',
+           'url':'https://www.youtube.com/watch?v=vid1','published':'2026-11-12','duration':600,
+           'transcript_kind':'manual','transcript_path':'data/youtube/vid1/transcript.vtt',
+           'transcript_chars':1000,'excerpt_start':10.0,'excerpt_end':60.0,'excerpt_chars':500,
+           'status':'fetched','reason':'','article_key':Store.key('https://www.youtube.com/watch?v=vid1'),
+           'fetched_at':'2026-11-12T00:00:00+00:00'}
+   s.save_youtube_video(record)
+   self.assertFalse(s.youtube_video_seen('vid1'))
+   s.mark_youtube_analyzed(record['article_key'])
+   self.assertTrue(s.youtube_video_seen('vid1'))
+   self.assertEqual(s.youtube_videos()[0]['transcript_kind'],'manual')
+
+
+class ValidationLogTests(unittest.TestCase):
+ def test_validation_is_append_only_and_findable(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'validation.sqlite3'))
+   key=Store.key('https://example.org/a')
+   s.record_validation(key,'A','interview','supports','buyer said budget exists')
+   s.record_validation(key,'A','pricing','contradicts','price too high')
+   rows=s.validation_records(key)
+   self.assertEqual(len(rows),2)
+   self.assertEqual(rows[0]['result'],'contradicts')
+
+ def test_find_article_by_url_or_exact_title(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Store(str(Path(d)/'find.sqlite3'))
+   a=SimpleNamespace(article_id='1',title='Unique Title',url='https://example.org/u',published='',
+                     source_name='s',summary='body')
+   s.save_article(a,Store.key(a.url))
+   self.assertEqual(s.find_article(a.url)['title'],'Unique Title')
+   self.assertEqual(s.find_article('Unique Title')['url'],a.url)
+   self.assertIsNone(s.find_article('Missing'))

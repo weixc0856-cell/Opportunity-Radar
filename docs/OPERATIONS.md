@@ -8,7 +8,7 @@
 | Local model | `http://127.0.0.1:8080/v1` | `.\deploy\windows\start-model.ps1` | stop the pid in `reports\llama-server.pid` |
 | Admin UI | `http://127.0.0.1:8090` | `.\deploy\windows\start-admin.ps1` | Ctrl+C |
 
-The production analysis prompt is `prompts/analyst_v7.md` (`OR_PROMPT_PATH`); v6 is rollback only.
+The production analysis prompt is `prompts/analyst_v9.md` (`OR_PROMPT_PATH`); v8 is rollback; v7 and v6 are retained.
 The project model instance is **CPU-only** (`-ngl 0`, 64K context, q8_0 not needed on CPU).
 The 8 GB Arc A750 is reserved for ComfyUI. The GPU/MoE split measured ~0.8 tok/s at 64K on
 2026-11-03; the CPU-only instance measured ~10.8 tok/s on the same model. Do not raise the
@@ -28,18 +28,26 @@ with a start line and no ending.
 Analysis is one HTTP client (`analyzer.LocalAnalyzer`) with two transports over the same
 contract. Two setups are known to work:
 
-| Backend | `OR_LLM_API_STYLE` | `OR_LLM_BASE_URL` | `OR_LLM_MODEL` | `OR_LLM_MAX_TOKENS` |
-|---|---|---|---|---|
-| Local llama-server (CPU-only) | `openai` | `http://127.0.0.1:8080/v1` | `Qwen3-30B-A3B-Instruct-2507-Q4_K_M` | `1400` |
-| cc-switch proxy, Claude Code route | `anthropic` | `http://127.0.0.1:15721/v1` | `claude-sonnet-5` | `4000` |
-
-`OR_LLM_API_STYLE` picks the wire protocol: `openai` posts to `{base}/chat/completions`,
-`anthropic` posts to `{base}/messages` (top-level `system`, `x-api-key` +
-`anthropic-version`, answer in `content` text blocks). The cc-switch proxy serves both, but
-only the Anthropic route is the one Claude Code itself uses; the proxy labels the other
-`Codex endpoint`, and it is not used here. Everything above the transport — prompt, parser,
-retries, failure causes — is shared, so the backend does not change what is asked or how the
-answer is checked.
+| Backend | `OR_LLM_API_STYLE` | `OR_LLM_BASE_URL` | `OR_LLM_MODEL` | `OR_LLM_MAX_TOKENS` |
+|---|---|---|---|---|
+| Local llama-server (CPU-only) | `openai` | `http://127.0.0.1:8080/v1` | `Qwen3-30B-A3B-Instruct-2507-Q4_K_M` | `1400` |
+| cc-switch proxy, Claude Code route | `anthropic` | `http://127.0.0.1:15721/v1` | `claude-sonnet-5` | `4000` |
+
+`OR_LLM_API_STYLE` picks the wire protocol: `openai` posts to `{base}/chat/completions`,
+`anthropic` posts to `{base}/messages` (top-level `system`, `x-api-key` +
+`anthropic-version`, answer in `content` text blocks). The cc-switch proxy serves both, but
+only the Anthropic route is the one Claude Code itself uses; the proxy labels the other
+`Codex endpoint`, and it is not used here. Everything above the transport — prompt, parser,
+retries, failure causes — is shared, so the backend does not change what is asked or how the
+answer is checked.
+
+**Prompt caching / token cost (2026-11-21).** On the Anthropic route the stable system prefix is
+sent as a cacheable block (`cache_control: ephemeral`), controlled by `OR_LLM_PROMPT_CACHE`
+(default on; set `0` to disable). If the proxy rejects the field with HTTP 400 the client disables
+caching stickily for the process and retries uncached, so a non-forwarding proxy degrades instead
+of failing the run. OpenAI/llama.cpp never receive the field. The prompt summary is trimmed of
+boilerplate/repeated lines before sending (quote locating still runs on the full article, so no
+evidence is lost); per-call normalized token/cache usage is recorded in run metrics.
 
 `run-digest.ps1` starts `start-model.ps1` only when `OR_LLM_BASE_URL` resolves to
 `127.0.0.1:8080`; with any other endpoint it logs `analyzer endpoint is external` and leaves
@@ -94,8 +102,10 @@ PowerShell pipeline (`| Out-String`): inheritable pipe handles reach grandchildr
 `llama-server` holding the write end leaves the launcher waiting for an EOF that never comes.
 That was the 2026-11-04..11-07 failure, where every run left a start line, no ending, and an
 `launcher-inflight.json` marker that the next day reported.
-`--period auto` writes the daily brief, plus a weekly report every 7 days and a monthly
-report every 30 days (catch-up uses the last report's mtime).
+`--period auto` writes the daily brief, plus a weekly report every 7 days, a monthly report
+every 30 days and a yearly report every 365 days (catch-up uses the last report's mtime).
+Monthly/yearly include a regression review (confirmed / contradicted / open / insufficient)
+over baseline claims; an empty baseline is stated plainly, not fabricated.
 
 Source sync semantics:
 
@@ -126,7 +136,7 @@ Failure semantics:
 ```
 py -3 -m opportunity_radar.cli --dry-run                 # real fetch + model + full pipeline, no mail
 py -3 -m opportunity_radar.cli --render-only             # re-render latest, read-only
-py -3 -m opportunity_radar.cli --period weekly|monthly   # rebuild a period report
+py -3 -m opportunity_radar.cli --period weekly|monthly|yearly   # rebuild a period report
 py -3 -m opportunity_radar.unified_main audit --db <db>  # read-only end-to-end audit
 py -3 -m opportunity_radar.unified_main db-migrate --db <db>                 # preview
 py -3 -m opportunity_radar.unified_main db-migrate --db <db> --apply --backup <file>
@@ -141,6 +151,44 @@ py -3 -m opportunity_radar.acceptance                     # real environment che
 Tests: `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`.
 Offline sample: `python -m opportunity_radar.cli --dry-run --sample`.
 End-to-end fault injection: `py -3 tools/e2e_verify.py --limit 3`.
+
+## 新来源接入（个人情报站，2026-11-21）
+
+日报重定位为政策/媒体/市场情报站。来源启用必须通过 `is_approved`（enabled + approved +
+rss/atom/official_api + https feed_url + 有 `freshrss_feed_id`），因此**无 RSS/无 feed 的来源
+无法仅靠改配置启用**，必须先在 FreshRSS 里存在一个能抓的 feed。
+
+**已启用（许可明确）**：BBC/NYT 商业与科技栏目（feed 24–27）、BEA/ONS/Fed/BLS/Census 官方统计。
+它们覆盖宏观/政策/媒体/市场反响，作为同类情报的合规主力。
+
+**economist-finance：已放弃（2026-11-21 所有者决定）**。条款页 403 不可核验；robots 通用段虽放行
+RSS，但对命名 LLM/bot 全站 Disallow，浏览器 UA 过 WAF 属反爬 ToS 灰区。已退订 FreshRSS feed 38、
+回退全局 UA 覆盖、登记改回 `enabled=false / review_required`，改用上面的替代源。
+
+**国家统计局 cn-nbs：已启用（2026-11-21，所有者批准）**。静态列表、无 RSS，用 FreshRSS
+「HTML + XPath」检索（feed 39，`kind=10`）：
+- 订阅 URL：`https://www.stats.gov.cn/sj/zxfb/`
+- items XPath：`//div[contains(@class,'list-content')]//li/a`
+- title：`string(.)`；uri：`./@href`；content：`string(.)`；timestamp：留空
+- 实测 23 条、标题与 https 链接正常；登记 `access_method=html_xpath`、`freshrss_feed_id=39`、
+  approved + enabled。`is_approved` 的合法访问方式已含 `html_xpath`（政府公开信息、robots 放行、
+  仅标题/摘要层）。注意：列表容器是 `div.list-content`，不是页面上另一处 `icon-list` 图标块。
+
+**国务院 cn-state-council / 联合早报 sg-zaobao（FreshRSS 抓不了，改公开检索覆盖）**：列表为 JS
+渲染，静态 HTML 无条目链接，FreshRSS 无 JS 引擎，XPath 也无效；登记行保持禁用。**2026-11-21
+所有者批准公开检索**，新增 Google News 标题发现层查询 `gnews-gov-cn-policy`（`site:gov.cn 政策`）
+与 `gnews-zaobao-china`（`site:zaobao.com.sg`），实测各出条目；仅标题+链接、不抓全文。
+
+**YouTube 财经频道（Bloomberg/Yahoo/CNBC）：已启用（2026-11-21 所有者批准）**。
+`config/youtube_sources.json` 三频道 approved + enabled，全局 enabled=true，`OR_YOUTUBE_ENABLED=1`；
+仅公开 RSS/人工·自动字幕节选，E1 上限，不下载整片。本机字幕请求若 429 会自动跳过并记录来源问题。
+
+**公开检索（web_discovery）：已启用**。`OR_DISCOVERY_ENABLED=1`，5 个 approved 查询
+（3 个 AI 基础设施区域查询 + 早报/国务院标题查询）；Google News RSS 仅标题发现层，
+`fetch_pages=false` 不抓页面正文。
+
+Reuters 因 robots 明确禁止未授权自动采集保持禁用。付费墙来源一律只作标题/摘要发现层，
+不抓全文、不绕登录/robots。
 
 ## Database
 
@@ -184,11 +232,48 @@ only after the publication gate passes and the report is not a duplicate.
 
 ## Prompt version and rollback
 
-Production uses `prompts/analyst_v7.md` through `OR_PROMPT_PATH`. V6
-(`prompts/analyst.md`) is retained only as the rollback prompt. The analysis input hash now
-includes the model, prompt version and prompt hash, so changing the prompt invalidates the
-old analysis instead of silently reusing it.
+Production uses `prompts/analyst_v9.md` through `OR_PROMPT_PATH`. V9 adds `action_title`,
+`so_what`, `why_now` and `kill_criteria` to the v5 contract; they are optional, so v8/v7/v6
+records keep rendering. `prompts/analyst_v8.md` is the rollback prompt. The analysis input
+hash includes the model, prompt version and prompt hash, so changing the prompt invalidates
+the old analysis instead of silently reusing it.
 
-Rollback: set `OR_PROMPT_PATH=prompts/analyst.md`, restart the CLI; restore
-`data/archive/v7-switch-2026-11-03/pre-v7-run.sqlite3` only if the V7 run's database changes
-must be undone. The live task keeps using `--period auto` and the same pipeline.
+Rollback: set `OR_PROMPT_PATH=prompts/analyst_v8.md`, restart the CLI. The v7-switch database
+backup remains only for the historical V7 run; V9 adds no required field, so existing
+analyses and rows remain valid. The live task keeps using `--period auto` and the same pipeline.
+
+## Optional source expansion (YouTube and public search)
+
+Both channels are opt-in and additive. They never change scoring, the evidence gate or the
+publication gate; a failure is recorded as a source issue and the run continues.
+
+| Channel | Local config | Environment flag | Probe |
+|---|---|---|---|
+| YouTube interviews | `config/youtube_sources.json` | `OR_YOUTUBE_ENABLED=1` | `python -m opportunity_radar.cli --youtube-check "<URL>"` |
+| Public news search | `config/discovery_sources.json` | `OR_DISCOVERY_ENABLED=1` | `python -m opportunity_radar.cli --search-check "<query>" --search-provider google_news` |
+
+- YouTube uses `OR_YTDLP` (default `E:/YouTube-B/.venv/Scripts/yt-dlp.exe`), public metadata
+  and creator/auto subtitles only. No video download, no cookies, no Chinese auto-translation.
+  The full subtitle file stays under `data/youtube/<video_id>/`; the article carries a bounded
+  keyword-selected excerpt and is graded at E1.
+- Search providers: Google News RSS (no key), GDELT (no key, one request per 5 s), NewsAPI,
+  Brave and Guardian (keys via `OR_NEWSAPI_KEY`, `OR_BRAVE_API_KEY`, `OR_GUARDIAN_API_KEY`).
+  Google News RSS is headline/publisher/date/link only; snippets require one of the keyed
+  providers. GDELT currently answers HTTP 429 from this network and is disabled locally.
+- Optional page fetching goes through `FullTextFetcher`: robots.txt first, same-host redirects
+  only, 401/403/429 and paywall pages stop, text is bounded. A fetched page is still E1 until a
+  reviewer declares the source `content_access_level=full_text`.
+- The local JSON registries are ignored by Git; the tracked `.example.json` files are disabled.
+  Both require `permission_status=approved` and the environment flag before they run.
+
+## Validation log (append-only)
+
+Record an interview, pricing check, buyer conversation or decision against a candidate:
+
+```text
+python -m opportunity_radar.cli --validation-record   --candidate "<article URL or exact title>"   --validation-kind interview --validation-result supports   --validation-note "buyer confirmed a budget and a 2-week evaluation window"   --validation-evidence "<URL or file reference>"
+```
+
+Rows go to SQLite `validation_log` and are never rewritten. The next report shows them on the
+matching judgment and in the validation ledger. `supports` / `contradicts` / `unknown` describe
+what the observation says, not a probability.

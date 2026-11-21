@@ -13,3 +13,5 @@ mail.txt
 config/recipients.json
 .env.bak*
 config/sources.local.csv*
+config/youtube_sources.json
+config/discovery_sources.json

@@ -1,0 +1,29 @@
+{
+  "enabled": false,
+  "max_videos_per_day": 3,
+  "max_transcript_chars": 6000,
+  "max_age_days": 14,
+  "languages": ["en"],
+  "require_signal": true,
+  "min_duration": 300,
+  "max_duration": 10800,
+  "impersonate": "chrome",
+  "sources": [
+    {
+      "source_id": "yt-example-interviews",
+      "name": "Example Interview Channel (YouTube)",
+      "channel_url": "https://www.youtube.com/@example",
+      "enabled": false,
+      "permission_status": "review_required",
+      "provenance_class": "first_party",
+      "editorial_lanes": "A,B,C",
+      "intelligence_lines": "technology",
+      "source_cap": 1,
+      "max_candidates": 12,
+      "keywords": ["interview", "AI", "data center"],
+      "reviewed_at": "",
+      "last_verified_at": "",
+      "notes": "Review the channel, YouTube terms and local-use scope before enabling. Personal non-commercial analysis only; no video download, no Chinese auto-translation."
+    }
+  ]
+}

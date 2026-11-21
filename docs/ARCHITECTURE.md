@@ -3,14 +3,26 @@
 1. FreshRSS manages approved subscriptions.
 2. `freshrss_client.py` reads the FreshRSS Fever API; it does not crawl arbitrary sites.
 3. `source_policy.py` reads the local source register. Keep FreshRSS subscriptions limited to approved sources.
-4. `analyzer.py` sends one article at a time to the local model.
+4. `analyzer.py` sends one article at a time to the model. On the Anthropic route it marks the
+   stable system prefix cacheable (`cache_control`, guarded by `OR_LLM_PROMPT_CACHE` with a sticky
+   HTTP-400 fallback for proxies that drop the field); OpenAI/llama.cpp never receive it. It trims
+   boilerplate from the prompt summary (quote locating still runs on the full text) and records
+   normalized token/cache usage per call.
 5. `schema.py` validates model output; `classifier.py` derives deterministic commercial signals.
 6. `evidence.py` decides how much source text we hold (`content_basis`) and what it can support
    (`evidence_state`); `lanes.py` routes the article to editorial lane A, B or C; `scoring.py`
    computes a deterministic per-lane ranking that is gated by the evidence state.
-7. `digest.py` renders two editions from one item set: the emailed brief (sections 1–7 plus an
-   appendix note) and the complete report with traceable appendices. `render_html.py` follows the
-   same split; `Store.save_report_sections` keeps appendices in SQLite by report hash.
+7. `digest.py` renders two editions from one item set. Since 2026-11-21 the brief is a personal
+   intelligence station: the lead (sections 1–3) is policy/media/market integration plus a
+   long-term attention board grouped by intelligence mainline and event, with source angles
+   (official/media/market) and verification status; the emailed edition carries sections 1–3 plus
+   an appendix note. The opportunity/readiness/validation layer is demoted to appendix D (kept for
+   downstream investment / low-cost entrepreneurship, usable only after verification) and is still
+   gated by a deterministic readiness level (decision / validation / monitor); `existing_purchase`
+   alone never supports a decision. `render_html.py` follows the same split, but the emailed
+   edition is rebuilt with inline-styled tables only (no `<style>` block, CSS grid/flex or SVG,
+   which mail clients strip) while the full/local edition keeps the consulting-sheet layout;
+   `Store.save_report_sections` keeps appendices (incl. `appendix_d`) in SQLite by report hash.
 8. `email_sender.py` sends SMTP mail using the brief edition only.
 9. SQLite stores analysis and run records.
 10. `publication.py` decides PASS / PASS_WITH_LIMITATIONS / HOLD from analysis coverage; HOLD sends nothing.
@@ -120,11 +132,14 @@ RSS content is untrusted input and may contain prompt injection. The model has n
     also carries `signal_score` (uncapped importance), `evidence_score` (E0/E1/E2 strength) and
     `editorial_priority` P0–P3/REJECT with a deterministic `priority_basis`. The digest orders
     event representatives by priority first, score second; source caps still only defer items.
-19. `period_report.py` builds weekly and monthly reports by querying events, evidences, claims,
-    opportunities and the economic store for a date window. Claim/evidence windows use the
-    article's publication time, not the backfill timestamp. `cli --period weekly|monthly` writes
-    one report; `--period auto` (used by the scheduled task) writes weekly every 7 days and
-    monthly every 30 days, with catch-up by the last report's mtime.
+19. `period_report.py` builds weekly, monthly and yearly reports by querying events, evidences,
+    claims, opportunities and the economic store for a date window (7 / 30 / rolling 365 days).
+    Claim/evidence windows use the article's publication time, not the backfill timestamp.
+    Monthly/yearly add a regression review: baseline claims (created before the window) are
+    re-classified confirmed / contradicted / open / insufficient from new evidence, verifications,
+    conflicts and restatements; single-source families never count as independent confirmation.
+    `cli --period weekly|monthly|yearly` writes one report; `--period auto` (scheduled task) writes
+    weekly every 7 days, monthly every 30 and yearly every 365, with catch-up by last report mtime.
 20. `economic.py` is the R5 store (`data/economic/economic.sqlite3`). It syncs BLS macro series
     from the pilot database and EIA observations from the isolated ingest database, keeps the
     current observation plus every distinct revision in `observation_versions`, and derives MoM
@@ -143,3 +158,15 @@ RSS content is untrusted input and may contain prompt injection. The model has n
     unconfirmed event-candidate links; both digest editions print them in “待观察信号”.
     This changes no score, no gate and no stored row — a weak signal is kept and shown, not
     promoted.
+
+23. `youtube_source.py` is an opt-in interview channel. It reads public metadata and
+    creator/auto subtitles, keeps the full subtitle file under `data/youtube/`, and passes a
+    bounded keyword-selected excerpt through the same analysis pipeline. A YouTube item is
+    E1: a subtitle quote is located, but no reviewer has declared the video full-text.
+    `--youtube-check` probes one URL; `config/youtube_sources.json` is local and approved-only.
+
+24. `web_discovery.py` is the public-search channel. Google News RSS, GDELT, NewsAPI, Brave
+    and Guardian return headline/snippet/link metadata; optional page fetching goes through
+    `fulltext.FullTextFetcher` and therefore obeys robots.txt, same-host redirects, 401/403/429
+    and paywall stops. Results are attributed to the publisher in `source_name` and to the
+    query in `source_id`; they are discovery aids, not independent corroboration.

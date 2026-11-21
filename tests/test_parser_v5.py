@@ -188,6 +188,32 @@ class LegacyCompatibilityTests(unittest.TestCase):
         self.assertEqual(analysis['suggested_next_step'], '查 ONS 原始数据表')
 
 
+class ExecutiveFieldTests(unittest.TestCase):
+    """Prompt v9 adds four optional fields without breaking v8 records."""
+
+    def test_optional_fields_are_stored(self):
+        analysis = parse(payload(action_title='完整结论句',
+                                 so_what='这条信号只能支持验证，不能支持投入。',
+                                 why_now='作者称 2026 年 12 月整合限额。',
+                                 kill_criteria=['找不到第二例同类反馈', '官方已取消该限制']))
+        self.assertEqual(analysis['action_title'], '完整结论句')
+        self.assertEqual(analysis['so_what'], '这条信号只能支持验证，不能支持投入。')
+        self.assertEqual(analysis['why_now'], '作者称 2026 年 12 月整合限额。')
+        self.assertEqual(analysis['kill_criteria'], ['找不到第二例同类反馈', '官方已取消该限制'])
+
+    def test_absent_fields_do_not_break_v8_records(self):
+        analysis = parse(payload())
+        self.assertNotIn('action_title', analysis)
+        self.assertNotIn('so_what', analysis)
+        self.assertEqual(analysis['kill_criteria'], [])
+
+    def test_invalid_kill_criteria_is_recorded_not_fatal(self):
+        analysis = parse(payload(kill_criteria={'not': 'a list'}))
+        self.assertEqual(analysis['kill_criteria'], [])
+        self.assertIn({'section': 'kill_criteria', 'ordinal': 0, 'reason': 'invalid_list'},
+                      analysis['schema_deviations'])
+
+
 class RelevanceMappingTests(unittest.TestCase):
     def test_enum_maps_to_the_five_four_three_two_scale(self):
         self.assertEqual(_relevance({'relevance': 'core'}), 5)

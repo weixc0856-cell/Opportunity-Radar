@@ -5,6 +5,8 @@ class Tests(unittest.TestCase):
  def test_approved_https(self): self.assertTrue(is_approved(Source('x','X','https://x','https://x/feed','rss','approved',True,'1')))
  def test_missing_feed_id_rejected(self): self.assertFalse(is_approved(Source('x','X','https://x','https://x/feed','rss','approved',True,'')))
  def test_http_rejected(self): self.assertFalse(is_approved(Source('x','X','https://x','http://x/feed','rss','approved',True,'1')))
+ def test_html_xpath_accepted(self): self.assertTrue(is_approved(Source('x','X','https://x','https://x/list','html_xpath','approved',True,'39')))
+ def test_unlisted_access_method_rejected(self): self.assertFalse(is_approved(Source('x','X','https://x','https://x/list','scrape','approved',True,'39')))
  def test_registry_metadata_loaded(self):
   ss=[s for s in load_sources() if s.source_id=='paraview-forum'][0]
   self.assertEqual(ss.provenance_class,'first_party');self.assertEqual(ss.canonical_domain,'discourse.paraview.org');self.assertTrue(ss.terms_url)

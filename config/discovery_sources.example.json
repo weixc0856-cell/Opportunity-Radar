@@ -1,0 +1,49 @@
+{
+  "enabled": false,
+  "max_items_per_query": 8,
+  "max_pages_per_run": 6,
+  "page_fetch": true,
+  "max_age_days": 7,
+  "max_summary_chars": 6000,
+  "queries": [
+    {
+      "query_id": "gnews-ai-infrastructure",
+      "name": "AI infrastructure news",
+      "provider": "google_news",
+      "query": "(\"AI data center\" OR \"data center power\" OR \"AI infrastructure\")",
+      "hl": "en-US",
+      "gl": "US",
+      "ceid": "US:en",
+      "enabled": false,
+      "permission_status": "review_required",
+      "source_cap": 3,
+      "max_items": 6,
+      "editorial_lanes": "A",
+      "intelligence_lines": "technology",
+      "terms_url": "https://news.google.com/",
+      "reviewed_at": "",
+      "last_verified_at": "",
+      "notes": "Google News RSS grants personal, non-commercial feed-reader use. Headline only; no page fetch."
+    },
+    {
+      "query_id": "gdelt-ai-infrastructure-us",
+      "name": "AI infrastructure / US (GDELT)",
+      "provider": "gdelt",
+      "query": "(\"data center\" OR datacenter) (power OR grid OR capacity)",
+      "language": "english",
+      "country": "US",
+      "timespan_days": 3,
+      "enabled": false,
+      "permission_status": "review_required",
+      "source_cap": 2,
+      "max_items": 10,
+      "fetch_pages": true,
+      "editorial_lanes": "A",
+      "intelligence_lines": "technology",
+      "terms_url": "https://www.gdeltproject.org/about.html#termsofuse",
+      "reviewed_at": "",
+      "last_verified_at": "",
+      "notes": "GDELT is rate-limited to one request per five seconds. Page fetch is robots-checked and paywall-stopped."
+    }
+  ]
+}

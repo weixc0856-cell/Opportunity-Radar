@@ -114,7 +114,31 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   邮件正文不含附录 A/B/C。
 - 附录按 `report_hash` 写入 SQLite `report_sections`（首次保存时自建表，不改 schema 版本），
   归档同时保存 `*.email.txt` / `*.email.html`；管理台 `GET /api/report/sections` 可读。
-- 测试：全量 1069 项通过（1 项环境跳过，2026-11-12）。
+- 测试：全量 1105 项通过（1 项环境跳过，2026-11-12）。
+
+### 可选扩展源（2026-11-12）
+
+- YouTube 访谈：`youtube_source.py`，公开元数据与人工/自动字幕，节选分析，E1 上限；
+  `--youtube-check` 可单独试跑。本机 YouTube 字幕请求当前返回 429，通道自动跳过并记录来源问题。
+- 公开检索：`web_discovery.py`，Google News RSS（无 key，标题/出版方/日期/链接）、GDELT
+  （5 秒限速，本机 429）、NewsAPI/Brave/Guardian（需 key）。页面抓取走 `FullTextFetcher`，
+  先读 robots.txt，遇 401/403/429/付费墙停止。Google News 本机实测 3 个区域查询返回 18 条。
+- 两通道由 `OR_YOUTUBE_ENABLED` / `OR_DISCOVERY_ENABLED` 控制，默认关闭；本地 JSON 配置
+  已在 `.gitignore`，示例配置随仓库、全部 disabled。
+- 验证闭环：`--validation-record` 追加写入 `validation_log`，报告在 KJ 与台账显示访谈/定价/买方/决策记录；不覆盖历史。
+- 测试：全量 1105 项通过（1 项环境跳过）。
+
+### 决策级报告层（2026-11-12）
+
+- 新增确定性 `readiness_of`：决策级 / 验证级 / 观察级。只有前两级进入关键判断；
+  `existing_purchase` 只算验证级，不能单独支撑投入决策。
+- 报告新增决策请求、A/B/C 选项、验证台账、风险登记表、停止条件与外部对标局限；
+  章节仍保留原有编号，邮件版约 10 KB。
+- Prompt v9 新增可选 `action_title` / `so_what` / `why_now` / `kill_criteria`；已在
+  真实 FreshRSS 文章上通过 Anthropic 路由 smoke test（schema 0 deviation），v8 保留回滚。
+- 现有生产分析仍是 v8，因此本期报告使用回退措辞；下一次真实运行后由 v9 字段替换。
+- 未覆盖：市场规模/收入/ROI 测算、竞品对标、一手访谈、财务模型。报告明确标为外部数据缺口，
+  不用模型猜测填充。测试：全量 1105 项通过（1 项环境跳过）。
 
 ### 发现层与展示层分离
 
@@ -124,14 +148,66 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
 评分、发布门禁或存储。质量快照新增 `display` 计数（signal_detected、候选事件关联、有定位但
 未核验的 Claim），用于检查“有用信息在哪一层被降级”。
 
+### 邮件可读性修复（2026-11-21）
+
+- **根因**：邮件版 HTML 直接复用完整版的咨询报告版式（`<style>` 块 + CSS grid/flex + SVG
+  图表）。163/QQ、Outlook、Gmail 等邮箱客户端会剥离或忽略这三者，收件箱里漏斗、通道分布、
+  情报主线等图表退化成没有标签、挤成一行的文字（如“本轮获取42新增27…”），固定分类名也被
+  硬截断（“客户痛点与商业机”“技术观察与工程信”“(undeclare”）。
+- **修复**：`render_html.py` 的邮件版（`include_appendix=False`）改用纯内联样式的 `<table>`
+  重建同一份内容，不用 `<style>`/grid/flex/SVG；完整版本地/管理台版式不变。两版内容、节序、
+  门禁与 `_validate_report` 完全一致。已用无头浏览器对邮件版与完整版分别截图核对排版。
+- **措辞与截断**：KJ“就绪度”不再复述“依据”已有的证据等级与事实数；B 通道“业务含义”改为
+  完整句（“…面临「…」的问题；付费证据：…；可能的交付形态：…（尚未验证）”）；监测清单
+  “触发条件”改用未确认缺口（“一旦确认：…”）而非“如何补齐”动作；表格/列表标题截断上限放宽，
+  SVG 图表标签按可用宽度截断而非固定字符数，固定分类名整词显示。
+- 测试：新增 9 项（`test_html.py::EmailClientCompatibilityTests` 6 项、
+  `test_digest.py::ReadabilityTests` 3 项）；全量 1114 项，1111 通过、1 项环境跳过、
+  3 项为既有日期敏感失败（`test_web_discovery`/`test_youtube_source`，与本次改动无关）。
+- 真实数据验证：对生产库 `--render-only`（只读、不调模型、不发信）重生成报告，邮件版
+  HTML 52.8 KB、文本版 15.8 KB，确认无 `<svg`/`<style`、通道名整词显示；并用无头浏览器
+  截图核对邮件版与完整版排版。历史“9.3 KB”记录对应更早一次运行，未改写。
+
+### 重定位为个人情报站 + 周期回归 + 模型成本（2026-11-21）
+
+- **产品重定位**：日报主体改为政策/媒体/市场整合与"长线关注"（服务长线投资与个人低成本
+  创业）；原机会/买方/就绪度/验证层降为**附录 D** 保留（经核实后才用于下游投资/创业）。
+  新增确定性渲染层 `intelligence_headline/intelligence_note/long_term_themes/integration_lines`
+  （按情报主线+事件分组，标官方/媒体/市场角度与核实状态，不新调模型）。邮件版=第一至三节+
+  附录说明；`report_sections` 新增 `appendix_d`。标题改"个人情报简报"。
+- **来源整合与合规取舍**：登记国家统计局/国务院/联合早报/经济学人并核验 feed/robots。
+  economist 曾订阅（feed 38）并经所有者批准用浏览器 UA 过 WAF 后抓取成功，但条款页 403 不可
+  核验、robots 对命名 LLM/bot 全站 Disallow，属反爬 ToS 灰区；**所有者决定放弃**，已退订 feed 38、
+  回退全局 UA 覆盖、改回 `enabled=false/review_required`，改用许可明确的替代源（BBC/NYT 商业/
+  科技 + BEA/ONS/Fed/BLS/Census）。统计局为静态列表可 XPath（步骤见 OPERATIONS，待人工订阅）；
+  国务院/联合早报为 JS 渲染、FreshRSS 无 JS 引擎抓不了，保持禁用（可改公开检索发现层，需批准）。
+  Reuters 因 robots 禁止保持禁用。**YouTube 财经频道与公开检索已获所有者批准启用**
+  （2026-11-21）：3 频道 approved+enabled、`OR_YOUTUBE_ENABLED=1`（字幕 429 自动跳过）；
+  `OR_DISCOVERY_ENABLED=1`、5 个 approved 查询，含 `gnews-gov-cn-policy`/`gnews-zaobao-china`
+  以标题发现层覆盖 JS 渲染的国务院/联合早报（登记行保持禁用），实测各出条目。
+  **统计局已启用**：FreshRSS HTML+XPath feed 39（`div.list-content//li/a`），实测 23 条；
+  `is_approved` 合法访问方式新增 `html_xpath`（含测试）。
+- **周期回归**：月报=上一自然月、年报=上一自然年（参考期口径，下月初/次年初总结），周报 trailing
+  7 天；auto 在月初/年初补跑。月/年含回归核验（已确认/被反证/仍开放/数据不足 + 主线/角度聚合 +
+  缺口/版本）。基线为空时明说；生产库实测年报 436 事件/1449 主张、回归基线 0（跨期基线需时间积累）。
+- **模型成本**：Anthropic 路由稳定 system 前缀加 `cache_control`（`OR_LLM_PROMPT_CACHE` 守卫 +
+  HTTP400 粘性回退）；OpenAI/llama.cpp 不受影响；prompt 摘要裁剪 boilerplate（引文定位仍用全文）；
+  记录归一化 token/cache usage。不改分析语义/schema/门禁。
+- 测试：全量 **1130 项通过、1 环境跳过**；既有 3 个日期敏感测试改为相对日期后不再随时间变红。
+  新增 `test_period_report.py`（含自然月/年报）、`test_analyzer.py` 缓存/裁剪/usage、digest/html 重定位语义。
+- 真实数据验证：`--render-only` 重生成日报（长线关注 9 主题、机会入附录 D、邮件无附录 D），
+  `--period yearly` 生成年报；无头浏览器截图核对新版式。
+- 未做/待观察：月/年回归基线随时间积累才有跨期确认/反证；YouTube 本机字幕若 429 该通道自动跳过
+  （已记录来源问题，不影响其余源）。
+
 ## 5. 当前限制（不掩盖）
 
 1. **事件聚合**：135 events / 135 articles，0 个多文章事件；独立来源佐证 0；转载
    `syndication_group` 仍为空。这是来源覆盖与正文相似度问题，不是模型问题。
 2. **N2/N3 语义参考**：只有 10 篇人工参考；不能外推到全部语料。Google/Intel title-only
    与 Personal Income 0.2% DPI 仍有已知缺口。
-3. **提示词**：生产为 v8（v7 + 面向人的字段一律简体中文，逐字引文保持原文）；
-   v7 与 v6 保留回滚。N0–N5 使用 r2-v4 契约。
+3. **提示词**：生产为 v9（v8 + `action_title`/`so_what`/`why_now`/`kill_criteria`，均为可选字段）；
+   v8 保留回滚，v7 与 v6 也保留。N0–N5 使用 r2-v4 契约。
 4. **Opportunity**：只有 `signal_detected`；problem/buyer 是模型提示，不是确认事实；
    66 行没有经过人工 `problem_supported`/`buyer_identified`/`payment_verified` 提升。
 5. **来源覆盖**：29 个启用源（2026-11-08 经合规核验新增 14 个：BLS、Census、Google×3、
