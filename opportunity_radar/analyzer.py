@@ -87,6 +87,55 @@ def analysis_input_hash(url, title, summary, model='', prompt_version=None, prom
     return hashlib.sha256('\n'.join(parts).encode('utf-8')).hexdigest()
 
 
+# Short footer/marker lines that carry no evidence. Only whole short lines matching these are
+# dropped; a long line that merely mentions one of these words is kept, so a quotation that
+# happens to contain "newsletter" is never trimmed away.
+_BOILERPLATE = ('unsubscribe', '退订', 'all rights reserved', 'cookie policy',
+                'sign up for our newsletter', 'view in browser', 'view this email in your browser')
+
+
+def compact_summary(text, limit=7000):
+    """Trim redundant boilerplate and repeated lines before the text reaches the model.
+
+    Evidence location still runs against the FULL article (analyze passes the untrimmed text
+    to the parser), so trimming the prompt cannot break quote locating; it only removes text
+    the model would otherwise pay tokens to read. Returns (trimmed, stats).
+    """
+    raw = str(text or '')
+    seen = set(); kept = []; removed = 0
+    for line in raw.splitlines():
+        line = ' '.join(line.split())
+        if not line:
+            continue
+        low = line.lower()
+        if len(line) < 120 and any(b in low for b in _BOILERPLATE):
+            removed += 1; continue
+        if line in seen:
+            removed += 1; continue
+        seen.add(line); kept.append(line)
+    cleaned = '\n'.join(kept)
+    if len(cleaned) > limit:
+        cut = cleaned.rfind('\n', 0, limit)
+        cleaned = cleaned[:cut if cut >= limit // 2 else limit]
+    return cleaned, {'chars_before': len(raw), 'chars_after': len(cleaned), 'lines_removed': removed}
+
+
+def usage_summary(payload):
+    """Normalized token/cache counters from either wire protocol, for cost observability."""
+    u = payload.get('usage') or {}
+    if not isinstance(u, dict):
+        return {}
+    out = {}
+    for k in ('input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens',
+              'prompt_tokens', 'completion_tokens', 'total_tokens'):
+        if u.get(k) is not None:
+            out[k] = u[k]
+    details = u.get('prompt_tokens_details') or {}
+    if isinstance(details, dict) and details.get('cached_tokens') is not None:
+        out['cache_read_input_tokens'] = details['cached_tokens']
+    return out
+
+
 class ModelCallError(RuntimeError):
     """One call that failed after a known number of attempts.
 
@@ -148,7 +197,7 @@ def retry_after_seconds(exc,cap):
 class LocalAnalyzer:
     def __init__(self,base_url,model,timeout=90,max_tokens=500,api_key='',connect_retries=3,
                  timeout_retries=1,backoff=DEFAULT_BACKOFF,retry_after_max=30,retry_max_seconds=120,
-                 sleep=time.sleep,system=None,temperature=0.2,api_style='openai'):
+                 sleep=time.sleep,system=None,temperature=0.2,api_style='openai',prompt_cache=None):
         # `system` lets a shadow run use another prompt version without changing the production
         # one; the default is whatever prompts/analyst.md currently is.
         self.system=system or SYSTEM
@@ -170,6 +219,23 @@ class LocalAnalyzer:
         self._sleep=sleep
         self.temperature=float(temperature)
         self.last_attempts=0
+        # Prompt caching is Anthropic-only. It is guarded by config (OR_LLM_PROMPT_CACHE) and by
+        # a runtime fallback: if the endpoint rejects the cache field once, it is disabled for
+        # the rest of this analyzer's life. The OpenAI/llama.cpp route never receives it.
+        self.prompt_cache=self._resolve_prompt_cache(prompt_cache)
+        self._cache_supported=True
+        self.last_usage={}
+        self.last_trim={}
+
+    def _resolve_prompt_cache(self,override):
+        if self.api_style!='anthropic':
+            return False
+        if override is not None:
+            return bool(override)
+        return os.getenv('OR_LLM_PROMPT_CACHE','1').strip().lower() not in ('0','false','off','no')
+
+    def _cache_active(self):
+        return self.api_style=='anthropic' and self.prompt_cache and self._cache_supported
 
     def _headers(self):
         h={'Content-Type':'application/json'}
@@ -200,7 +266,14 @@ class LocalAnalyzer:
             turns=[m for m in messages if m.get('role')!='system']
             body={'model':self.model,'max_tokens':budget,'temperature':temp,'messages':turns}
             joined='\n\n'.join(s for s in systems if s)
-            if joined: body['system']=joined
+            if joined:
+                if self._cache_active():
+                    # Stable system prefix as a cacheable block; repeated calls read it from
+                    # cache instead of re-paying input tokens. Ignored by non-Anthropic routes.
+                    body['system']=[{'type':'text','text':joined,
+                                     'cache_control':{'type':'ephemeral'}}]
+                else:
+                    body['system']=joined
             return body
         # Thinking-capable models (Qwen3.5 etc.) otherwise spend the whole token budget on <think>
         # and never emit JSON; triage only needs the structured answer. Servers that do not know
@@ -214,9 +287,35 @@ class LocalAnalyzer:
         if response_format is not None: body['response_format']=response_format
         return body
 
+    def _send(self,build):
+        """Serialize and post a body; if the endpoint rejects the cache field, drop it and retry once.
+
+        The fallback is narrow (HTTP 400 while caching was active) and sticky, so a proxy that
+        does not forward cache_control degrades to the uncached request instead of failing the run.
+        """
+        try:
+            return self._post_response(json.dumps(build()).encode())
+        except ModelCallError as exc:
+            if self._cache_active() and exc.cause==CLIENT_ERROR and exc.status==400:
+                self._cache_supported=False
+                return self._post_response(json.dumps(build()).encode())
+            raise
+
     def _call(self,messages,max_tokens=None,temperature=None,response_format=None):
-        return self._post(json.dumps(self._body(messages,max_tokens,temperature,
-                                                response_format)).encode())
+        payload=self._send(lambda: self._body(messages,max_tokens,temperature,response_format))
+        return self._content_or_empty(payload)
+
+    def _content_or_empty(self,payload):
+        content=self._content_of(payload)
+        if not (content or '').strip():
+            # A reasoning model can spend the entire budget thinking and return no text at all.
+            # Without this the caller sees an empty answer and reports it as a schema failure.
+            finish=(payload.get('stop_reason')
+                    or ((payload.get('choices') or [{}])[0].get('finish_reason','')))
+            raise ModelCallError(EMPTY,
+                f'empty completion (finish_reason={finish}); raise OR_LLM_MAX_TOKENS',
+                self.last_attempts,None,False)
+        return content
 
     def complete(self,messages,max_tokens=None,temperature=None,response_format=None):
         """One structured completion for an offline node; production analysis keeps using analyze()."""
@@ -237,19 +336,25 @@ class LocalAnalyzer:
         """(content, metrics) for offline nodes that record token usage and timings."""
         started=time.time()
         try:
-            payload=self._post_response(json.dumps(self._body(messages,max_tokens,temperature,
-                                                              response_format)).encode())
+            payload=self._send(lambda: self._body(messages,max_tokens,temperature,response_format))
         except ModelCallError as exc:
             if exc.cause!=EMPTY: raise
-            payload=self._post_response(json.dumps(self._body(
-                messages,self._widened_budget(max_tokens),temperature,response_format)).encode())
+            payload=self._send(lambda: self._body(
+                messages,self._widened_budget(max_tokens),temperature,response_format))
         content=self._content_of(payload)
         finish=(payload.get('stop_reason')
                 or ((payload.get('choices') or [{}])[0].get('finish_reason','')))
         return content, {'seconds':round(time.time()-started,2),
                          'usage':payload.get('usage') or {},
+                         'usage_normalized':usage_summary(payload),
+                         'cache_active':self._cache_active(),
                          'finish_reason':finish,
                          'timings':payload.get('timings') or {}}
+
+    def metrics(self):
+        """Sanitized cost/observability snapshot for the last call (no keys, no article text)."""
+        return {'usage':dict(self.last_usage),'trim':dict(self.last_trim),
+                'attempts':self.last_attempts,'cache_active':self._cache_active()}
 
     @staticmethod
     def _content_of(payload):
@@ -263,17 +368,7 @@ class LocalAnalyzer:
                        if isinstance(b,dict) and b.get('type')=='text')
 
     def _post(self,data):
-        payload=self._post_response(data)
-        content=self._content_of(payload)
-        if not (content or '').strip():
-            # A reasoning model can spend the entire budget thinking and return no text at all.
-            # Without this the caller sees an empty answer and reports it as a schema failure.
-            finish=(payload.get('stop_reason')
-                    or ((payload.get('choices') or [{}])[0].get('finish_reason','')))
-            raise ModelCallError(EMPTY,
-                f'empty completion (finish_reason={finish}); raise OR_LLM_MAX_TOKENS',
-                self.last_attempts,None,False)
-        return content
+        return self._content_or_empty(self._post_response(data))
 
     def _post_response(self,data):
         """One request with a bounded retry budget; never loops on the same dead endpoint."""
@@ -283,7 +378,9 @@ class LocalAnalyzer:
             try:
                 req=urllib.request.Request(self.url,data=data,headers=self._headers(),method='POST')
                 with urllib.request.urlopen(req,timeout=self.timeout) as r:
-                    return json.loads(r.read().decode('utf-8','replace'))
+                    payload=json.loads(r.read().decode('utf-8','replace'))
+                self.last_usage=usage_summary(payload)
+                return payload
             except (urllib.error.URLError,OSError,TimeoutError) as exc:
                 cause,retryable=classify_failure(exc)
                 status=getattr(exc,'code',None)
@@ -304,7 +401,10 @@ class LocalAnalyzer:
         Transport retries and the JSON-recovery call are independent: a truncated answer is
         a formatting problem, not a reason to re-post the same request.
         """
-        payload={'source_name':source_name,'title':title[:1000],'summary':summary[:7000],'url':url,'task':'Analyze this article for potential commercial opportunity signals.'}
+        trimmed,trim_stats=compact_summary(summary)
+        self.last_trim=trim_stats
+        payload={'source_name':source_name,'title':title[:1000],'summary':trimmed[:7000],'url':url,'task':'Analyze this article for potential commercial opportunity signals.'}
+        # The parser locates quotes against the FULL text, so prompt trimming cannot break locating.
         article={'title':title,'summary':summary,'url':url,'published':published}
         msgs=[{'role':'system','content':self.system},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}]
         try:

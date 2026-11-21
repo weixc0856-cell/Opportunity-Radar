@@ -38,6 +38,7 @@ class TraceTests(unittest.TestCase):
 
 
 import json as _json
+import os
 import socket
 import urllib.error
 from unittest import mock
@@ -212,7 +213,7 @@ class AnthropicStyleTests(unittest.TestCase):
 
     def test_url_headers_and_body_shape(self):
         a = LocalAnalyzer('http://127.0.0.1:15721/v1', 'claude-sonnet-5', api_key='k',
-                          api_style='anthropic')
+                          api_style='anthropic', prompt_cache=False)
         self.assertEqual(a.url, 'http://127.0.0.1:15721/v1/messages')
         headers = a._headers()
         self.assertEqual(headers.get('x-api-key'), 'k')
@@ -263,4 +264,104 @@ class AnthropicStyleTests(unittest.TestCase):
     def test_an_unknown_style_is_rejected(self):
         with self.assertRaises(ValueError):
             LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='grpc')
+
+
+class CostOptimizationTests(unittest.TestCase):
+    """Prompt caching, cache-field fallback, usage observability and prompt trimming."""
+
+    def test_anthropic_defaults_to_a_cacheable_system_block(self):
+        a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='anthropic')
+        body = a._body([{'role': 'system', 'content': 'SYS'}, {'role': 'user', 'content': 'U'}])
+        self.assertIsInstance(body['system'], list)
+        self.assertEqual(body['system'][0]['text'], 'SYS')
+        self.assertEqual(body['system'][0]['cache_control'], {'type': 'ephemeral'})
+
+    def test_anthropic_cache_can_be_disabled(self):
+        a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='anthropic', prompt_cache=False)
+        body = a._body([{'role': 'system', 'content': 'SYS'}])
+        self.assertEqual(body['system'], 'SYS')
+
+    def test_env_can_disable_anthropic_cache(self):
+        with mock.patch.dict(os.environ, {'OR_LLM_PROMPT_CACHE': '0'}):
+            a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='anthropic')
+        self.assertFalse(a.prompt_cache)
+        self.assertEqual(a._body([{'role': 'system', 'content': 'S'}])['system'], 'S')
+
+    def test_openai_never_receives_cache_control(self):
+        a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='openai', prompt_cache=True)
+        self.assertFalse(a.prompt_cache)
+        body = a._body([{'role': 'system', 'content': 'S'}, {'role': 'user', 'content': 'U'}])
+        self.assertNotIn('cache_control', _json.dumps(body))
+        self.assertEqual(body['messages'][0], {'role': 'system', 'content': 'S'})
+
+    def test_a_400_on_the_cache_field_falls_back_and_sticks(self):
+        a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='anthropic')
+        good = {'content': [{'type': 'text', 'text': _json.dumps(GOOD)}], 'stop_reason': 'end_turn'}
+        calls = []
+
+        def fake_post(data):
+            calls.append(_json.loads(data))
+            if len(calls) == 1:
+                raise ModelCallError(CLIENT_ERROR, 'unknown field cache_control', 1, 400, False)
+            return good
+
+        with mock.patch.object(a, '_post_response', side_effect=fake_post):
+            out = a.complete([{'role': 'system', 'content': 'S'}, {'role': 'user', 'content': 'U'}])
+        self.assertEqual(_json.loads(out)['actionability'], 'monitor')
+        self.assertIsInstance(calls[0]['system'], list)          # first attempt cached
+        self.assertEqual(calls[1]['system'], 'S')                # fallback uncached
+        self.assertFalse(a._cache_supported)                     # sticky for later calls
+        self.assertEqual(a._body([{'role': 'system', 'content': 'S'}])['system'], 'S')
+
+    def test_usage_and_cache_counters_are_captured(self):
+        a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm', api_style='anthropic')
+        payload = {'content': [{'type': 'text', 'text': _json.dumps(GOOD)}],
+                   'usage': {'input_tokens': 10, 'output_tokens': 20,
+                             'cache_read_input_tokens': 900, 'cache_creation_input_tokens': 0}}
+        with mock.patch('opportunity_radar.analyzer.urllib.request.urlopen',
+                        return_value=_Response(payload)):
+            a.complete([{'role': 'user', 'content': 'U'}])
+        self.assertEqual(a.last_usage['cache_read_input_tokens'], 900)
+        self.assertEqual(a.metrics()['usage']['output_tokens'], 20)
+
+    def test_openai_cached_tokens_are_normalized(self):
+        payload = {'usage': {'prompt_tokens': 100, 'completion_tokens': 5,
+                             'prompt_tokens_details': {'cached_tokens': 60}}}
+        from opportunity_radar.analyzer import usage_summary
+        self.assertEqual(usage_summary(payload)['cache_read_input_tokens'], 60)
+
+    def test_compact_summary_drops_boilerplate_and_duplicates_but_keeps_quotes(self):
+        from opportunity_radar.analyzer import compact_summary
+        text = ('Users cannot fetch face names.\n'
+                'Users cannot fetch face names.\n'
+                'The API returns hundreds of characters.\n'
+                'Unsubscribe | view in browser\n')
+        trimmed, stats = compact_summary(text)
+        self.assertIn('Users cannot fetch face names.', trimmed)
+        self.assertIn('The API returns hundreds of characters.', trimmed)
+        self.assertNotIn('Unsubscribe', trimmed)
+        self.assertEqual(trimmed.count('Users cannot fetch face names.'), 1)
+        self.assertGreater(stats['lines_removed'], 0)
+        self.assertLessEqual(stats['chars_after'], stats['chars_before'])
+
+    def test_compact_summary_keeps_a_long_line_mentioning_a_marker(self):
+        from opportunity_radar.analyzer import compact_summary
+        line = ('The vendor said the newsletter subscription revenue grew, which is a long claim '
+                'that must survive trimming because it carries evidence beyond a footer.')
+        trimmed, _ = compact_summary(line + '\n')
+        self.assertIn('newsletter subscription revenue grew', trimmed)
+
+    def test_analyze_sends_trimmed_summary_but_locates_against_full_text(self):
+        a = LocalAnalyzer('http://127.0.0.1:1/v1', 'm')
+        seen = {}
+
+        def fake_call(msgs, **kw):
+            seen['payload'] = _json.loads(msgs[1]['content'])
+            return _json.dumps(GOOD)
+
+        with mock.patch.object(a, '_call', side_effect=fake_call):
+            a.analyze('t', 'Alpha line.\nAlpha line.\nUnsubscribe\n', 'src', 'https://example.org/a')
+        self.assertEqual(seen['payload']['summary'].count('Alpha line.'), 1)
+        self.assertNotIn('Unsubscribe', seen['payload']['summary'])
+        self.assertGreater(a.last_trim['lines_removed'], 0)
 

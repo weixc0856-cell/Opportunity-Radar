@@ -1,4 +1,5 @@
 from collections import Counter
+from datetime import datetime
 import argparse, hashlib, json, logging, os, re, sqlite3, sys
 from pathlib import Path
 from .config import Settings, load_scoring, parse_backoff
@@ -613,6 +614,21 @@ def _period_due(report_dir, prefix, days):
     return age >= days
 
 
+def _period_due_calendar(report_dir, prefix, unit):
+    """Calendar cadence: monthly fires once at the start of a new month (summarising the
+    previous calendar month), yearly once at the start of a new year (previous calendar year).
+    Compared against the last written report's mtime, so a missed run catches up once."""
+    files = sorted(Path(report_dir).glob(f'{prefix}-*.txt'),
+                   key=lambda path: path.stat().st_mtime, reverse=True)
+    if not files:
+        return True
+    last = datetime.fromtimestamp(files[0].stat().st_mtime)
+    now = datetime.now()
+    if unit == 'month':
+        return (now.year, now.month) != (last.year, last.month)
+    return now.year != last.year
+
+
 def _write_period_report(settings, period):
     from . import period_report
     report = period_report.build(settings.db_path, period)
@@ -624,16 +640,16 @@ def _write_period_report(settings, period):
 
 
 def _maybe_period_reports(settings):
-    """Weekly on a 7-day cadence and monthly on a 30-day cadence, with catch-up.
-
-    The check is by the last written report, not by weekday, so a missed Monday does not
-    silently skip the week.
-    """
+    """Weekly on a trailing 7-day cadence; monthly at the start of each calendar month
+    (summarising the previous month) and yearly at the start of each calendar year
+    (summarising the previous year), with catch-up by the last report's mtime."""
     written = []
     if _period_due(settings.report_dir, 'weekly', 6):
         written.append(_write_period_report(settings, 'weekly'))
-    if _period_due(settings.report_dir, 'monthly', 29):
+    if _period_due_calendar(settings.report_dir, 'monthly', 'month'):
         written.append(_write_period_report(settings, 'monthly'))
+    if _period_due_calendar(settings.report_dir, 'yearly', 'year'):
+        written.append(_write_period_report(settings, 'yearly'))
     return written
 
 
@@ -646,7 +662,7 @@ def main(argv=None):
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except (AttributeError, ValueError):
         pass
-    p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); p.add_argument('--period',choices=('daily','weekly','monthly','auto'),default='daily'); p.add_argument('--youtube-check',metavar='URL',default='',help='fetch one YouTube transcript and print its excerpt, without analysis'); p.add_argument('--search-check',metavar='QUERY',default='',help='run one public search query and print results, without analysis'); p.add_argument('--search-provider',choices=('google_news','gdelt','newsapi','brave','guardian'),default='google_news'); p.add_argument('--validation-record',action='store_true',help='append one validation observation to the local log'); p.add_argument('--candidate',default='',help='candidate URL or exact title for --validation-record'); p.add_argument('--validation-kind',choices=('interview','pricing','buyer','decision','other'),default='interview'); p.add_argument('--validation-result',choices=('supports','contradicts','unknown'),default='unknown'); p.add_argument('--validation-note',default=''); p.add_argument('--validation-evidence',default=''); args=p.parse_args(argv)
+    p=argparse.ArgumentParser(); p.add_argument('--dry-run',action='store_true'); p.add_argument('--sample',action='store_true'); p.add_argument('--render-only',action='store_true'); p.add_argument('--period',choices=('daily','weekly','monthly','yearly','auto'),default='daily'); p.add_argument('--youtube-check',metavar='URL',default='',help='fetch one YouTube transcript and print its excerpt, without analysis'); p.add_argument('--search-check',metavar='QUERY',default='',help='run one public search query and print results, without analysis'); p.add_argument('--search-provider',choices=('google_news','gdelt','newsapi','brave','guardian'),default='google_news'); p.add_argument('--validation-record',action='store_true',help='append one validation observation to the local log'); p.add_argument('--candidate',default='',help='candidate URL or exact title for --validation-record'); p.add_argument('--validation-kind',choices=('interview','pricing','buyer','decision','other'),default='interview'); p.add_argument('--validation-result',choices=('supports','contradicts','unknown'),default='unknown'); p.add_argument('--validation-note',default=''); p.add_argument('--validation-evidence',default=''); args=p.parse_args(argv)
     if args.youtube_check:
         try:
             result=youtube_source.explain(args.youtube_check)
@@ -669,7 +685,7 @@ def main(argv=None):
     Path(s.report_dir).mkdir(parents=True,exist_ok=True)
     cfg=load_scoring(); lanes_cfg=cfg.get('lanes'); lane_weights,lane_thresholds=lane_display_config(cfg)
     min_chars=(cfg.get('evidence') or {}).get('full_text_min_chars')
-    if args.period in ('weekly','monthly'):
+    if args.period in ('weekly','monthly','yearly'):
         if not Path(s.db_path).exists():
             print(f'Database not found: {s.db_path}',file=sys.stderr); return 2
         result=_write_period_report(s,args.period)

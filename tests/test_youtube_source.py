@@ -1,11 +1,15 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from opportunity_radar import youtube_source
+
+
+RECENT_COMPACT = (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y%m%d')
 
 
 VTT = """WEBVTT
@@ -58,7 +62,7 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(youtube_source._source_matches({'title': 'x', 'live_status': 'is_live'}, source, config)[1], 'live_or_upcoming')
         self.assertEqual(youtube_source._source_matches({'title': 'x', 'upload_date': '20200101'}, source, config)[1], 'too_old')
         self.assertEqual(youtube_source._source_matches({'title': 'AI interview', 'duration': 600,
-                                                        'upload_date': '20261112'}, {'keywords': ['AI']}, config)[0], True)
+                                                        'upload_date': RECENT_COMPACT}, {'keywords': ['AI']}, config)[0], True)
 
 
 class CollectTests(unittest.TestCase):

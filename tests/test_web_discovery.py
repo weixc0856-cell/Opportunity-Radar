@@ -1,20 +1,29 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from opportunity_radar import web_discovery
 
 
-GOOGLE_XML = """<?xml version="1.0"?><rss><channel>
+# Fixture dates are relative to "now" so the max_age_days filter stays meaningful whenever
+# the suite runs; a hardcoded calendar date silently turns "recent" into "too_old".
+_NOW = datetime.now(timezone.utc)
+RECENT_RFC = (_NOW - timedelta(days=2)).strftime('%a, %d %b %Y %H:%M:%S GMT')
+SECOND_RFC = (_NOW - timedelta(days=3)).strftime('%a, %d %b %Y %H:%M:%S GMT')
+RECENT_DATE = (_NOW - timedelta(days=2)).strftime('%Y-%m-%d')
+RECENT_COMPACT = (_NOW - timedelta(days=2)).strftime('%Y%m%d')
+
+GOOGLE_XML = f"""<?xml version="1.0"?><rss><channel>
 <item><title>AI data center power demand - Reuters</title>
 <link>https://news.google.com/rss/articles/abc</link>
-<pubDate>Wed, 12 Nov 2026 10:00:00 GMT</pubDate>
+<pubDate>{RECENT_RFC}</pubDate>
 <source url="https://www.reuters.com">Reuters</source></item>
 <item><title>Grid constraints slow AI buildout - MIT Technology Review</title>
 <link>https://news.google.com/rss/articles/def</link>
-<pubDate>Tue, 11 Nov 2026 09:00:00 GMT</pubDate>
+<pubDate>{SECOND_RFC}</pubDate>
 <source url="https://www.technologyreview.com">MIT Technology Review</source></item>
 <item><title>Old story - Example</title>
 <link>https://news.google.com/rss/articles/old</link>
@@ -61,7 +70,7 @@ class GoogleNewsTests(unittest.TestCase):
         rows = web_discovery.fetch_google_news(query(), FakeHttp(GOOGLE_XML))
         self.assertEqual(len(rows), 3)
         self.assertEqual(rows[0]['publisher'], 'Reuters')
-        self.assertEqual(rows[0]['published'], '2026-11-12')
+        self.assertEqual(rows[0]['published'], RECENT_DATE)
         self.assertEqual(rows[0]['summary'], '')
 
     def test_collect_filters_old_and_dedupes(self):
@@ -110,7 +119,7 @@ class GdeltTests(unittest.TestCase):
     def test_page_fetch_is_used_when_enabled(self):
         payload = {'articles': [
             {'url': 'https://example.com/gdelt', 'title': 'Data center power',
-             'seendate': '20261112T090000Z', 'domain': 'example.com'}]}
+             'seendate': RECENT_COMPACT + 'T090000Z', 'domain': 'example.com'}]}
         page = FakePageFetcher({'ok': True, 'status': 'fetched', 'text': 'Full body about procurement and capacity.',
                                 'container': 'article'})
         config = {'enabled': True, 'queries': [query(provider='gdelt', fetch_pages=True)],

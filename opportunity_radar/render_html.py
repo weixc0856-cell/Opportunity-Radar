@@ -1,8 +1,13 @@
-"""HTML edition of the brief.
+"""HTML editions of the brief.
 
-Design intent: a printed consulting document, not a web page. The page is a fixed
-max-width sheet with a cover, a numbering system, restrained typography and a print
-stylesheet, so it reads the same on screen and on paper. All text is escaped; the only
+The full/local edition (`include_appendix=True`) is a printed consulting document, not a web
+page: a fixed max-width sheet with a cover, a numbering system, restrained typography, SVG
+charts and a print stylesheet, so it reads the same on screen and on paper.
+
+The emailed edition (`include_appendix=False`, see `_render_html_email`) rebuilds the same
+content with inline styles and real tables only — no `<style>` block, no CSS grid/flex, no
+SVG — because most mail clients strip or ignore all three, which turned the consulting sheet
+into unlabeled, run-together text in the inbox. All text is escaped in both editions; the only
 links are https URLs from source metadata.
 """
 from collections import Counter
@@ -12,15 +17,16 @@ from urllib.parse import urlparse
 
 from .analytics import funnel, source_breakdown, evidence_breakdown, denominator_note, lane_breakdown
 from .digest import (REASON_LABEL, SOURCE_LABEL, MARKET_LABEL, WEIGHT_LABEL,
-                     decision_headline, appendix_note, management_note, empty_reason, _pay_strong, _judgment,
+                     appendix_note, empty_reason, _pay_strong, _judgment,
                      _why, _evidence_text, _market, _commercial_line, _lane, _state, _shown, _deferred,
                      STATUS_LABEL, group_by_event, event_summary_lines, event_status_note, _v5_sections,
                      _one_line, _action_title, _evidence_basis, _implication, _confidence,
                      _next_actions, _hypotheses, _risks, _watch_rows, _judgment_pool, _order_key,
-                     _pool_key, READINESS_LABEL, readiness_of, readiness_reason, decision_request,
+                     _pool_key, READINESS_LABEL, readiness_of, readiness_reason,
                      _clock, _transcript_label, decision_implication, _decision_label, _capability_fit, _stop_condition,
                      _next_step, _risk_rows, _verification_rows, _readiness_counts, _validation_rows,
-                     VALIDATION_KIND_LABEL, VALIDATION_RESULT_LABEL)
+                     VALIDATION_KIND_LABEL, VALIDATION_RESULT_LABEL,
+                     intelligence_headline, intelligence_note, long_term_themes, INTEL_LEAD_LINES)
 from .evidence import STATE_LABEL, STATE_MEANING, EVIDENCE_STATES
 from .intelligence_lines import INTELLIGENCE_LINE_LABEL, summarize
 from .lanes import LANE_LABEL, LANE_PROMISE
@@ -159,6 +165,27 @@ def _chart_block(title, rows, color_note=''):
     return f'<div class="chart"><div class="t">{_e(title)}</div>{bars}{note}</div>'
 
 
+def _label_width(text, font_size=11):
+    """Rough rendered width: CJK glyphs are ~1em wide, Latin/digits roughly half that."""
+    return sum(font_size if ord(ch) > 0x2e7f else font_size * 0.56 for ch in text)
+
+
+def _fit_label(text, max_width=140, font_size=11):
+    """Only truncate when the label genuinely cannot fit the column before the bar starts.
+
+    A fixed character count cut known category labels mid-word ("客户痛点与商业机" instead of
+    "客户痛点与商业机会") even though they fit; measure width instead so short labels survive whole.
+    """
+    if _label_width(text, font_size) <= max_width:
+        return text
+    out = ''
+    for ch in text:
+        if _label_width(out + ch + '…', font_size) > max_width:
+            break
+        out += ch
+    return out + '…'
+
+
 def _svg_bars(rows):
     """Horizontal bars, sized to the largest value, labelled with their count."""
     rows = [(str(r[0]), int(r[1]), str(r[2]) if len(r) > 2 else '') for r in rows]
@@ -169,7 +196,7 @@ def _svg_bars(rows):
     for i, (label, value, note) in enumerate(rows):
         y = 8 + i * 26
         width = max(2.0, 420.0 * value / top)
-        out.append(f'<text x="0" y="{y + 13}" font-size="11" fill="{INK2}" font-family="{FONT}">{_e(label[:18])}</text>')
+        out.append(f'<text x="0" y="{y + 13}" font-size="11" fill="{INK2}" font-family="{FONT}">{_e(_fit_label(label))}</text>')
         out.append(f'<rect x="150" y="{y + 3}" width="{width:.1f}" height="14" rx="2" fill="{BRAND}" opacity="0.85"/>')
         suffix = f'  {note}' if note else ''
         out.append(f'<text x="{150 + width + 8:.1f}" y="{y + 14}" font-size="11" fill="{MUTED}" '
@@ -427,8 +454,222 @@ def _watch_block(watch):
     return ''.join(out)
 
 
+EMAIL_FONT = "Arial,'Helvetica Neue',Helvetica,'PingFang SC','Microsoft YaHei',sans-serif"
+
+
+def _em_table(rows, headers=None):
+    """A plain table with inline styles only — the one layout primitive every mail client trusts.
+
+    Cells wrap naturally, so nothing here needs the character-count truncation the SVG charts
+    and the fixed-width text digest rely on.
+    """
+    out = ['<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">']
+    if headers:
+        out.append('<tr>' + ''.join(
+            f'<th align="left" style="text-align:left;font-size:11px;color:{MUTED};font-weight:700;'
+            f'padding:0 10px 6px 0;border-bottom:1px solid {RULE};">{_e(h)}</th>' for h in headers) + '</tr>')
+    for row in rows:
+        out.append('<tr>' + ''.join(
+            f'<td valign="top" style="font-size:13px;line-height:1.6;color:{INK2};padding:8px 10px 8px 0;'
+            f'border-bottom:1px solid {RULE};">{_e(cell)}</td>' for cell in row) + '</tr>')
+    out.append('</table>')
+    return ''.join(out)
+
+
+def _em_chart(title, rows, note=''):
+    if not rows:
+        return ''
+    body = _em_table([(str(r[0]), str(r[1]), str(r[2]) if len(r) > 2 else '') for r in rows])
+    note_html = f'<div style="font-size:12px;color:{MUTED};margin-top:4px;">{_e(note)}</div>' if note else ''
+    return (f'<div style="margin:16px 0 0;">'
+            f'<div style="font-size:11px;font-weight:700;color:{MUTED};letter-spacing:.06em;margin-bottom:6px;">{_e(title)}</div>'
+            f'{body}{note_html}</div>')
+
+
+def _em_panel(text_html, background=PANEL, border=RULE, color=INK2):
+    return (f'<div style="background:{background};border:1px solid {border};padding:12px 14px;'
+            f'font-size:13px;line-height:1.75;color:{color};">{text_html}</div>')
+
+
+def _render_html_email(items, stats, date_label):
+    """The mailed edition: inline styles and real tables only, no CSS grid/flex and no SVG.
+
+    Most mail clients (163/QQ webmail, Outlook, Gmail) strip `<style>` blocks, ignore CSS
+    grid/flex, and drop `<svg>` entirely — the consulting-sheet layout above renders as
+    unlabeled, run-together text there. This edition keeps the same content and section order
+    but rebuilds every layout primitive as a table with inline styles so it survives delivery.
+    """
+    counts = stats.get('counts', {})
+    strong = sum(1 for x in items if _pay_strong(x))
+    shown = _shown(items)
+    fetched = stats.get('fetched', stats.get('article_count', 0))
+    analyzed = stats.get('analyzed', stats.get('analyzed_count', 0))
+    skipped = stats.get('skipped', 0)
+    coverage = stats.get('coverage')
+
+    def section(n, title, en=''):
+        en_html = f'<span style="font-size:11px;color:{MUTED};font-weight:400;">　{_e(en)}</span>' if en else ''
+        return (f'<h2 style="font-size:17px;font-weight:800;color:{INK};margin:32px 0 12px;'
+                f'padding-bottom:8px;border-bottom:1px solid {RULE};">'
+                f'<span style="color:{ACCENT};font-family:monospace;margin-right:8px;">{n:02d}</span>'
+                f'{_e(title)}{en_html}</h2>')
+
+    parts = [
+        f'<div style="background:{INK};padding:28px 24px;">'
+        f'<div style="font-size:11px;letter-spacing:.3em;color:#f0b27a;font-weight:700;">OPPORTUNITY RADAR</div>'
+        f'<div style="font-size:26px;font-weight:800;color:#ffffff;margin:10px 0 4px;">个人情报简报</div>'
+        f'<div style="font-size:13px;color:#c7ccd4;">政策 · 媒体 · 市场 · 长线关注 · {_e(date_label)}</div>'
+        f'</div>',
+    ]
+    meta_rows = [('报告编号', f'OR-{date_label.replace("-", "")}'),
+                 ('生成时间', datetime.now().astimezone().strftime('%Y-%m-%d %H:%M')),
+                 ('本轮获取', f'{fetched} 篇 · 新增分析 {analyzed} 篇'),
+                 ('用途', '个人非商业 · 内部参考')]
+    parts.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#1f2430;">'
+                 + '<tr>' + ''.join(
+                     f'<td style="padding:14px 16px;">'
+                     f'<div style="font-size:10px;color:#98a0ab;letter-spacing:.08em;">{_e(k)}</div>'
+                     f'<div style="font-size:12px;color:#ffffff;margin-top:3px;font-weight:700;">{_e(v)}</div></td>'
+                     for k, v in meta_rows) + '</tr></table>')
+    kpi_cells = [(len(shown), '入选条目'), (counts.get('priority', 0), '优先验证'),
+                 (counts.get('watch', 0), '持续观察'),
+                 ('—' if coverage is None else f'{coverage:.0%}', '分析覆盖率')]
+    parts.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#1f2430;border-top:1px solid #2a303a;">'
+                 + '<tr>' + ''.join(
+                     f'<td style="padding:16px;">'
+                     f'<div style="font-size:26px;font-weight:800;color:#ffffff;">{_e(n)}</div>'
+                     f'<div style="font-size:10px;color:#98a0ab;letter-spacing:.08em;margin-top:4px;">{_e(l)}</div></td>'
+                     for n, l in kpi_cells) + '</tr></table>')
+    parts.append('<div style="padding:0 24px;">')
+
+    if stats.get('sample_mode'):
+        parts.append(f'<div style="background:#fff7ed;border:1px solid #fdba74;color:#7c2d12;padding:12px 14px;'
+                     f'font-size:13px;line-height:1.75;margin-top:20px;"><strong>离线演示数据：</strong>'
+                     '以下内容仅用于展示报告结构，不代表真实来源、用户需求或商业机会。</div>')
+
+    parts.append(section(1, '执行摘要（情报主线）', 'Executive summary'))
+    parts.append(_intel_lead_block(items, stats))
+
+    parts.append(section(2, '情报整合与长线关注', 'Intelligence & long-term watch'))
+    parts.append(f'<div style="font-size:12px;color:{MUTED};margin:0 0 10px;">按情报主线与事件整合；'
+                 '同一主题给出官方/媒体/市场角度与对照情况，并给长线触发条件。未核实不作为投入依据。</div>')
+    parts.append(_integration_block(items))
+
+    parts.append(section(3, '证据与方法', 'Basis of preparation'))
+    parts.append(_em_chart('处理漏斗（条目数）', funnel(stats)))
+    disclosed = disclosure(stats)
+    if disclosed:
+        parts.append(f'<div style="background:#fff7ed;border:1px solid #fdba74;color:#7c2d12;padding:12px 14px;'
+                     f'font-size:12.5px;line-height:1.75;margin-top:14px;"><strong>运行完整性：</strong>{_e(disclosed)}</div>')
+    parts.append(_em_chart('通道分布（分析条目）',
+                           [(LANE_LABEL[r['lane']], r['items'], f"入选 {r['shown']}") for r in lane_breakdown(items)]))
+    line_rows = [(INTELLIGENCE_LINE_LABEL.get(str(k), str(k)), v, '来源声明') for k, v in summarize(items)]
+    if line_rows:
+        parts.append(_em_chart('情报主线（分析条目）', line_rows))
+    parts.append(_em_chart('证据强度（条目数）',
+                           [(STATE_LABEL.get(e['state'], e['state']), e['count']) for e in evidence_breakdown(items)]))
+    readiness = _readiness_counts(items)
+    parts.append(_em_chart('决策就绪度（入选条目）',
+                           [(READINESS_LABEL[k], readiness[k]) for k in ('decision', 'validation', 'monitor')],
+                           '口径：本轮入选条目；观察级不进入判断层。'))
+    markets = Counter(_market(x) for x in shown)
+    parts.append(_em_chart('证据独立性（入选条目）',
+                           [(MARKET_LABEL.get(k, k), v) for k, v in markets.items()],
+                           '口径：按来源声明与已分析条目统计；单一来源不等于独立佐证。'))
+    parts.append(f'<div style="font-size:12px;color:{MUTED};margin-top:10px;">{_e(denominator_note(stats))}</div>')
+    present = {_state(x) for x in items}
+    meanings = [STATE_MEANING[st] for st in EVIDENCE_STATES if st in present and st in STATE_MEANING]
+    if meanings:
+        parts.append(f'<div style="font-size:12px;color:{MUTED};margin-top:4px;"><strong>证据口径：</strong>{_e(" ".join(meanings))}</div>')
+    panel_rows = [f'<div>模型 {_e(stats.get("model") or "未记录")} · 提示词 v{_e(stats.get("prompt_version") or "未记录")}'
+                  f'（{_e(stats.get("prompt_hash") or "hash未记录")}）· 规则 {_e(stats.get("rules_version", "v2"))}</div>',
+                  f'<div style="margin-top:4px;">本轮获取 {_e(fetched)} 篇 · 新增分析 {_e(analyzed)} 篇'
+                  + (f' · 已有结果跳过 {_e(skipped)} 篇' if skipped else '')
+                  + f' · 入选 {len(shown)} 条 · 明确付费证据 {strong} 条</div>',
+                  '<div style="margin-top:4px;">外部对标：本期未做竞品/替代方案对照、市场规模测算与'
+                  '财务测算；这些是投入决策前必须补齐的外部数据。</div>']
+    yt_stats = stats.get('youtube') or {}
+    if yt_stats:
+        panel_rows.append(f'<div style="margin-top:4px;">YouTube 字幕：候选 {_e(yt_stats.get("candidates", 0))}'
+                          f' · 选取 {_e(yt_stats.get("selected", 0))} · 抓取 {_e(yt_stats.get("fetched", 0))}'
+                          f' · 分析 {_e(yt_stats.get("analyzed", 0))}。字幕为人工/自动字幕节选，未核对讲话人，按 E1 上限处理。</div>')
+    disc_stats = stats.get('discovery') or {}
+    if disc_stats:
+        providers = '，'.join(f'{k} {v}' for k, v in (disc_stats.get('providers') or {}).items()) or '无'
+        panel_rows.append(f'<div style="margin-top:4px;">公开检索：查询 {_e(disc_stats.get("queries", 0))}'
+                          f' · 候选 {_e(disc_stats.get("candidates", 0))} · 入选 {_e(disc_stats.get("selected", 0))}'
+                          f' · 页面抓取 {_e(disc_stats.get("page_fetched", 0))}'
+                          f'（跳过 {_e(disc_stats.get("page_skipped", 0))}）· 来源 {_e(providers)}。'
+                          '只使用公开 RSS/API 与 robots 允许的页面；标题/摘要可能不完整。</div>')
+    parts.append(f'<div style="margin-top:14px;">{_em_panel("".join(panel_rows))}</div>')
+
+    parts.append(section(4, '附录 · 本地存档', 'Appendix archived'))
+    parts.append(_em_panel(_e(appendix_note(items, stats))))
+
+    parts.append(f'<div style="margin-top:32px;padding-top:14px;border-top:1px solid {RULE};font-size:11px;'
+                 f'color:{MUTED};line-height:1.7;">免责声明：本报告为自动化初筛，不构成商业、法律或投资结论。'
+                 '营收、利润、市场规模和法律许可等主张必须核对原始来源及独立证据。</div>')
+    parts.append('</div>')
+
+    body_html = ''.join(parts)
+    return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{_e("Opportunity Radar · 个人情报简报 · " + date_label)}</title></head>'
+            f'<body style="margin:0;padding:0;background:#eef0f3;font-family:{EMAIL_FONT};">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef0f3;">'
+            '<tr><td align="center" style="padding:16px 8px;">'
+            '<table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width:640px;max-width:640px;background:#ffffff;">'
+            f'<tr><td>{body_html}</td></tr>'
+            '</table></td></tr></table></body></html>')
+
+
+def _intel_lead_block(items, stats):
+    """Intelligence-first governing block, inline-styled so it works in mail and browser."""
+    out = [f'<div style="font-size:18px;line-height:1.5;font-weight:700;color:{INK};'
+           f'border-left:3px solid {BRAND};padding-left:14px;margin:0 0 14px;">'
+           f'{_e(intelligence_headline(items, stats))}</div>']
+    note = ('样例仅用于演示字段和版式，不构成对真实需求的判断。' if stats.get('sample_mode')
+            else intelligence_note(items))
+    out.append(_em_panel(_e(note), background=WASH, border='#f0e3d3', color='#4a3b2a'))
+    out.append(f'<div style="margin-top:12px;">{_em_panel("<strong>用途：</strong>经核实的政策/媒体/市场情报，服务长线投资与个人低成本创业；未核实不作为投入依据。")}</div>')
+    preview = long_term_themes(items)[:3]
+    if preview:
+        rows = ''.join(f'<li style="margin:4px 0;">{_e(t["title"])}（{_e(INTELLIGENCE_LINE_LABEL[t["line"]])}）</li>'
+                       for t in preview)
+        out.append(f'<div style="margin-top:14px;"><div style="font-size:12px;font-weight:700;color:{INK};">长线关注</div>'
+                   f'<ul style="margin:6px 0 0;padding-left:20px;font-size:13px;color:{INK2};line-height:1.7;">{rows}</ul></div>')
+    else:
+        out.append(f'<div style="font-size:12px;color:{MUTED};margin-top:14px;">本期没有形成可跟踪主题；观察级线索见附录。</div>')
+    return ''.join(out)
+
+
+def _integration_block(items):
+    """Per-mainline long-term attention board with source angles and verification status."""
+    themes = long_term_themes(items)
+    if not themes:
+        return _em_panel('本期没有形成可跟踪的政策/产业/市场主题；维持观察。')
+    byline = {}
+    for t in themes:
+        byline.setdefault(t['line'], []).append(t)
+    out = []
+    for line in INTEL_LEAD_LINES:
+        group = byline.get(line) or []
+        if not group:
+            continue
+        out.append(f'<div style="font-size:13px;font-weight:700;color:{INK};margin:14px 0 6px;">'
+                   f'【{_e(INTELLIGENCE_LINE_LABEL[line])}】</div>')
+        rows = []
+        for t in group:
+            cross = '多Angle对照' if len(t['angles']) >= 2 else '单一Angle，待独立对照'
+            rows.append((t['title'], '、'.join(t['angles']) + f'（{cross}）', t['evidence'], t['verified'], t['trigger']))
+        out.append(_em_table(rows, headers=['主题', '角度', '证据', '核实', '长线触发']))
+    return ''.join(out)
+
+
 def render_html(items, stats, date_label=None, include_appendix=True):
     date_label = date_label or datetime.now().astimezone().strftime('%Y-%m-%d')
+    if not include_appendix:
+        return _render_html_email(items, stats, date_label)
     counts = stats.get('counts', {})
     strong = sum(1 for x in items if _pay_strong(x))
     shown = _shown(items)
@@ -442,8 +683,8 @@ def render_html(items, stats, date_label=None, include_appendix=True):
 
     parts = ['<header class="cover">',
              '<div class="brand">OPPORTUNITY RADAR</div>',
-             '<h1>商业机会情报简报</h1>',
-             f'<div class="sub">证据优先 · 结论先行 · {_e(date_label)}</div>',
+             '<h1>个人情报简报</h1>',
+             f'<div class="sub">政策 · 媒体 · 市场 · 长线关注 · {_e(date_label)}</div>',
              '<div class="rule"></div>',
              '<div class="meta">',
              f'<div><div class="k">报告编号</div><div class="v">OR-{_e(date_label.replace("-", ""))}</div></div>',
@@ -463,56 +704,23 @@ def render_html(items, stats, date_label=None, include_appendix=True):
         parts.append('<div class="warn" style="margin-top:24px;"><strong>离线演示数据：</strong>'
                      '以下内容仅用于展示报告结构，不代表真实来源、用户需求或商业机会。</div>')
 
-    parts.append(_section(1, '执行摘要（核心判断）', 'Executive summary'))
-    parts.append(f'<p class="governing">{_e(decision_headline(items, stats))}</p>')
-    note = ('样例仅用于演示字段和版式，不构成对真实需求的判断。' if stats.get('sample_mode')
-            else management_note(items))
-    parts.append(f'<p class="note">{_e(note)}</p>')
-    parts.append(f'<div class="panel" style="margin-top:14px;"><strong>决策请求：</strong>'
-                 f'{_e(decision_request(items, stats))}</div>')
-    lane_counts = Counter(_lane(x) for x in shown)
-    watch_lanes = [f'{LANE_LABEL[l]} {lane_counts[l]} 条' for l in ('A', 'C') if lane_counts.get(l)]
-    if watch_lanes:
-        parts.append(f'<p class="muted" style="margin-top:10px;"><strong>战略/技术情报：</strong>'
-                     f'{_e("，".join(watch_lanes))}，只用于跟踪，不进入机会决策。</p>')
-    preview = _judgment_pool(items)[:3]
-    if preview:
-        rows = ''.join(f'<li>{_e(_action_title(x))}（{_e(READINESS_LABEL[readiness_of(x)])}）</li>'
-                       for x in preview)
-        parts.append(f'<div style="margin-top:14px;"><div class="muted" style="font-weight:700;'
-                     f'color:var(--ink);">本期判断</div><ul class="risk">{rows}</ul></div>')
-    else:
-        parts.append('<p class="muted" style="margin-top:14px;">本期没有达到验证级的判断；'
-                     '观察级线索见第六节与附录 A。</p>')
+    parts.append(_section(1, '执行摘要（情报主线）', 'Executive summary'))
+    parts.append(_intel_lead_block(items, stats))
     parts.append('</section>')
 
-    parts.append(_section(2, '关键判断', 'Key judgments'))
-    parts.append('<p class="muted" style="margin:-4px 0 10px;">按可执行性、通道与信号分排序；'
-                 '每条只回答一个问题：这条信息是否改变我们的行动。<br>'
-                 '就绪度口径：决策级=明确预算 + E2 + 可定位事实 + 可执行；'
-                 '验证级=商业信号 + E1/E2 + 可定位事实 +（可执行或重复痛点）；其余为观察级。</p>')
-    parts.append(_kj_block(items) + '</section>')
+    parts.append(_section(2, '情报整合与长线关注', 'Intelligence & long-term watch'))
+    parts.append('<p class="muted" style="margin:-4px 0 10px;">按情报主线与事件整合；同一主题给出'
+                 '官方/媒体/市场角度与对照情况，并给长线触发条件。未核实不作为投入依据。</p>')
+    parts.append(_integration_block(items) + '</section>')
 
-    parts.append(_section(3, '建议行动与验证台账', 'Next actions and validation ledger'))
-    parts.append(_actions_block(items) + '</section>')
-
-    parts.append(_section(4, '待验证假设', 'Hypotheses'))
-    parts.append(_hypotheses_block(items) + '</section>')
-
-    parts.append(_section(5, '风险与反证', 'What would falsify this'))
-    parts.append(_risks_block(items) + '</section>')
-
-    parts.append(_section(6, '监测清单', 'Watch list'))
-    parts.append(_watchlist_block(items) + '</section>')
-
-    parts.append(_section(7, '证据与方法', 'Basis of preparation'))
+    parts.append(_section(3, '证据与方法', 'Basis of preparation'))
     parts.append(_chart_block('处理漏斗（条目数）', funnel(stats)))
     disclosed = disclosure(stats)
     if disclosed:
         parts.append(f'<div class="warn" style="margin-top:14px;"><strong>运行完整性：</strong>{_e(disclosed)}</div>')
     parts.append(_chart_block('通道分布（分析条目）',
-                              [(LANE_LABEL[r['lane']][:8], r['items'], f"入选 {r['shown']}") for r in lane_breakdown(items)]))
-    line_rows = [(INTELLIGENCE_LINE_LABEL.get(str(k), str(k))[:10], v, '来源声明') for k, v in summarize(items)]
+                              [(LANE_LABEL[r['lane']], r['items'], f"入选 {r['shown']}") for r in lane_breakdown(items)]))
+    line_rows = [(INTELLIGENCE_LINE_LABEL.get(str(k), str(k)), v, '来源声明') for k, v in summarize(items)]
     if line_rows:
         parts.append(_chart_block('情报主线（分析条目）', line_rows))
     parts.append(_chart_block('证据强度（条目数）',
@@ -553,70 +761,75 @@ def render_html(items, stats, date_label=None, include_appendix=True):
                      '只使用公开 RSS/API 与 robots 允许的页面；标题/摘要可能不完整。</div>')
     parts.append('</div></section>')
 
-    if include_appendix:
-        parts.append(_section(8, '附录 A · 条目明细', 'Evidence appendix'))
-        representatives, _siblings = group_by_event(shown)
-        if representatives:
-            for x in sorted(representatives, key=_order_key):
-                parts.append(_finding(x))
-                note = event_summary_lines(x)
-                if note:
-                    parts.append('<div class="muted" style="margin:-8px 0 14px;">'
-                                 + '<br>'.join(_e(line.strip()) for line in note) + '</div>')
-        else:
-            parts.append(f'<p class="panel">{_e(reason)}</p>')
-        parts.append('</section>')
+    parts.append(_section(4, '附录 D · 机会与验证（下游：投资/创业）', 'Downstream opportunity'))
+    parts.append('<p class="muted" style="margin:-4px 0 10px;">本附录为下游机会层，只有经核实'
+                 '（买方/付费/独立来源）后才用于投资或低成本创业建议；当前不作为投入依据。</p>')
+    parts.append(_kj_block(items))
+    parts.append(_actions_block(items))
+    parts.append(_hypotheses_block(items))
+    parts.append(_risks_block(items))
+    parts.append(_watchlist_block(items))
+    parts.append('</section>')
 
-        parts.append(_section(9, '附录 B · 未纳入与失败', 'Excluded'))
-        if deferred:
-            rows = ''.join(
-                f'<tr><td>[{_e(STATUS_LABEL.get(x.get("status"), x.get("status")))} · {_e(x.get("score", 0))}/100] '
-                f'{_e(x.get("title", ""))}</td><td class="mono">{_e(x.get("source_name", "Unknown"))}</td></tr>'
-                for x in sorted(deferred, key=lambda v: (-v.get('score', 0), v.get('title', ''))))
-            parts.append(f'<p class="muted" style="margin:0 0 8px;">本期未纳入分发（来源单期配额）：'
-                         f'{len(deferred)} 条，原始判断保留如下，不代表价值较低。</p>'
-                         f'<table><thead><tr><th>条目</th><th>来源</th></tr></thead><tbody>{rows}</tbody></table>')
-        if filtered:
-            for key, label in REASON_LABEL.items():
-                group = [x for x in filtered if x.get('filter_reason') == key]
-                if not group:
-                    continue
-                rows = ''.join(f'<tr><td>[{x.get("score", 0)}/100] {_e(x.get("title", ""))}</td></tr>'
-                               for x in group[:10])
-                parts.append(f'<p class="muted" style="margin:14px 0 8px;"><strong>{_e(label)}：{len(group)} 篇</strong></p>'
-                             f'<table><tbody>{rows}</tbody></table>')
-        if not deferred and not filtered:
-            parts.append('<p class="panel">无。</p>')
-        watch_list = stats.get('watchlist')
-        if watch_list:
-            parts.append('<div style="margin-top:22px;"><div class="muted" style="font-weight:700;color:var(--ink);">'
-                         '弱信号（保留在库中，不进入主阅读区）</div></div>')
-            parts.append(_watch_block(watch_list))
-        parts.append('</section>')
-
-        parts.append(_section(10, '附录 C · 来源与数据源', 'Sources'))
-        src_rows = [(r['source'], r['items'], f"引文 {r['located']}/{r['evidence']}" if r['evidence'] else '无引文')
-                    for r in source_breakdown(items)]
-        parts.append(_chart_block('来源贡献（分析条目）', src_rows))
-        sources = ', '.join(f'{k} {v}' for k, v in Counter(x.get('source_name', 'Unknown') for x in items).most_common()) or '无'
-        parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源分布：</strong>{_e(sources)}</p>')
-        quality = Counter(_evidence_text(x) for x in items)
-        q = ', '.join(f'{k} {v}' for k, v in quality.most_common()) or '无'
-        parts.append(f'<p class="muted" style="margin-top:4px;"><strong>数据质量：</strong>证据等级分布 {_e(q)}。'
-                     '仅标题或无法在原文中定位的摘录不能作为已验证需求。</p>')
-        conflict_lines = stats.get('conflicts') or []
-        if conflict_lines:
-            body = '<br>'.join(_e(line.strip()) for line in conflict_lines)
-            parts.append(f'<div class="warn" style="margin-top:12px;"><strong>数据冲突（记录，不判定对错）：</strong>'
-                         f'<br>{body}</div>')
-        parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源审计：</strong>{_audit_html(stats)}</p>')
-        parts.append(f'<p class="muted" style="margin-top:4px;"><strong>评分规则：</strong>'
-                     f'版本 {_e(stats.get("rules_version", "v2"))}。{_rules_html(stats)}</p>')
-        parts.append('</section>')
-
+    parts.append(_section(5, '附录 A · 条目明细', 'Evidence appendix'))
+    representatives, _siblings = group_by_event(shown)
+    if representatives:
+        for x in sorted(representatives, key=_order_key):
+            parts.append(_finding(x))
+            note = event_summary_lines(x)
+            if note:
+                parts.append('<div class="muted" style="margin:-8px 0 14px;">'
+                             + '<br>'.join(_e(line.strip()) for line in note) + '</div>')
     else:
-        parts.append(_section(8, '附录 · 本地存档', 'Appendix archived'))
-        parts.append(f'<p class="panel">{_e(appendix_note(items, stats))}</p></section>')
+        parts.append(f'<p class="panel">{_e(reason)}</p>')
+    parts.append('</section>')
+
+    parts.append(_section(6, '附录 B · 未纳入与失败', 'Excluded'))
+    if deferred:
+        rows = ''.join(
+            f'<tr><td>[{_e(STATUS_LABEL.get(x.get("status"), x.get("status")))} · {_e(x.get("score", 0))}/100] '
+            f'{_e(x.get("title", ""))}</td><td class="mono">{_e(x.get("source_name", "Unknown"))}</td></tr>'
+            for x in sorted(deferred, key=lambda v: (-v.get('score', 0), v.get('title', ''))))
+        parts.append(f'<p class="muted" style="margin:0 0 8px;">本期未纳入分发（来源单期配额）：'
+                     f'{len(deferred)} 条，原始判断保留如下，不代表价值较低。</p>'
+                     f'<table><thead><tr><th>条目</th><th>来源</th></tr></thead><tbody>{rows}</tbody></table>')
+    if filtered:
+        for key, label in REASON_LABEL.items():
+            group = [x for x in filtered if x.get('filter_reason') == key]
+            if not group:
+                continue
+            rows = ''.join(f'<tr><td>[{x.get("score", 0)}/100] {_e(x.get("title", ""))}</td></tr>'
+                           for x in group[:10])
+            parts.append(f'<p class="muted" style="margin:14px 0 8px;"><strong>{_e(label)}：{len(group)} 篇</strong></p>'
+                         f'<table><tbody>{rows}</tbody></table>')
+    if not deferred and not filtered:
+        parts.append('<p class="panel">无。</p>')
+    watch_list = stats.get('watchlist')
+    if watch_list:
+        parts.append('<div style="margin-top:22px;"><div class="muted" style="font-weight:700;color:var(--ink);">'
+                     '弱信号（保留在库中，不进入主阅读区）</div></div>')
+        parts.append(_watch_block(watch_list))
+    parts.append('</section>')
+
+    parts.append(_section(7, '附录 C · 来源与数据源', 'Sources'))
+    src_rows = [(r['source'], r['items'], f"引文 {r['located']}/{r['evidence']}" if r['evidence'] else '无引文')
+                for r in source_breakdown(items)]
+    parts.append(_chart_block('来源贡献（分析条目）', src_rows))
+    sources = ', '.join(f'{k} {v}' for k, v in Counter(x.get('source_name', 'Unknown') for x in items).most_common()) or '无'
+    parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源分布：</strong>{_e(sources)}</p>')
+    quality = Counter(_evidence_text(x) for x in items)
+    q = ', '.join(f'{k} {v}' for k, v in quality.most_common()) or '无'
+    parts.append(f'<p class="muted" style="margin-top:4px;"><strong>数据质量：</strong>证据等级分布 {_e(q)}。'
+                 '仅标题或无法在原文中定位的摘录不能作为已验证需求。</p>')
+    conflict_lines = stats.get('conflicts') or []
+    if conflict_lines:
+        body = '<br>'.join(_e(line.strip()) for line in conflict_lines)
+        parts.append(f'<div class="warn" style="margin-top:12px;"><strong>数据冲突（记录，不判定对错）：</strong>'
+                     f'<br>{body}</div>')
+    parts.append(f'<p class="muted" style="margin-top:10px;"><strong>来源审计：</strong>{_audit_html(stats)}</p>')
+    parts.append(f'<p class="muted" style="margin-top:4px;"><strong>评分规则：</strong>'
+                 f'版本 {_e(stats.get("rules_version", "v2"))}。{_rules_html(stats)}</p>')
+    parts.append('</section>')
 
     parts.append('<div class="foot">免责声明：本报告为自动化初筛，不构成商业、法律或投资结论。'
                  '营收、利润、市场规模和法律许可等主张必须核对原始来源及独立证据。</div>')
@@ -624,6 +837,6 @@ def render_html(items, stats, date_label=None, include_appendix=True):
 
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{_e("Opportunity Radar · 商业机会情报简报 · " + date_label)}</title>'
+            f'<title>{_e("Opportunity Radar · 个人情报简报 · " + date_label)}</title>'
             f'<style>{STYLE}</style></head><body><div class="sheet">'
             + ''.join(parts) + '</div></body></html>')
