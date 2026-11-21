@@ -181,7 +181,10 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   回退全局 UA 覆盖、改回 `enabled=false/review_required`，改用许可明确的替代源（BBC/NYT 商业/
   科技 + BEA/ONS/Fed/BLS/Census）。统计局为静态列表可 XPath（步骤见 OPERATIONS，待人工订阅）；
   国务院/联合早报为 JS 渲染、FreshRSS 无 JS 引擎抓不了，保持禁用（可改公开检索发现层，需批准）。
-  Reuters 因 robots 禁止保持禁用；YouTube 财经频道待所有者批准许可 + `OR_YOUTUBE_ENABLED`。
+  Reuters 因 robots 禁止保持禁用。**YouTube 财经频道与公开检索已获所有者批准启用**
+  （2026-11-21）：3 频道 approved+enabled、`OR_YOUTUBE_ENABLED=1`（字幕 429 自动跳过）；
+  `OR_DISCOVERY_ENABLED=1`、5 个 approved 查询，含 `gnews-gov-cn-policy`/`gnews-zaobao-china`
+  以标题发现层覆盖 JS 渲染的国务院/联合早报（登记行保持禁用），实测各出条目。
   **统计局已启用**：FreshRSS HTML+XPath feed 39（`div.list-content//li/a`），实测 23 条；
   `is_approved` 合法访问方式新增 `html_xpath`（含测试）。
 - **周期回归**：月报=上一自然月、年报=上一自然年（参考期口径，下月初/次年初总结），周报 trailing
@@ -194,8 +197,8 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   新增 `test_period_report.py`（含自然月/年报）、`test_analyzer.py` 缓存/裁剪/usage、digest/html 重定位语义。
 - 真实数据验证：`--render-only` 重生成日报（长线关注 9 主题、机会入附录 D、邮件无附录 D），
   `--period yearly` 生成年报；无头浏览器截图核对新版式。
-- 未做/待人工：国务院/联合早报为 JS 渲染需替代通道或放弃；YouTube 需批准；
-  月/年回归基线随时间积累才有跨期确认/反证。
+- 未做/待观察：月/年回归基线随时间积累才有跨期确认/反证；YouTube 本机字幕若 429 该通道自动跳过
+  （已记录来源问题，不影响其余源）。
 
 ## 5. 当前限制（不掩盖）
 

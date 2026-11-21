@@ -174,12 +174,18 @@ RSS，但对命名 LLM/bot 全站 Disallow，浏览器 UA 过 WAF 属反爬 ToS 
   approved + enabled。`is_approved` 的合法访问方式已含 `html_xpath`（政府公开信息、robots 放行、
   仅标题/摘要层）。注意：列表容器是 `div.list-content`，不是页面上另一处 `icon-list` 图标块。
 
-**国务院 cn-state-council / 联合早报 sg-zaobao（FreshRSS 抓不了）**：列表为 JS 渲染，静态 HTML
-无条目链接，FreshRSS 无 JS 引擎，XPath 也无效；保持禁用。若需覆盖，改用公开检索发现层
-（`web_discovery` Google News `site:` 查询，需 `OR_DISCOVERY_ENABLED` 批准）或放弃这两个源。
+**国务院 cn-state-council / 联合早报 sg-zaobao（FreshRSS 抓不了，改公开检索覆盖）**：列表为 JS
+渲染，静态 HTML 无条目链接，FreshRSS 无 JS 引擎，XPath 也无效；登记行保持禁用。**2026-11-21
+所有者批准公开检索**，新增 Google News 标题发现层查询 `gnews-gov-cn-policy`（`site:gov.cn 政策`）
+与 `gnews-zaobao-china`（`site:zaobao.com.sg`），实测各出条目；仅标题+链接、不抓全文。
 
-**YouTube 财经频道（Bloomberg/Yahoo/CNBC）**：已登记于 `config/youtube_sources.json`，默认禁用；
-启用需所有者明确批准许可 + `OR_YOUTUBE_ENABLED=1`（仅公开 RSS/字幕节选，E1 上限）。
+**YouTube 财经频道（Bloomberg/Yahoo/CNBC）：已启用（2026-11-21 所有者批准）**。
+`config/youtube_sources.json` 三频道 approved + enabled，全局 enabled=true，`OR_YOUTUBE_ENABLED=1`；
+仅公开 RSS/人工·自动字幕节选，E1 上限，不下载整片。本机字幕请求若 429 会自动跳过并记录来源问题。
+
+**公开检索（web_discovery）：已启用**。`OR_DISCOVERY_ENABLED=1`，5 个 approved 查询
+（3 个 AI 基础设施区域查询 + 早报/国务院标题查询）；Google News RSS 仅标题发现层，
+`fetch_pages=false` 不抓页面正文。
 
 Reuters 因 robots 明确禁止未授权自动采集保持禁用。付费墙来源一律只作标题/摘要发现层，
 不抓全文、不绕登录/robots。
