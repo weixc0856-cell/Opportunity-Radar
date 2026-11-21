@@ -1,7 +1,10 @@
 # Opportunity Radar
 
-本地优先的商业与产业情报系统。FreshRSS 管理订阅，Python 从 Fever API 取文章，本地
-`llama-server` 做结构化初筛，SQLite 保存证据与运行记录，输出中文日报（文本 + HTML + JSON）。
+本地优先的**个人情报站**：整合官方政策/统计、国际资深媒体与市场反响，输出中文情报简报
+（文本 + HTML + JSON），服务长线投资与个人低成本创业。FreshRSS 管理订阅，Python 从 Fever API
+取文章，LLM（生产走 Anthropic Messages 路由，本地 `llama-server` 为回滚）做结构化初筛，
+SQLite 保存证据与运行记录。原"商业机会/买方/验证"层保留为日报附录 D，只有经核实后才用于
+下游投资/创业建议。
 
 三条链路，互不影响：
 
@@ -40,7 +43,7 @@
 ## 数据流
 
 ```
-FreshRSS ──Fever API──> articles ──> llama-server（CPU-only，64K）
+FreshRSS ──Fever API──> articles ──> LLM（Anthropic 路由 / 本地 llama-server 回滚）
                                         │
                          analyses / analysis_sections
                                         │
@@ -55,7 +58,8 @@ FreshRSS ──Fever API──> articles ──> llama-server（CPU-only，64K�
                                         │
         reports/latest-digest.{txt,html} + archive/*.items.json/manifest.json
                                         │
-                    每日日报 ──> 邮件；每周周报、每月月报（--period auto）
+                    每日情报简报 ──> 邮件；周报（7 天）、月报（上一自然月）、
+                    年报（上一自然年），--period auto 按节奏补跑
 
 SEC XBRL / EIA ──> 独立摄取库 ──> 经济数据引擎（data/economic/economic.sqlite3）
 Federal Register / BLS Pilot ──> 独立 Pilot 库 ──> 经济数据引擎
@@ -63,15 +67,21 @@ Federal Register / BLS Pilot ──> 独立 Pilot 库 ──> 经济数据引擎
 
 ## 日报
 
-- 输出 `reports/latest-digest.txt`、`latest-digest.html`（完整版，含附录）与
-  `latest-digest-email.txt|html`（实际发送的邮件版，只含执行摘要到证据与方法）。
+- 输出 `reports/latest-digest.txt`、`latest-digest.html`（完整版，含附录 D/A/B/C）与
+  `latest-digest-email.txt|html`（实际发送的邮件版，只含第一至三节 + 附录说明）。
   按 `reports/archive/YYYY/MM/DD/` 归档两个版本、`.items.json`（分析快照）与
-  `.manifest.json`（运行 ID、报告哈希、统计）；附录同时写入 SQLite `report_sections`。
-  `--render-only` 只刷新 latest，不新增归档，也不写数据库。
-- 邮件结构：执行摘要（含决策请求）→ 关键判断（决策级/验证级/观察级）→ 建议行动与验证台账
-  → 待验证假设 → 风险登记表 → 监测清单 → 证据与方法 → 附录说明。
-  逐条明细、未纳入条目与来源附录留在本地完整版。没有决策级机会时，报告第一句直说，
-  并给出“默认不投入”的决策请求。
+  `.manifest.json`（运行 ID、报告哈希、统计）；附录同时写入 SQLite `report_sections`
+  （`appendix_d/a/b/c`）。`--render-only` 只刷新 latest，不新增归档，也不写数据库。
+- **个人情报站结构**（2026-11-21 重定位）：一、执行摘要（情报主线）→ 二、情报整合与长线关注
+  （按情报主线 + 事件分组，标官方/媒体/市场角度、对照情况、证据与核实状态、长线触发条件）→
+  三、证据与方法 → 附录说明。机会/买方/就绪度/验证层降为**附录 D**（关键判断/建议行动与验证
+  台账/待验证假设/风险与反证/监测清单），标明"经核实后才用于投资/低成本创业"，不再领衔。
+  邮件版 HTML 用纯内联样式表格（邮箱客户端会剥离 `<style>`/grid/flex/SVG）；完整版本地版式保留
+  咨询报告排版。未核实的情报不作为投入依据；没有可跟踪主题时第一句直说。
+- **周期报告**：周报（ trailing 7 天）、月报（上一自然月，下月初总结）、年报（上一自然年，
+  次年初总结）。月/年含**回归核验**：对窗口前的基线主张用新证据/核验/冲突/重述分类为
+  已确认/被反证/仍开放/数据不足（单一来源族不算独立佐证；数值重述差 >1% 记被反证），
+  并按情报主线与来源角度聚合 + 缺口/版本披露。基线为空时明说，不编造。
 - **事件视图**：同属一个事件的报道只占一张卡片。事件证据状态分为 `EVIDENCE_BACKED`、
   `NO_EVIDENCE`、`INSUFFICIENT_EVIDENCE`；无 Evidence 的事件仍保留，但卡片明确显示“证据状态：无证据
   （仅线索，不作为已核实事实）”。文本、HTML 和邮件共用同一 `event_summary_lines`，归档 JSON 保留原始
@@ -326,6 +336,11 @@ R5 经济库位于 `data/economic/economic.sqlite3`：`datasets` / `observations
   逐收件人发送并记录在 `deliveries`；同一报告幂等，不重复发送。
 - 验收：`python -m opportunity_radar.acceptance`；端到端与故障注入：
   `python tools\e2e_verify.py --limit 3 [--fault-mode schema|server|reset|refuse]`。
+- 模型成本：Anthropic 路由对稳定 system 前缀启用 prompt 缓存（`OR_LLM_PROMPT_CACHE`，默认开；
+  代理不支持时自动回退），并裁剪 prompt 冗余（引文定位仍用全文）；见 `docs/OPERATIONS.md`。
+- 周期报告：`--period weekly|monthly|yearly` 单独生成；月/年按自然月/自然年做回归核验。
+- 新来源接入：统计局/国务院/联合早报/经济学人等已登记但默认禁用，需在 FreshRSS 订阅并回填
+  `freshrss_feed_id`、核验许可后启用；步骤与订阅 URL 见 `docs/OPERATIONS.md`「新来源接入」。
 
 ## 约束
 
@@ -342,7 +357,8 @@ R5 经济库位于 `data/economic/economic.sqlite3`：`datasets` / `observations
 | `docs/PRD.md` | 产品定义：用户、通道、功能需求、数据模型、质量框架 |
 | `docs/PROJECT_STATUS.md` | 当前事实：已交付、数据库现状、验收矩阵、缺口 |
 | `docs/ARCHITECTURE.md` | 模块职责、数据流、统一生产管线与 R3–R6 |
-| `docs/OPERATIONS.md` | 日常运行、排障、任务计划、数据库迁移 |
+| `docs/REPORT_FORMAT.md` | 报告体例：情报主线结构、附录 D、邮件/完整版、周期回归、写作规则 |
+| `docs/OPERATIONS.md` | 日常运行、排障、任务计划、数据库迁移、新来源接入 |
 | `docs/EVIDENCE_AND_LANES.md` | 证据等级与通道评分规则 |
 | `docs/CLAIM_PIPELINE.md` | 主张提取流水线：N0–N5 的契约、失败语义、限制 |
 | `docs/SOURCE_POLICY.md` | 来源准入与治理字段 |

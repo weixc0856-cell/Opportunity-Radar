@@ -58,11 +58,12 @@ Opportunity 只创建 `signal_detected`，不自动声称 problem/buyer/payment 
 分析后端走 Anthropic Messages 路由（`OR_LLM_API_STYLE=anthropic`，cc switch 本地代理
 `http://127.0.0.1:15721/v1`，模型 `claude-sonnet-5`）；本地 Qwen + 8080 保留为回滚后端，
 见 `docs/OPERATIONS.md` 的 Analyzer backend。
-日报每日 06:00，周报/月报由 `--period auto` 按 7/30 天节奏生成。
-日报邮件只发送第一至七节与附录说明；附录 A/B/C 按 `report_hash` 写入 SQLite
-`report_sections` 并随归档保存，管理台 `/report` 仍提供完整版。
-日报渲染前计算确定性就绪度（决策级/验证级/观察级）；只有前两级进入关键判断，
-`existing_purchase` 只算验证级。没有决策级机会时，报告第一句直说并默认不投入。
+日报每日 06:00，周报/月报/年报由 `--period auto` 按 7/30/365 天节奏生成；月/年含回归核验。
+日报已重定位为个人情报站：主体为政策/媒体/市场整合与长线关注（第一至三节），机会/买方/
+就绪度/验证层降为附录 D（经核实后才用于投资/低成本创业）。邮件只发送第一至三节与附录说明；
+附录 D/A/B/C 按 `report_hash` 写入 SQLite `report_sections` 并随归档保存，管理台 `/report`
+仍提供完整版。就绪度（决策级/验证级/观察级）仍确定性计算并门禁附录 D 的关键判断，
+`existing_purchase` 只算验证级；情报主体未核实不作为投入依据。
 可选扩展源：YouTube 访谈字幕（`youtube_source.py`）与公开检索（`web_discovery.py`），
 由 `OR_YOUTUBE_ENABLED` / `OR_DISCOVERY_ENABLED` 控制，默认关闭；只走公开 RSS/API、
 robots 允许的页面与人工/自动字幕，不下载整片、不绕过限制，证据按 E1 上限处理。

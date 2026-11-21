@@ -148,6 +148,50 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
 评分、发布门禁或存储。质量快照新增 `display` 计数（signal_detected、候选事件关联、有定位但
 未核验的 Claim），用于检查“有用信息在哪一层被降级”。
 
+### 邮件可读性修复（2026-11-21）
+
+- **根因**：邮件版 HTML 直接复用完整版的咨询报告版式（`<style>` 块 + CSS grid/flex + SVG
+  图表）。163/QQ、Outlook、Gmail 等邮箱客户端会剥离或忽略这三者，收件箱里漏斗、通道分布、
+  情报主线等图表退化成没有标签、挤成一行的文字（如“本轮获取42新增27…”），固定分类名也被
+  硬截断（“客户痛点与商业机”“技术观察与工程信”“(undeclare”）。
+- **修复**：`render_html.py` 的邮件版（`include_appendix=False`）改用纯内联样式的 `<table>`
+  重建同一份内容，不用 `<style>`/grid/flex/SVG；完整版本地/管理台版式不变。两版内容、节序、
+  门禁与 `_validate_report` 完全一致。已用无头浏览器对邮件版与完整版分别截图核对排版。
+- **措辞与截断**：KJ“就绪度”不再复述“依据”已有的证据等级与事实数；B 通道“业务含义”改为
+  完整句（“…面临「…」的问题；付费证据：…；可能的交付形态：…（尚未验证）”）；监测清单
+  “触发条件”改用未确认缺口（“一旦确认：…”）而非“如何补齐”动作；表格/列表标题截断上限放宽，
+  SVG 图表标签按可用宽度截断而非固定字符数，固定分类名整词显示。
+- 测试：新增 9 项（`test_html.py::EmailClientCompatibilityTests` 6 项、
+  `test_digest.py::ReadabilityTests` 3 项）；全量 1114 项，1111 通过、1 项环境跳过、
+  3 项为既有日期敏感失败（`test_web_discovery`/`test_youtube_source`，与本次改动无关）。
+- 真实数据验证：对生产库 `--render-only`（只读、不调模型、不发信）重生成报告，邮件版
+  HTML 52.8 KB、文本版 15.8 KB，确认无 `<svg`/`<style`、通道名整词显示；并用无头浏览器
+  截图核对邮件版与完整版排版。历史“9.3 KB”记录对应更早一次运行，未改写。
+
+### 重定位为个人情报站 + 周期回归 + 模型成本（2026-11-21）
+
+- **产品重定位**：日报主体改为政策/媒体/市场整合与"长线关注"（服务长线投资与个人低成本
+  创业）；原机会/买方/就绪度/验证层降为**附录 D** 保留（经核实后才用于下游投资/创业）。
+  新增确定性渲染层 `intelligence_headline/intelligence_note/long_term_themes/integration_lines`
+  （按情报主线+事件分组，标官方/媒体/市场角度与核实状态，不新调模型）。邮件版=第一至三节+
+  附录说明；`report_sections` 新增 `appendix_d`。标题改"个人情报简报"。
+- **来源整合**：登记国家统计局/国务院/联合早报/经济学人（核验 feed 与 robots；官方站无 RSS
+  给出 FreshRSS XPath 订阅 URL；付费墙只作标题发现层），均 `enabled=false` 待人工订阅回填
+  feed_id；BBC/NYT 商业/科技保持启用；Reuters 因 robots 禁止自动采集保持禁用；新增 3 个
+  YouTube 财经频道（Bloomberg/Yahoo/CNBC，公开 RSS 核验，待启用）。未绕付费墙/robots/登录。
+- **周期回归**：月报增强为月度回归核验（已确认/被反证/仍开放/数据不足 + 主线/角度聚合 +
+  缺口/版本）；新增**年报**（滚动 365 天，`--period yearly`，auto 按 364 天补跑）。基线为空时
+  明说无可回归主张；生产库实测年报 436 事件/1449 主张，回归基线 0（诚实，跨期基线需时间积累）。
+- **模型成本**：Anthropic 路由稳定 system 前缀加 `cache_control`（`OR_LLM_PROMPT_CACHE` 守卫 +
+  HTTP400 粘性回退）；OpenAI/llama.cpp 不受影响；prompt 摘要裁剪 boilerplate（引文定位仍用全文）；
+  记录归一化 token/cache usage。不改分析语义/schema/门禁。
+- 测试：全量 **1129 项，1126 通过、1 环境跳过、3 既有日期敏感失败**（与本次无关）。新增
+  `test_period_report.py`（含年报）、`test_analyzer.py` 缓存/裁剪/usage、digest/html 重定位语义。
+- 真实数据验证：`--render-only` 重生成日报（长线关注 9 主题、机会入附录 D、邮件无附录 D），
+  `--period yearly` 生成年报；无头浏览器截图核对新版式。
+- 未做/待人工：新来源需在 FreshRSS 订阅后回填 feed_id 才启用；YouTube 需 approved +
+  `OR_YOUTUBE_ENABLED`；月/年回归基线随时间积累才有跨期确认/反证。
+
 ## 5. 当前限制（不掩盖）
 
 1. **事件聚合**：135 events / 135 articles，0 个多文章事件；独立来源佐证 0；转载

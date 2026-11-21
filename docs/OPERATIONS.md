@@ -28,18 +28,26 @@ with a start line and no ending.
 Analysis is one HTTP client (`analyzer.LocalAnalyzer`) with two transports over the same
 contract. Two setups are known to work:
 
-| Backend | `OR_LLM_API_STYLE` | `OR_LLM_BASE_URL` | `OR_LLM_MODEL` | `OR_LLM_MAX_TOKENS` |
-|---|---|---|---|---|
-| Local llama-server (CPU-only) | `openai` | `http://127.0.0.1:8080/v1` | `Qwen3-30B-A3B-Instruct-2507-Q4_K_M` | `1400` |
-| cc-switch proxy, Claude Code route | `anthropic` | `http://127.0.0.1:15721/v1` | `claude-sonnet-5` | `4000` |
-
-`OR_LLM_API_STYLE` picks the wire protocol: `openai` posts to `{base}/chat/completions`,
-`anthropic` posts to `{base}/messages` (top-level `system`, `x-api-key` +
-`anthropic-version`, answer in `content` text blocks). The cc-switch proxy serves both, but
-only the Anthropic route is the one Claude Code itself uses; the proxy labels the other
-`Codex endpoint`, and it is not used here. Everything above the transport — prompt, parser,
-retries, failure causes — is shared, so the backend does not change what is asked or how the
-answer is checked.
+| Backend | `OR_LLM_API_STYLE` | `OR_LLM_BASE_URL` | `OR_LLM_MODEL` | `OR_LLM_MAX_TOKENS` |
+|---|---|---|---|---|
+| Local llama-server (CPU-only) | `openai` | `http://127.0.0.1:8080/v1` | `Qwen3-30B-A3B-Instruct-2507-Q4_K_M` | `1400` |
+| cc-switch proxy, Claude Code route | `anthropic` | `http://127.0.0.1:15721/v1` | `claude-sonnet-5` | `4000` |
+
+`OR_LLM_API_STYLE` picks the wire protocol: `openai` posts to `{base}/chat/completions`,
+`anthropic` posts to `{base}/messages` (top-level `system`, `x-api-key` +
+`anthropic-version`, answer in `content` text blocks). The cc-switch proxy serves both, but
+only the Anthropic route is the one Claude Code itself uses; the proxy labels the other
+`Codex endpoint`, and it is not used here. Everything above the transport — prompt, parser,
+retries, failure causes — is shared, so the backend does not change what is asked or how the
+answer is checked.
+
+**Prompt caching / token cost (2026-11-21).** On the Anthropic route the stable system prefix is
+sent as a cacheable block (`cache_control: ephemeral`), controlled by `OR_LLM_PROMPT_CACHE`
+(default on; set `0` to disable). If the proxy rejects the field with HTTP 400 the client disables
+caching stickily for the process and retries uncached, so a non-forwarding proxy degrades instead
+of failing the run. OpenAI/llama.cpp never receive the field. The prompt summary is trimmed of
+boilerplate/repeated lines before sending (quote locating still runs on the full article, so no
+evidence is lost); per-call normalized token/cache usage is recorded in run metrics.
 
 `run-digest.ps1` starts `start-model.ps1` only when `OR_LLM_BASE_URL` resolves to
 `127.0.0.1:8080`; with any other endpoint it logs `analyzer endpoint is external` and leaves
@@ -94,8 +102,10 @@ PowerShell pipeline (`| Out-String`): inheritable pipe handles reach grandchildr
 `llama-server` holding the write end leaves the launcher waiting for an EOF that never comes.
 That was the 2026-11-04..11-07 failure, where every run left a start line, no ending, and an
 `launcher-inflight.json` marker that the next day reported.
-`--period auto` writes the daily brief, plus a weekly report every 7 days and a monthly
-report every 30 days (catch-up uses the last report's mtime).
+`--period auto` writes the daily brief, plus a weekly report every 7 days, a monthly report
+every 30 days and a yearly report every 365 days (catch-up uses the last report's mtime).
+Monthly/yearly include a regression review (confirmed / contradicted / open / insufficient)
+over baseline claims; an empty baseline is stated plainly, not fabricated.
 
 Source sync semantics:
 
@@ -126,7 +136,7 @@ Failure semantics:
 ```
 py -3 -m opportunity_radar.cli --dry-run                 # real fetch + model + full pipeline, no mail
 py -3 -m opportunity_radar.cli --render-only             # re-render latest, read-only
-py -3 -m opportunity_radar.cli --period weekly|monthly   # rebuild a period report
+py -3 -m opportunity_radar.cli --period weekly|monthly|yearly   # rebuild a period report
 py -3 -m opportunity_radar.unified_main audit --db <db>  # read-only end-to-end audit
 py -3 -m opportunity_radar.unified_main db-migrate --db <db>                 # preview
 py -3 -m opportunity_radar.unified_main db-migrate --db <db> --apply --backup <file>
@@ -141,6 +151,24 @@ py -3 -m opportunity_radar.acceptance                     # real environment che
 Tests: `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`.
 Offline sample: `python -m opportunity_radar.cli --dry-run --sample`.
 End-to-end fault injection: `py -3 tools/e2e_verify.py --limit 3`.
+
+## 新来源接入（个人情报站，2026-11-21）
+
+日报重定位为政策/媒体/市场情报站后，新增来源已登记但**默认禁用**，需人工在 FreshRSS 订阅并
+回填 `freshrss_feed_id` 后才启用（FreshRSS 客户端只读，不能程序化加订阅）：
+
+| 来源 | 订阅 URL（FreshRSS） | 说明 |
+|---|---|---|
+| 国家统计局 cn-nbs | https://www.stats.gov.cn/sj/zxfb/ | 无 RSS，用 FreshRSS XPath 抓取；官方一手 |
+| 国务院 cn-state-council | https://www.gov.cn/zhengce/zuixin/ | 无 RSS，XPath；政策一手 |
+| 联合早报 sg-zaobao | https://www.zaobao.com.sg/realtime/china | 计量付费墙，只作标题发现层 |
+| 经济学人 economist-finance | https://www.economist.com/finance-and-economics/rss.xml | 付费墙，RSS 仅标题，`full_text_fetch=none` |
+
+步骤：FreshRSS 添加上述 URL → 确认能取到条目 → 把 feed id 回填 `config/sources.local.csv`
+对应行 → 核验许可/条款后将 `permission_status` 改 approved、`enabled=true`。付费墙来源保持
+excerpt/标题层，不抓全文、不绕登录/robots。Reuters 因 robots 明确禁止未授权自动采集保持禁用。
+YouTube 财经频道（Bloomberg/Yahoo/CNBC）已登记于 `config/youtube_sources.json`，启用需
+approved + `OR_YOUTUBE_ENABLED=1`。
 
 ## Database
 
