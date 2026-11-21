@@ -154,21 +154,33 @@ End-to-end fault injection: `py -3 tools/e2e_verify.py --limit 3`.
 
 ## 新来源接入（个人情报站，2026-11-21）
 
-日报重定位为政策/媒体/市场情报站后，新增来源已登记但**默认禁用**，需人工在 FreshRSS 订阅并
-回填 `freshrss_feed_id` 后才启用（FreshRSS 客户端只读，不能程序化加订阅）：
+日报重定位为政策/媒体/市场情报站。来源启用必须通过 `is_approved`（enabled + approved +
+rss/atom/official_api + https feed_url + 有 `freshrss_feed_id`），因此**无 RSS/无 feed 的来源
+无法仅靠改配置启用**，必须先在 FreshRSS 里存在一个能抓的 feed。
 
-| 来源 | 订阅 URL（FreshRSS） | 说明 |
-|---|---|---|
-| 国家统计局 cn-nbs | https://www.stats.gov.cn/sj/zxfb/ | 无 RSS，用 FreshRSS XPath 抓取；官方一手 |
-| 国务院 cn-state-council | https://www.gov.cn/zhengce/zuixin/ | 无 RSS，XPath；政策一手 |
-| 联合早报 sg-zaobao | https://www.zaobao.com.sg/realtime/china | 计量付费墙，只作标题发现层 |
-| 经济学人 economist-finance | https://www.economist.com/finance-and-economics/rss.xml | 付费墙，RSS 仅标题，`full_text_fetch=none` |
+**已启用（许可明确）**：BBC/NYT 商业与科技栏目（feed 24–27）、BEA/ONS/Fed/BLS/Census 官方统计。
+它们覆盖宏观/政策/媒体/市场反响，作为同类情报的合规主力。
 
-步骤：FreshRSS 添加上述 URL → 确认能取到条目 → 把 feed id 回填 `config/sources.local.csv`
-对应行 → 核验许可/条款后将 `permission_status` 改 approved、`enabled=true`。付费墙来源保持
-excerpt/标题层，不抓全文、不绕登录/robots。Reuters 因 robots 明确禁止未授权自动采集保持禁用。
-YouTube 财经频道（Bloomberg/Yahoo/CNBC）已登记于 `config/youtube_sources.json`，启用需
-approved + `OR_YOUTUBE_ENABLED=1`。
+**economist-finance：已放弃（2026-11-21 所有者决定）**。条款页 403 不可核验；robots 通用段虽放行
+RSS，但对命名 LLM/bot 全站 Disallow，浏览器 UA 过 WAF 属反爬 ToS 灰区。已退订 FreshRSS feed 38、
+回退全局 UA 覆盖、登记改回 `enabled=false / review_required`，改用上面的替代源。
+
+**国家统计局 cn-nbs（待人工订阅）**：静态列表、无 RSS，可用 FreshRSS「HTML + XPath」检索：
+- 订阅 URL：`https://www.stats.gov.cn/sj/zxfb/`
+- items XPath：`//div[contains(@class,'icon-list')]//a[contains(@href,'.html')]`
+- title：`string(.)`；uri：`./@href`；content：`string(.)`；timestamp：留空
+- 添加后确认能取到条目 → 回填 `config/sources.local.csv`（及 `sources.csv`）该行
+  `freshrss_feed_id`、`permission_status=approved`、`enabled=true`。
+
+**国务院 cn-state-council / 联合早报 sg-zaobao（FreshRSS 抓不了）**：列表为 JS 渲染，静态 HTML
+无条目链接，FreshRSS 无 JS 引擎，XPath 也无效；保持禁用。若需覆盖，改用公开检索发现层
+（`web_discovery` Google News `site:` 查询，需 `OR_DISCOVERY_ENABLED` 批准）或放弃这两个源。
+
+**YouTube 财经频道（Bloomberg/Yahoo/CNBC）**：已登记于 `config/youtube_sources.json`，默认禁用；
+启用需所有者明确批准许可 + `OR_YOUTUBE_ENABLED=1`（仅公开 RSS/字幕节选，E1 上限）。
+
+Reuters 因 robots 明确禁止未授权自动采集保持禁用。付费墙来源一律只作标题/摘要发现层，
+不抓全文、不绕登录/robots。
 
 ## Database
 

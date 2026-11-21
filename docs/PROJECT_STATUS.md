@@ -175,22 +175,25 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   新增确定性渲染层 `intelligence_headline/intelligence_note/long_term_themes/integration_lines`
   （按情报主线+事件分组，标官方/媒体/市场角度与核实状态，不新调模型）。邮件版=第一至三节+
   附录说明；`report_sections` 新增 `appendix_d`。标题改"个人情报简报"。
-- **来源整合**：登记国家统计局/国务院/联合早报/经济学人（核验 feed 与 robots；官方站无 RSS
-  给出 FreshRSS XPath 订阅 URL；付费墙只作标题发现层），均 `enabled=false` 待人工订阅回填
-  feed_id；BBC/NYT 商业/科技保持启用；Reuters 因 robots 禁止自动采集保持禁用；新增 3 个
-  YouTube 财经频道（Bloomberg/Yahoo/CNBC，公开 RSS 核验，待启用）。未绕付费墙/robots/登录。
-- **周期回归**：月报增强为月度回归核验（已确认/被反证/仍开放/数据不足 + 主线/角度聚合 +
-  缺口/版本）；新增**年报**（滚动 365 天，`--period yearly`，auto 按 364 天补跑）。基线为空时
-  明说无可回归主张；生产库实测年报 436 事件/1449 主张，回归基线 0（诚实，跨期基线需时间积累）。
+- **来源整合与合规取舍**：登记国家统计局/国务院/联合早报/经济学人并核验 feed/robots。
+  economist 曾订阅（feed 38）并经所有者批准用浏览器 UA 过 WAF 后抓取成功，但条款页 403 不可
+  核验、robots 对命名 LLM/bot 全站 Disallow，属反爬 ToS 灰区；**所有者决定放弃**，已退订 feed 38、
+  回退全局 UA 覆盖、改回 `enabled=false/review_required`，改用许可明确的替代源（BBC/NYT 商业/
+  科技 + BEA/ONS/Fed/BLS/Census）。统计局为静态列表可 XPath（步骤见 OPERATIONS，待人工订阅）；
+  国务院/联合早报为 JS 渲染、FreshRSS 无 JS 引擎抓不了，保持禁用（可改公开检索发现层，需批准）。
+  Reuters 因 robots 禁止保持禁用；YouTube 财经频道待所有者批准许可 + `OR_YOUTUBE_ENABLED`。
+- **周期回归**：月报=上一自然月、年报=上一自然年（参考期口径，下月初/次年初总结），周报 trailing
+  7 天；auto 在月初/年初补跑。月/年含回归核验（已确认/被反证/仍开放/数据不足 + 主线/角度聚合 +
+  缺口/版本）。基线为空时明说；生产库实测年报 436 事件/1449 主张、回归基线 0（跨期基线需时间积累）。
 - **模型成本**：Anthropic 路由稳定 system 前缀加 `cache_control`（`OR_LLM_PROMPT_CACHE` 守卫 +
   HTTP400 粘性回退）；OpenAI/llama.cpp 不受影响；prompt 摘要裁剪 boilerplate（引文定位仍用全文）；
   记录归一化 token/cache usage。不改分析语义/schema/门禁。
-- 测试：全量 **1129 项，1126 通过、1 环境跳过、3 既有日期敏感失败**（与本次无关）。新增
-  `test_period_report.py`（含年报）、`test_analyzer.py` 缓存/裁剪/usage、digest/html 重定位语义。
+- 测试：全量 **1130 项通过、1 环境跳过**；既有 3 个日期敏感测试改为相对日期后不再随时间变红。
+  新增 `test_period_report.py`（含自然月/年报）、`test_analyzer.py` 缓存/裁剪/usage、digest/html 重定位语义。
 - 真实数据验证：`--render-only` 重生成日报（长线关注 9 主题、机会入附录 D、邮件无附录 D），
   `--period yearly` 生成年报；无头浏览器截图核对新版式。
-- 未做/待人工：新来源需在 FreshRSS 订阅后回填 feed_id 才启用；YouTube 需 approved +
-  `OR_YOUTUBE_ENABLED`；月/年回归基线随时间积累才有跨期确认/反证。
+- 未做/待人工：统计局需 FreshRSS XPath 订阅后回填 feed_id；国务院/联合早报需替代通道或放弃；
+  YouTube 需批准；月/年回归基线随时间积累才有跨期确认/反证。
 
 ## 5. 当前限制（不掩盖）
 
