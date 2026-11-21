@@ -165,12 +165,14 @@ rss/atom/official_api + https feed_url + 有 `freshrss_feed_id`），因此**无
 RSS，但对命名 LLM/bot 全站 Disallow，浏览器 UA 过 WAF 属反爬 ToS 灰区。已退订 FreshRSS feed 38、
 回退全局 UA 覆盖、登记改回 `enabled=false / review_required`，改用上面的替代源。
 
-**国家统计局 cn-nbs（待人工订阅）**：静态列表、无 RSS，可用 FreshRSS「HTML + XPath」检索：
+**国家统计局 cn-nbs：已启用（2026-11-21，所有者批准）**。静态列表、无 RSS，用 FreshRSS
+「HTML + XPath」检索（feed 39，`kind=10`）：
 - 订阅 URL：`https://www.stats.gov.cn/sj/zxfb/`
-- items XPath：`//div[contains(@class,'icon-list')]//a[contains(@href,'.html')]`
+- items XPath：`//div[contains(@class,'list-content')]//li/a`
 - title：`string(.)`；uri：`./@href`；content：`string(.)`；timestamp：留空
-- 添加后确认能取到条目 → 回填 `config/sources.local.csv`（及 `sources.csv`）该行
-  `freshrss_feed_id`、`permission_status=approved`、`enabled=true`。
+- 实测 23 条、标题与 https 链接正常；登记 `access_method=html_xpath`、`freshrss_feed_id=39`、
+  approved + enabled。`is_approved` 的合法访问方式已含 `html_xpath`（政府公开信息、robots 放行、
+  仅标题/摘要层）。注意：列表容器是 `div.list-content`，不是页面上另一处 `icon-list` 图标块。
 
 **国务院 cn-state-council / 联合早报 sg-zaobao（FreshRSS 抓不了）**：列表为 JS 渲染，静态 HTML
 无条目链接，FreshRSS 无 JS 引擎，XPath 也无效；保持禁用。若需覆盖，改用公开检索发现层

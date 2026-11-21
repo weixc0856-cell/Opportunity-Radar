@@ -182,6 +182,8 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   科技 + BEA/ONS/Fed/BLS/Census）。统计局为静态列表可 XPath（步骤见 OPERATIONS，待人工订阅）；
   国务院/联合早报为 JS 渲染、FreshRSS 无 JS 引擎抓不了，保持禁用（可改公开检索发现层，需批准）。
   Reuters 因 robots 禁止保持禁用；YouTube 财经频道待所有者批准许可 + `OR_YOUTUBE_ENABLED`。
+  **统计局已启用**：FreshRSS HTML+XPath feed 39（`div.list-content//li/a`），实测 23 条；
+  `is_approved` 合法访问方式新增 `html_xpath`（含测试）。
 - **周期回归**：月报=上一自然月、年报=上一自然年（参考期口径，下月初/次年初总结），周报 trailing
   7 天；auto 在月初/年初补跑。月/年含回归核验（已确认/被反证/仍开放/数据不足 + 主线/角度聚合 +
   缺口/版本）。基线为空时明说；生产库实测年报 436 事件/1449 主张、回归基线 0（跨期基线需时间积累）。
@@ -192,8 +194,8 @@ N0–N5 只处理本轮成功分析、且 N1 找到数字候选的文章；上�
   新增 `test_period_report.py`（含自然月/年报）、`test_analyzer.py` 缓存/裁剪/usage、digest/html 重定位语义。
 - 真实数据验证：`--render-only` 重生成日报（长线关注 9 主题、机会入附录 D、邮件无附录 D），
   `--period yearly` 生成年报；无头浏览器截图核对新版式。
-- 未做/待人工：统计局需 FreshRSS XPath 订阅后回填 feed_id；国务院/联合早报需替代通道或放弃；
-  YouTube 需批准；月/年回归基线随时间积累才有跨期确认/反证。
+- 未做/待人工：国务院/联合早报为 JS 渲染需替代通道或放弃；YouTube 需批准；
+  月/年回归基线随时间积累才有跨期确认/反证。
 
 ## 5. 当前限制（不掩盖）
 

@@ -44,4 +44,4 @@ def load_sources(path=None):
                               _g(r,'intelligence_lines'),_g(r,'full_text_fetch').lower() or 'none'))
     return out
 def is_approved(s):
-    return s.enabled and s.permission_status=='approved' and s.access_method in {'rss','atom','official_api','authorized_email_export'} and s.feed_url.startswith('https://') and bool(s.freshrss_feed_id)
+    return s.enabled and s.permission_status=='approved' and s.access_method in {'rss','atom','official_api','authorized_email_export','html_xpath'} and s.feed_url.startswith('https://') and bool(s.freshrss_feed_id)
